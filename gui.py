@@ -6,18 +6,16 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import scrolledtext
-from typing import TYPE_CHECKING
 
+import sounds
 from main import (
     SHOP_CATALOG,
     Console,
     Game,
+    MailMessage,
     Shop,
     TUTORIAL_CURRICULUM,
 )
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -45,6 +43,9 @@ COLORS = {
 class DesktopApp:
     """Simulated hacker workstation desktop."""
 
+    ANIM_MS = 14
+    ANIM_STEPS = 12
+
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("TerminalHacker OS")
@@ -55,13 +56,36 @@ class DesktopApp:
         self.game = Game()
         self.game.gui_mode = True
         Console.fast_mode = True
+        self.game.mail.on_new_mail = self._on_new_mail
 
         self.open_windows: dict[str, tk.Toplevel] = {}
         self.terminal_booted = False
+        self.mail_badge: tk.Label | None = None
+        self._mail_listbox: tk.Listbox | None = None
 
         self._build_desktop()
         self._build_taskbar()
         self.refresh_taskbar()
+
+    # ----- mail notifications -----
+
+    def _on_new_mail(self, msg: MailMessage) -> None:
+        sounds.play("mail")
+        self.refresh_taskbar()
+        self._refresh_mail_badge()
+        if self._mail_listbox and "mail" in self.open_windows:
+            self._populate_mail_list(self._mail_listbox)
+
+    def _refresh_mail_badge(self) -> None:
+        if not self.mail_badge:
+            return
+        count = self.game.mail.unread_count()
+        if count:
+            self.mail_badge.configure(text=str(count))
+            self.mail_badge.place(relx=0.72, rely=0.02, width=22, height=18)
+        else:
+            self.mail_badge.configure(text="")
+            self.mail_badge.place_forget()
 
     # ----- layout -----
 
@@ -74,7 +98,7 @@ class DesktopApp:
             bg=COLORS["desktop"], font=title_font,
         ).pack(side=tk.LEFT)
         tk.Label(
-            header, text="  v1.0 — Cybersecurity Training Environment",
+            header, text="  v1.1 — Cybersecurity Training Environment",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 11),
         ).pack(side=tk.LEFT, padx=(8, 0))
 
@@ -83,18 +107,20 @@ class DesktopApp:
 
         apps = [
             ("terminal", ">_", "Terminal", "SSH shell & hacking commands", self.open_terminal),
+            ("mail", "@", "Mail", "NPC brokers & training messages", self.open_mail),
             ("jobs", "[]", "Job Board", "Paid contracts & missions", self.open_job_board),
             ("shop", "$", "Black Market", "CPU, firewall & tools", self.open_shop),
             ("training", "?", "Training", "Tutorial lessons & objectives", self.open_training),
             ("status", "#", "System Status", "Hardware, VPN, wallet", self.open_status),
         ]
 
-        for col, (key, glyph, name, desc, cmd) in enumerate(apps):
-            self._desktop_icon(icons, key, glyph, name, desc, cmd, row=0, col=col)
+        for i, app in enumerate(apps):
+            row, col = divmod(i, 3)
+            self._desktop_icon(icons, *app, row=row, col=col)
 
         hint = tk.Label(
             self.root,
-            text="Double-click an icon to launch. Use Terminal for scan, connect, crack, and more.",
+            text="Double-click an icon to launch. New Mail arrives from brokers and trainers.",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 10),
         )
         hint.pack(pady=(0, 12))
@@ -104,21 +130,36 @@ class DesktopApp:
         command, row: int, col: int,
     ) -> None:
         frame = tk.Frame(parent, bg=COLORS["desktop"], cursor="hand2")
-        frame.grid(row=row, column=col, padx=20, pady=12, sticky="n")
+        frame.grid(row=row, column=col, padx=24, pady=16, sticky="n")
+
+        icon_wrap = tk.Frame(frame, bg=COLORS["desktop"])
+        icon_wrap.pack()
 
         box = tk.Label(
-            frame, text=glyph, fg=COLORS["accent"], bg=COLORS["window"],
+            icon_wrap, text=glyph, fg=COLORS["accent"], bg=COLORS["window"],
             font=("Courier", 28, "bold"), width=4, height=2,
             relief=tk.RAISED, bd=2,
         )
         box.pack()
+
+        if key == "mail":
+            self.mail_badge = tk.Label(
+                icon_wrap, text="", fg="white", bg=COLORS["error"],
+                font=("Helvetica", 8, "bold"),
+            )
+            self._refresh_mail_badge()
+
         tk.Label(frame, text=name, fg=COLORS["text"], bg=COLORS["desktop"],
                  font=("Helvetica", 11, "bold")).pack(pady=(6, 0))
         tk.Label(frame, text=desc, fg=COLORS["muted"], bg=COLORS["desktop"],
-                 font=("Helvetica", 9), wraplength=140, justify=tk.CENTER).pack()
+                 font=("Helvetica", 9), wraplength=150, justify=tk.CENTER).pack()
 
-        for widget in (frame, box):
-            widget.bind("<Double-Button-1>", lambda _e, c=command: c())
+        def launch(_e=None) -> None:
+            sounds.play("click")
+            command()
+
+        for widget in (frame, box, icon_wrap):
+            widget.bind("<Double-Button-1>", launch)
             widget.bind("<Enter>", lambda _e, b=box: b.configure(bg=COLORS["border"]))
             widget.bind("<Leave>", lambda _e, b=box: b.configure(bg=COLORS["window"]))
 
@@ -142,8 +183,13 @@ class DesktopApp:
         if p.phase == "tutorial":
             lesson = f" | Lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)}"
         vpn = "VPN ON" if p.vpn_active else "VPN off"
+        unread = self.game.mail.unread_count()
+        mail_txt = f" | Mail: {unread} unread" if unread else ""
         self.taskbar_label.configure(
-            text=f"  {phase}{lesson}  |  {wallet}  |  CPU L{p.cpu_level}  |  FW L{p.firewall_level}  |  {vpn}"
+            text=(
+                f"  {phase}{lesson}  |  {wallet}  |  CPU L{p.cpu_level}  |  "
+                f"FW L{p.firewall_level}  |  {vpn}{mail_txt}"
+            )
         )
 
     def _window(self, key: str, title: str, width: int, height: int) -> tk.Toplevel:
@@ -151,11 +197,11 @@ class DesktopApp:
             win = self.open_windows[key]
             win.lift()
             win.focus_force()
+            sounds.play("click")
             return win
 
         win = tk.Toplevel(self.root)
         win.title(title)
-        win.geometry(f"{width}x{height}")
         win.configure(bg=COLORS["window"])
         win.protocol("WM_DELETE_WINDOW", lambda k=key: self._close_window(k))
 
@@ -168,16 +214,126 @@ class DesktopApp:
         body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         win._body = body  # type: ignore[attr-defined]
         self.open_windows[key] = win
+
+        self._animate_window_open(win, width, height)
+        sounds.play("open")
         return win
+
+    def _animate_window_open(self, win: tk.Toplevel, width: int, height: int) -> None:
+        self.root.update_idletasks()
+        base_x = self.root.winfo_x() + 60 + len(self.open_windows) * 18
+        base_y = self.root.winfo_y() + 50 + len(self.open_windows) * 14
+        state = {"step": 0}
+
+        def tick() -> None:
+            step = state["step"]
+            if step > self.ANIM_STEPS:
+                win.geometry(f"{width}x{height}+{base_x}+{base_y}")
+                return
+            progress = step / self.ANIM_STEPS
+            eased = 1 - (1 - progress) ** 3
+            cur_w = max(80, int(width * eased))
+            cur_h = max(40, int(height * eased))
+            off_x = (width - cur_w) // 2
+            off_y = height - cur_h
+            win.geometry(f"{cur_w}x{cur_h}+{base_x + off_x}+{base_y + off_y}")
+            state["step"] += 1
+            win.after(self.ANIM_MS, tick)
+
+        win.geometry(f"80x40+{base_x}+{base_y + height - 40}")
+        win.after(self.ANIM_MS, tick)
 
     def _close_window(self, key: str) -> None:
         if key in self.open_windows:
+            sounds.play("close")
             self.open_windows[key].destroy()
             del self.open_windows[key]
         if key == "terminal":
             self.game.close_terminal = False
+        if key == "mail":
+            self._mail_listbox = None
 
     # ----- apps -----
+
+    def open_mail(self) -> None:
+        win = self._window("mail", "Mail — Secure Inbox", 720, 500)
+        body: tk.Frame = win._body  # type: ignore[attr-defined]
+
+        tk.Label(body, text="INBOX", fg=COLORS["accent"], bg=COLORS["window"],
+                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W)
+
+        panes = tk.Frame(body, bg=COLORS["window"])
+        panes.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+
+        left = tk.Frame(panes, bg=COLORS["window"], width=240)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
+
+        listbox = tk.Listbox(
+            left, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=("Helvetica", 10), relief=tk.FLAT, selectbackground=COLORS["accent_dim"],
+            activestyle="none",
+        )
+        listbox.pack(fill=tk.BOTH, expand=True)
+        self._mail_listbox = listbox
+
+        right = tk.Frame(panes, bg=COLORS["window"])
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
+
+        meta = tk.Label(right, text="Select a message", fg=COLORS["muted"],
+                        bg=COLORS["window"], font=("Helvetica", 10), anchor=tk.W)
+        meta.pack(fill=tk.X)
+
+        viewer = scrolledtext.ScrolledText(
+            right, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=("Helvetica", 11), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        viewer.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        viewer.configure(state=tk.DISABLED)
+
+        def show_message(_event=None) -> None:
+            sel = listbox.curselection()
+            if not sel:
+                return
+            msg = self.game.mail.messages[sel[0]]
+            self.game.mail.mark_read(msg.mail_id)
+            meta.configure(
+                text=f"From: {msg.sender}  |  {msg.timestamp}  |  {msg.subject}",
+                fg=COLORS["text"],
+            )
+            viewer.configure(state=tk.NORMAL)
+            viewer.delete("1.0", tk.END)
+            viewer.insert(tk.END, msg.body)
+            viewer.configure(state=tk.DISABLED)
+            self._refresh_mail_badge()
+            self.refresh_taskbar()
+
+        listbox.bind("<<ListboxSelect>>", show_message)
+
+        btn_row = tk.Frame(body, bg=COLORS["window"])
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        tk.Button(btn_row, text="Mark All Read", command=self._mark_all_mail_read,
+                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+        tk.Button(btn_row, text="Open Job Board", command=self.open_job_board,
+                  bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+
+        self._populate_mail_list(listbox)
+        if self.game.mail.messages:
+            listbox.selection_set(0)
+            show_message()
+
+    def _populate_mail_list(self, listbox: tk.Listbox) -> None:
+        listbox.delete(0, tk.END)
+        for msg in self.game.mail.messages:
+            prefix = "● " if not msg.read else "   "
+            listbox.insert(tk.END, f"{prefix}{msg.subject[:42]}")
+
+    def _mark_all_mail_read(self) -> None:
+        self.game.mail.mark_all_read()
+        self._refresh_mail_badge()
+        self.refresh_taskbar()
+        if self._mail_listbox:
+            self._populate_mail_list(self._mail_listbox)
 
     def open_terminal(self) -> None:
         win = self._window("terminal", "Terminal — hacker@localhost", 780, 520)
@@ -219,6 +375,10 @@ class DesktopApp:
         def console_handler(text: str, tag: str = "normal") -> None:
             append_line(text, tag)
             self.refresh_taskbar()
+            if tag == "error":
+                sounds.play("error")
+            elif tag == "warn" and "INTRUSION" in text:
+                sounds.play("alert")
 
         Console.handler = console_handler
 
@@ -227,6 +387,7 @@ class DesktopApp:
             entry.delete(0, tk.END)
             if not cmd:
                 return
+            sounds.play("click")
             append_line(self.game.prompt() + cmd, "prompt")
             self.game.close_terminal = False
             self.game.dispatch(cmd)
@@ -245,7 +406,7 @@ class DesktopApp:
             self.terminal_booted = True
             self.game.banner()
 
-        win.after(100, entry.focus_set)
+        win.after(120, entry.focus_set)
 
     def open_job_board(self) -> None:
         win = self._window("jobs", "Job Board — Secure Contracts", 620, 480)
@@ -261,7 +422,7 @@ class DesktopApp:
             tk.Label(
                 body,
                 text="Complete training to unlock live contracts.\n"
-                     "Finish all tutorial lessons to graduate to career mode.",
+                     "Check Mail for messages from your training officer.",
                 fg=COLORS["warn"], bg=COLORS["window"], font=("Helvetica", 11),
                 justify=tk.LEFT,
             ).pack(anchor=tk.W, pady=8)
@@ -281,8 +442,8 @@ class DesktopApp:
             scroll.insert(tk.END, f"{m.status_line()}\n\n")
         scroll.configure(state=tk.DISABLED)
 
-        tk.Label(body, text="Accept contracts in Terminal: missions", fg=COLORS["muted"],
-                 bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(8, 0))
+        tk.Label(body, text="Contract details also arrive via Mail from brokers.",
+                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(8, 0))
 
     def open_shop(self) -> None:
         win = self._window("shop", "Black Market — Upgrades", 640, 520)
@@ -312,7 +473,9 @@ class DesktopApp:
             self.open_shop()
 
         def buy_item(key: str) -> None:
+            sounds.play("click")
             if Shop.buy(p, key):
+                sounds.play("success")
                 refresh_wallet()
                 refresh_shop()
 
@@ -404,6 +567,7 @@ class DesktopApp:
         lines.append(f"Connected:   {p.prompt_host}")
         lines.append(f"Routes:      {len(p.routes)}")
         lines.append(f"Tools:       {', '.join(sorted(p.owned_tools)) or 'none'}")
+        lines.append(f"Unread mail: {self.game.mail.unread_count()}")
 
         tk.Label(body, text="\n".join(lines), fg=COLORS["text"], bg=COLORS["window"],
                  font=("Courier", 11), justify=tk.LEFT, anchor=tk.NW).pack(fill=tk.BOTH, expand=True)

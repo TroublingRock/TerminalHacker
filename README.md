@@ -11,10 +11,13 @@ python3 main.py
 Opens a simulated desktop with icons for:
 
 - **Terminal** — scan, connect, crack, VPN, privesc, and more
+- **Mail** — NPC messages from trainers, brokers, and rivals (unread badge)
 - **Job Board** — contract missions (unlocks after tutorial)
 - **Black Market** — buy CPU, firewall, and cracking tools
 - **Training** — step-by-step tutorial curriculum
 - **System Status** — wallet, hardware, network info
+
+Features window open animations and sound effects (click, mail, alerts).
 
 ### Linux GUI dependency
 

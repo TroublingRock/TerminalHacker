@@ -370,10 +370,23 @@ class TutorialManager:
         if self.player.tutorial_step == self.DEFENSE_LESSON:
             self.defense_start_tick = self.player.ticks
             teach("Rivals will attack soon. Use tutorial credits to buy firewall BEFORE losses stack.")
+            self.game.mail.send(
+                "acid_k@rival.net",
+                "Your firewall is trash",
+                "I can see your public IP from here.\n"
+                "Buy a real firewall from the Shop before I take your tutorial credits.\n\n— acid_k",
+            )
 
         if self.player.tutorial_step >= len(TUTORIAL_CURRICULUM):
             self.graduate()
         else:
+            next_lesson = self.current()
+            self.game.mail.send(
+                "training_officer@terminalhacker.local",
+                f"Lesson passed: {lesson.title}",
+                f"Good work.\n\nNext up: {next_lesson.title}\n"
+                f"Objective: {next_lesson.objective}\n\n— Training Officer",
+            )
             self.show_lesson()
 
     def graduate(self) -> None:
@@ -389,7 +402,13 @@ class TutorialManager:
             "Use VPN, wipe logs, upgrade CPU/firewall, and take missions."
         )
         Console.out(f"  Starting career balance: ${p.money}\n")
-        self.game.missions.announce_login()
+        self.game.missions.announce_login(self.game.mail)
+        self.game.mail.send(
+            "security@terminalhacker.local",
+            "Career mode active",
+            "Training sandbox disabled. Traces and fines now affect your real balance.\n"
+            "Use VPN, upgrade firewall, and read your Mail for contracts.",
+        )
 
     def on_defense_tick(self) -> None:
         if not self.in_tutorial() or self.player.tutorial_step != self.DEFENSE_LESSON:
@@ -402,6 +421,59 @@ class TutorialManager:
             self.defense_survived = True
             success("Defense drill passed — firewall blocked rival probes.")
             self.check_advance()
+
+
+# ---------------------------------------------------------------------------
+# Mail / NPC messaging
+# ---------------------------------------------------------------------------
+
+@dataclass
+class MailMessage:
+    mail_id: str
+    sender: str
+    subject: str
+    body: str
+    read: bool = False
+    timestamp: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.timestamp:
+            self.timestamp = time.strftime("%Y-%m-%d %H:%M")
+
+
+class MailBox:
+    """In-game email from NPCs — brokers, trainers, rivals."""
+
+    def __init__(self) -> None:
+        self.messages: list[MailMessage] = []
+        self.on_new_mail: Callable[[MailMessage], None] | None = None
+        self._counter = 0
+
+    def send(self, sender: str, subject: str, body: str) -> MailMessage:
+        self._counter += 1
+        msg = MailMessage(
+            mail_id=f"mail-{self._counter:04d}",
+            sender=sender,
+            subject=subject,
+            body=body,
+        )
+        self.messages.insert(0, msg)
+        if self.on_new_mail:
+            self.on_new_mail(msg)
+        return msg
+
+    def unread_count(self) -> int:
+        return sum(1 for m in self.messages if not m.read)
+
+    def mark_read(self, mail_id: str) -> None:
+        for m in self.messages:
+            if m.mail_id == mail_id:
+                m.read = True
+                return
+
+    def mark_all_read(self) -> None:
+        for m in self.messages:
+            m.read = True
 
 
 # ---------------------------------------------------------------------------
@@ -436,14 +508,28 @@ class MissionBoard:
         ]
         self._announced = False
 
-    def announce_login(self) -> None:
+    def announce_login(self, mailbox: MailBox | None = None) -> None:
         if self._announced:
             return
         divider("INCOMING — MISSION BOARD")
         Console.out('  [ghost_broker] "You are cleared for live ops. Type missions."\n')
         self._announced = True
+        if mailbox:
+            mailbox.send(
+                "ghost_broker@darknet",
+                "You're cleared for live ops",
+                "Trainee,\n\nGood work surviving the lab. I have contracts on the Job Board.\n"
+                "Check Mail for details. Wipe your logs — always.\n\n— ghost_broker",
+            )
+            for mission in self.missions:
+                mailbox.send(
+                    f"{mission.broker}@darknet",
+                    f"Contract offer: {mission.mission_id}",
+                    f"{mission.briefing}\n\nReward: ${mission.reward}\n"
+                    "Accept by completing the objective. Payment on delivery.",
+                )
 
-    def check_completion(self, player: Player, network: VirtualNetwork) -> None:
+    def check_completion(self, player: Player, network: VirtualNetwork, mailbox: MailBox | None = None) -> None:
         for mission in self.missions:
             if mission.completed:
                 continue
@@ -455,6 +541,13 @@ class MissionBoard:
             if logs_ok:
                 mission.completed = True
                 player.earn(mission.reward, f"contract {mission.broker}")
+                if mailbox:
+                    mailbox.send(
+                        f"{mission.broker}@darknet",
+                        f"Payment confirmed — ${mission.reward}",
+                        f"Contract fulfilled.\n\n{mission.briefing}\n\n"
+                        f"Funds transferred. Stay quiet.",
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -795,6 +888,13 @@ class ThreatSystem:
 
         loss = random.randint(40, 100) * max(1, power - p.firewall_level)
         p.penalize(loss, f"{rival} breached your defenses")
+        self.game.mail.send(
+            f"{rival}@rival.net",
+            "We found your box",
+            f"Your firewall is weak (L{p.firewall_level}).\n"
+            "I skimmed your wallet. Patch your defenses or stay offline.\n\n"
+            f"— {rival}",
+        )
         if self.game.tutorial.in_tutorial():
             self.game.tutorial.defense_attacks_triggered += 1
 
@@ -810,11 +910,23 @@ class Game:
         self.player = Player()
         self.network = VirtualNetwork(career=False)
         self.missions = MissionBoard()
+        self.mail = MailBox()
         self.tutorial = TutorialManager(self)
         self.threat = ThreatSystem(self)
         self.running = True
         self.gui_mode = False
         self.close_terminal = False
+        self._seed_mail()
+
+    def _seed_mail(self) -> None:
+        self.mail.send(
+            "training_officer@terminalhacker.local",
+            "Welcome to TerminalHacker Training",
+            "Trainee,\n\nYou are enrolled in the cybersecurity lab.\n"
+            "Open Training on the desktop (or type 'lesson' in Terminal).\n\n"
+            "Your $500 tutorial budget covers training losses — career funds stay locked "
+            "until graduation.\n\n— Training Officer",
+        )
 
     def banner(self) -> None:
         divider("TERMINALHACKER — CYBERSECURITY TRAINING SIMULATOR")
@@ -878,7 +990,7 @@ class Game:
         self.tutorial.record_command(cmd)
         self.threat.on_tick()
         if self.player.phase == "career":
-            self.missions.check_completion(self.player, self.network)
+            self.missions.check_completion(self.player, self.network, self.mail)
         self.tutorial.check_advance()
 
     # ----- commands -----
