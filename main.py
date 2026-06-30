@@ -2,15 +2,16 @@
 """
 TerminalHacker — a single-player, text-based hacking simulator.
 
-Inspired by retro games like Slavehack, this CLI game teaches basic networking
-and OS concepts: IP addressing, remote connections, firewalls, log files, and
-covering your tracks after an intrusion.
+Inspired by retro games like Slavehack, this CLI game teaches networking and
+OS concepts through realistic mechanics: CIDR scanning, TCP handshakes, SSH
+authentication, NAT/public IP exposure, syslog/auth.log forensics, and IDS
+trace risk when logs are not wiped before disconnect.
 """
 
 from __future__ import annotations
 
 import random
-import sys
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -21,8 +22,7 @@ from typing import Callable
 # ---------------------------------------------------------------------------
 
 def divider(title: str = "") -> None:
-    """Print a scannable section divider for terminal output."""
-    line = "=" * 58
+    line = "=" * 62
     if title:
         print(f"\n{line}\n  {title}\n{line}")
     else:
@@ -45,125 +45,223 @@ def error(message: str) -> None:
     print(f"[-] {message}")
 
 
+def syslog_line(hostname: str, process: str, message: str, priority: int = 13) -> str:
+    """
+    RFC 5424-inspired syslog line.
+
+    Priority 13 = user-level informational messages, matching real Linux defaults.
+    """
+    ts = time.strftime("%b %d %H:%M:%S")
+    return f"<{priority}>{ts} {hostname} {process}: {message}"
+
+
 # ---------------------------------------------------------------------------
-# Virtual filesystem primitives
+# Virtual filesystem
 # ---------------------------------------------------------------------------
 
 @dataclass
 class VirtualFile:
-    """A named file stored on a virtual host (local or remote)."""
+    """Unix file with path, permissions, owner, and mutable content."""
 
-    name: str
+    path: str
     content: str = ""
+    owner: str = "root"
+    group: str = "root"
+    mode: str = "rw-r--r--"  # simplified permission string
+
+    @property
+    def name(self) -> str:
+        return self.path.rsplit("/", 1)[-1]
 
     def append(self, line: str) -> None:
-        """Append a line to the file — mirrors how real syslog entries are written."""
         if self.content and not self.content.endswith("\n"):
             self.content += "\n"
         self.content += line
 
     def read(self) -> str:
-        return self.content or "(empty file)"
+        return self.content or ""
 
 
 # ---------------------------------------------------------------------------
-# Remote server model
+# Network service model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class NetworkService:
+    port: int
+    name: str
+    banner: str
+    requires_auth: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Remote server
 # ---------------------------------------------------------------------------
 
 @dataclass
 class Server:
     """
-    A machine on the virtual network.
+    A host on the virtual LAN/WAN.
 
-    security_level acts like a firewall rating: higher values slow brute-force
-    attacks and represent stronger perimeter defenses.
+    security_level models firewall/IDS strength. open_services maps ports to
+    daemons (SSH, HTTP, etc.) like output from nmap -sV.
     """
 
     ip: str
     hostname: str
     security_level: int
+    os_name: str = "Linux 5.15.0-generic x86_64"
+    subnet_mask: str = "255.255.255.0"
     cracked: bool = False
+    ssh_user: str = "admin"
+    ssh_password: str = "changeme"
+    ids_alert_level: int = 0
+    services: list[NetworkService] = field(default_factory=list)
     files: dict[str, VirtualFile] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Every remote host keeps a syslog — a realistic artifact left behind
-        # when someone connects, probes, or cracks the system.
-        if "syslog" not in self.files:
-            self.files["syslog"] = VirtualFile("syslog", "SYSTEM BOOT COMPLETE\n")
+        if not self.services:
+            self.services = [
+                NetworkService(22, "ssh", "OpenSSH_8.9p1 Ubuntu-3ubuntu0.6"),
+                NetworkService(80, "http", "nginx/1.18.0"),
+            ]
+        self._seed_files()
 
-    @property
-    def syslog(self) -> VirtualFile:
-        return self.files["syslog"]
+    def _seed_files(self) -> None:
+        if self.files:
+            return
+        self.files = {
+            "/etc/hostname": VirtualFile("/etc/hostname", f"{self.hostname}\n", mode="rw-r--r--"),
+            "/etc/passwd": VirtualFile(
+                "/etc/passwd",
+                f"root:x:0:0:root:/root:/bin/bash\n"
+                f"{self.ssh_user}:x:1000:1000:{self.ssh_user}:/home/{self.ssh_user}:/bin/bash\n",
+                mode="rw-r--r--",
+            ),
+            f"/home/{self.ssh_user}/notes.txt": VirtualFile(
+                f"/home/{self.ssh_user}/notes.txt",
+                "Rotate passwords monthly.\n",
+                owner=self.ssh_user,
+                mode="rw-------",
+            ),
+            "/var/log/syslog": VirtualFile(
+                "/var/log/syslog",
+                syslog_line(self.hostname, "systemd", "System boot complete.") + "\n",
+                mode="rw-r-----",
+            ),
+            "/var/log/auth.log": VirtualFile(
+                "/var/log/auth.log",
+                syslog_line(self.hostname, "sshd", "Server listening on 0.0.0.0 port 22.") + "\n",
+                mode="rw-r-----",
+            ),
+        }
 
-    def log_action(self, action: str, source_ip: str) -> None:
-        """Record player activity in this server's syslog."""
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.syslog.append(f"[{timestamp}] {action} FROM {source_ip}")
+    def service_on_port(self, port: int) -> NetworkService | None:
+        for svc in self.services:
+            if svc.port == port:
+                return svc
+        return None
+
+    def open_port_numbers(self) -> list[int]:
+        return sorted(svc.port for svc in self.services)
+
+    def write_syslog(self, process: str, message: str) -> None:
+        self.files["/var/log/syslog"].append(syslog_line(self.hostname, process, message))
+
+    def write_auth(self, message: str) -> None:
+        self.files["/var/log/auth.log"].append(syslog_line(self.hostname, "sshd", message))
+
+    def raise_ids_alert(self, points: int) -> None:
+        self.ids_alert_level = min(10, self.ids_alert_level + points)
+
+    def logs_contain_ip(self, ip: str) -> bool:
+        for path in ("/var/log/syslog", "/var/log/auth.log"):
+            if path in self.files and ip in self.files[path].content:
+                return True
+        return False
 
 
 # ---------------------------------------------------------------------------
-# Player state
+# Player
 # ---------------------------------------------------------------------------
 
 @dataclass
 class Player:
-    """
-  Local player machine and credentials.
+    """Local machine: hardware, wallet, network identity, and session state."""
 
-  Hardware stats influence crack speed. Money can be lost if a trace succeeds.
-  connection holds the IP of the currently attached host ("localhost" = home).
-    """
-
-    local_ip: str = "127.0.0.1"
+    username: str = "hacker"
+    lan_ip: str = "192.168.1.100"
+    public_ip: str = "73.42.118.9"  # NAT address visible to remote hosts
+    gateway: str = "192.168.1.1"
+    subnet: str = "192.168.1.0/24"
     cpu_level: int = 2
-    ram: int = 4
-    hdd_space: int = 120
+    ram: int = 8
+    hdd_space: int = 256
     money: int = 500
     connection: str = "localhost"
-    files: dict[str, VirtualFile] = field(default_factory=dict)
+    cwd: str = "/home/hacker"
+    connected_port: int | None = None
+    has_remote_shell: bool = False
     discovered_ips: set[str] = field(default_factory=set)
-    # Tracks whether this session wrote traceable entries to the remote syslog.
-    left_footprint: bool = False
+    scan_results: dict[str, dict[int, str]] = field(default_factory=dict)
+    files: dict[str, VirtualFile] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.files:
             self.files = {
-                "notes.txt": VirtualFile(
-                    "notes.txt",
-                    "Welcome to TerminalHacker.\n"
-                    "Tip: scan the network, connect to targets, and always rm syslog.\n",
+                "/home/hacker/notes.txt": VirtualFile(
+                    "/home/hacker/notes.txt",
+                    "Ops checklist:\n"
+                    "  1) nmap the subnet\n"
+                    "  2) ssh to target port 22\n"
+                    "  3) crack credentials\n"
+                    "  4) cat /var/log/auth.log to verify traces\n"
+                    "  5) rm BOTH /var/log/syslog and /var/log/auth.log\n",
+                    owner=self.username,
+                    mode="rw-------",
                 ),
-                "tools.sh": VirtualFile("tools.sh", "#!/bin/bash\necho 'script toolkit'\n"),
+                "/home/hacker/wordlist.txt": VirtualFile(
+                    "/home/hacker/wordlist.txt",
+                    "password\nadmin\n123456\nletmein\n",
+                    owner=self.username,
+                ),
             }
 
     @property
     def prompt_host(self) -> str:
-        """Return the host segment shown in the shell prompt."""
-        return "localhost" if self.connection == "localhost" else self.connection
+        if self.is_local():
+            return "localhost"
+        return self.connection
 
     def is_local(self) -> bool:
         return self.connection == "localhost"
 
     def current_files(self, network: VirtualNetwork) -> dict[str, VirtualFile]:
-        """Files visible on whichever system the player is connected to."""
         if self.is_local():
             return self.files
         server = network.get_server(self.connection)
         return server.files if server else {}
 
-    def apply_trace_penalty(self) -> None:
-        """Penalty when law enforcement traces activity via uncleared logs."""
+    def reset_session(self) -> None:
+        self.connected_port = None
+        self.has_remote_shell = False
+
+    def apply_trace_penalty(self, ids_level: int) -> None:
+        severity = 1 + ids_level // 3
         penalty_type = random.choice(["money", "cpu"])
         if penalty_type == "money":
-            loss = random.randint(50, 150)
+            loss = random.randint(40, 90) * severity
             self.money = max(0, self.money - loss)
-            warn(f"TRACE SUCCESSFUL — fined ${loss}. Balance: ${self.money}")
+            warn(
+                f"ISP TRACE COMPLETE — law enforcement subpoenaed your account. "
+                f"Fine: ${loss}. Balance: ${self.money}"
+            )
         else:
-            damage = 1
+            damage = min(2, severity)
             self.cpu_level = max(1, self.cpu_level - damage)
             warn(
-                f"TRACE SUCCESSFUL — CPU damaged by {damage} level. "
-                f"CPU now level {self.cpu_level}."
+                f"FORENSIC SEIZURE — local CPU equipment confiscated for analysis. "
+                f"CPU level -{damage} (now {self.cpu_level})."
             )
 
 
@@ -172,22 +270,22 @@ class Player:
 # ---------------------------------------------------------------------------
 
 class VirtualNetwork:
-    """Registry of all remote servers reachable from the player's subnet."""
-
     def __init__(self) -> None:
         self.servers: dict[str, Server] = {}
         self._seed_network()
 
     def _seed_network(self) -> None:
-        """Populate the world with a few educational target machines."""
-        seed_data = [
-            ("192.168.1.10", "corp-gateway", 2, {"config.ini": "gateway_mode=strict\n"}),
-            ("192.168.1.25", "research-node", 3, {"data.db": "encrypted_records\n"}),
-            ("10.0.0.55", "vault-server", 4, {"vault.key": "REDACTED\n", "payroll.csv": "...\n"}),
+        seed = [
+            Server("192.168.1.10", "corp-gateway", 2, ssh_password="gateway22"),
+            Server("192.168.1.25", "research-node", 3, ssh_password="lab_secret"),
+            Server("10.0.0.55", "vault-server", 5, ssh_password="qu4ntum_vault"),
         ]
-        for ip, hostname, security, extra_files in seed_data:
-            files = {name: VirtualFile(name, body) for name, body in extra_files.items()}
-            self.servers[ip] = Server(ip=ip, hostname=hostname, security_level=security, files=files)
+        seed[2].services = [
+            NetworkService(22, "ssh", "OpenSSH_8.9p1"),
+            NetworkService(443, "https", "nginx/1.24.0"),
+        ]
+        for server in seed:
+            self.servers[server.ip] = server
 
     def get_server(self, ip: str) -> Server | None:
         return self.servers.get(ip)
@@ -197,216 +295,389 @@ class VirtualNetwork:
 
 
 # ---------------------------------------------------------------------------
-# Game engine / command dispatcher
+# Game engine
 # ---------------------------------------------------------------------------
 
 class Game:
-    """Main loop, command parsing, and educational mechanics."""
-
-    TRACE_CHANCE = 0.65  # Probability of getting caught if logs remain.
+    BASE_TRACE_CHANCE = 0.35
 
     def __init__(self) -> None:
         self.player = Player()
         self.network = VirtualNetwork()
         self.running = True
 
-    # ----- prompt & banner -------------------------------------------------
+    # ----- session helpers -------------------------------------------------
 
     def banner(self) -> None:
         divider("TERMINALHACKER")
         print(
-            "A text-based hacking simulator. Learn networking by doing.\n"
-            "Scan hosts, connect over IP, crack firewalls, and wipe your logs.\n"
-            "Type 'help' to begin.\n"
+            "Realistic terminal hacking simulator.\n"
+            "Your LAN IP is private; remote hosts log your PUBLIC IP via NAT.\n"
+            "Type 'help' to begin. Wipe ALL log files before disconnecting.\n"
         )
 
     def prompt(self) -> str:
-        return f"user@{self.player.prompt_host}:~# "
+        host = self.player.prompt_host
+        path = self.player.cwd if self.player.has_remote_shell or self.player.is_local() else "~"
+        shell = "#" if self.player.has_remote_shell or self.player.is_local() else ">"
+        return f"{self.player.username}@{host}:{path}{shell} "
 
-    # ----- logging side-effects --------------------------------------------
+    def remote_server(self) -> Server | None:
+        if self.player.is_local():
+            return None
+        return self.network.get_server(self.player.connection)
 
-    def _log_remote(self, server: Server, action: str) -> None:
-        """Append a traceable syslog entry and flag the session."""
-        server.log_action(action, self.player.local_ip)
-        self.player.left_footprint = True
+    def require_remote_shell(self) -> Server | None:
+        server = self.remote_server()
+        if server is None:
+            error("Not connected to a remote host.")
+            return None
+        if not self.player.has_remote_shell:
+            error("Shell access denied. Crack SSH credentials first (command: crack).")
+            return None
+        return server
+
+    def trace_chance(self, server: Server) -> float:
+        return min(0.95, self.BASE_TRACE_CHANCE + server.ids_alert_level * 0.08)
+
+    def resolve_path(self, path: str, files: dict[str, VirtualFile]) -> str | None:
+        if path.startswith("/"):
+            return path if path in files else None
+        joined = re.sub(r"/+", "/", f"{self.player.cwd.rstrip('/')}/{path}")
+        return joined if joined in files else None
+
+    def tcp_handshake(self, target: str, port: int) -> bool:
+        info(f"Sending SYN to {target}:{port} ...")
+        time.sleep(0.15)
+        info(f"Received SYN-ACK from {target}:{port}")
+        time.sleep(0.1)
+        info("Sending ACK — TCP session established.")
+        return True
+
+    def log_remote(self, server: Server, syslog_msg: str, auth_msg: str | None = None) -> None:
+        server.write_syslog("kernel", syslog_msg)
+        if auth_msg:
+            server.write_auth(auth_msg)
 
     # ----- commands --------------------------------------------------------
 
     def cmd_help(self, _args: list[str]) -> None:
         divider("AVAILABLE COMMANDS")
-        commands = [
-            ("help", "Show this help menu."),
-            ("scan", "Probe the subnet and reveal target IP addresses."),
-            ("connect [IP]", "Open a remote session to the given IP address."),
-            ("disconnect", "Close the remote session and return to localhost."),
-            ("probe", "Inspect firewall level and crack status (remote only)."),
-            ("crack", "Brute-force the remote firewall (remote only)."),
-            ("ls", "List files on the current system (local or remote)."),
-            ("rm [filename]", "Delete a file — use this to wipe syslog traces."),
-            ("status", "Show local hardware, money, and connection info."),
-            ("exit", "Quit the game."),
+        rows = [
+            ("help", "Show commands."),
+            ("ifconfig", "Show local NIC, LAN IP, gateway, and public (NAT) IP."),
+            ("scan / nmap [CIDR]", "Host discovery + port scan (e.g. nmap 192.168.1.0/24)."),
+            ("connect [IP] [port]", "Open TCP session (default port 22 / SSH)."),
+            ("disconnect", "Close remote session and return home."),
+            ("probe", "Service fingerprint on connected host (no shell required)."),
+            ("crack", "SSH password brute-force (requires open SSH session)."),
+            ("ls [path]", "List directory (shell required on remote)."),
+            ("cat [path]", "Read file contents (shell required on remote)."),
+            ("pwd / whoami / uname", "Standard Unix introspection."),
+            ("rm [path]", "Delete file — wipe /var/log/* before disconnect."),
+            ("status", "Hardware, money, and session info."),
+            ("exit", "Quit."),
         ]
-        for name, desc in commands:
-            print(f"  {name:<22} {desc}")
+        for name, desc in rows:
+            print(f"  {name:<24} {desc}")
         print()
 
-    def cmd_scan(self, _args: list[str]) -> None:
-        divider("NETWORK SCAN")
-        info("Broadcasting ARP probe on 192.168.1.0/24 and 10.0.0.0/24...")
-        time.sleep(0.4)
+    def cmd_ifconfig(self, _args: list[str]) -> None:
+        divider("IFCONFIG — eth0")
+        p = self.player
+        print(f"  eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500")
+        print(f"        inet {p.lan_ip}  netmask 255.255.255.0  broadcast 192.168.1.255")
+        print(f"        gateway {p.gateway}")
+        print(f"  NAT/public IP (seen by victims): {p.public_ip}")
+        print()
+
+    def cmd_scan(self, args: list[str]) -> None:
+        divider("NMAP HOST DISCOVERY")
+        cidr = args[0] if args else self.player.subnet
+        info(f"Starting Nmap 7.94 scan of {cidr}")
+        time.sleep(0.3)
+
         for server in self.network.list_targets():
+            if not server.ip.startswith("192.168.1.") and cidr.startswith("192.168.1"):
+                continue
             self.player.discovered_ips.add(server.ip)
-            success(f"Host found: {server.ip} ({server.hostname})")
-        info(f"{len(self.player.discovered_ips)} host(s) discovered. Use 'connect <IP>'.")
+            latency = random.randint(1, 18)
+            print(f"Nmap scan report for {server.hostname} ({server.ip})")
+            print(f"Host is up ({latency}ms latency).")
+            ports: dict[int, str] = {}
+            for svc in server.services:
+                state = "open"
+                line = f"{svc.port}/tcp  {state}  {svc.name}  {svc.banner}"
+                print(f"  {line}")
+                ports[svc.port] = f"{svc.name} ({svc.banner})"
+            self.player.scan_results[server.ip] = ports
+            print()
+        info("Scan complete. Use: connect <IP> 22")
 
     def cmd_connect(self, args: list[str]) -> None:
         if not args:
-            error("Usage: connect [IP]")
+            error("Usage: connect [IP] [port]")
             return
         if not self.player.is_local():
-            error("Disconnect from the current host before opening a new connection.")
+            error("Nested remote sessions are not supported. disconnect first.")
             return
 
-        target_ip = args[0]
+        target_ip, port = args[0], int(args[1]) if len(args) > 1 else 22
         if target_ip not in self.player.discovered_ips:
-            error("Unknown host. Run 'scan' to discover addresses on the network.")
+            error("Unknown host. Run scan/nmap against the subnet first.")
             return
 
         server = self.network.get_server(target_ip)
         if server is None:
-            error(f"No route to host {target_ip}.")
+            error(f"No route to host {target_ip}")
             return
 
-        divider("CONNECT")
-        info(f"Initiating TCP handshake to {target_ip}...")
-        time.sleep(0.5)
+        svc = server.service_on_port(port)
+        if svc is None:
+            error(f"Connection refused — nothing listening on {target_ip}:{port}")
+            return
+
+        divider(f"CONNECT {target_ip}:{port}")
+        self.tcp_handshake(target_ip, port)
+        print(f"\n{svc.banner}")
+
         self.player.connection = target_ip
-        self.player.left_footprint = False
-        self._log_remote(server, "CONNECTION")
-        success(f"Connected to {server.hostname} ({server.ip}).")
-        info("Remote syslog updated — your local IP may now be recorded.")
+        self.player.connected_port = port
+        self.player.has_remote_shell = False
+        self.player.cwd = f"/home/{server.ssh_user}"
+
+        self.log_remote(
+            server,
+            f"Connection from {self.player.public_ip} to {target_ip}:{port}",
+            f"Connection from {self.player.public_ip} port {random.randint(40000, 60000)}",
+        )
+        server.raise_ids_alert(1)
+
+        if svc.name == "ssh":
+            info("SSH session open. Authentication required — use 'crack' or disconnect.")
+        else:
+            info(f"{svc.name.upper()} port reachable. probe for details.")
+
+        success(f"Transport connected to {server.hostname} ({target_ip}:{port}).")
 
     def cmd_disconnect(self, _args: list[str]) -> None:
         if self.player.is_local():
             warn("Already on localhost.")
             return
 
-        remote_ip = self.player.connection
-        server = self.network.get_server(remote_ip)
-
+        server = self.remote_server()
         divider("DISCONNECT")
-        info(f"Closing session to {remote_ip}...")
+        info("Sending FIN — closing TCP session...")
 
-        # Educational mechanic: uncleared logs can lead to a trace.
-        if server and self.player.left_footprint and "syslog" in server.files:
-            if random.random() < self.TRACE_CHANCE:
-                warn("Remote syslog still contains your activity!")
-                self.player.apply_trace_penalty()
+        if server and server.logs_contain_ip(self.player.public_ip):
+            chance = self.trace_chance(server)
+            if random.random() < chance:
+                warn(
+                    f"Forensic review triggered (IDS level {server.ids_alert_level}, "
+                    f"trace chance {chance:.0%})."
+                )
+                self.player.apply_trace_penalty(server.ids_alert_level)
             else:
-                info("You got lucky — no trace this time. Wipe logs next time.")
+                info("Trace attempted but evidence was inconclusive this time.")
 
         self.player.connection = "localhost"
-        self.player.left_footprint = False
-        success("Back on localhost.")
+        self.player.cwd = "/home/hacker"
+        self.player.reset_session()
+        success("Session closed. Back on localhost.")
 
     def cmd_probe(self, _args: list[str]) -> None:
-        if self.player.is_local():
-            error("Probe requires an active remote connection.")
-            return
-
-        server = self.network.get_server(self.player.connection)
+        server = self.remote_server()
         if server is None:
-            error("Connection lost — host unreachable.")
             return
 
-        divider("PROBE")
-        info(f"Fingerprinting {server.hostname} ({server.ip})...")
-        time.sleep(0.4)
-        self._log_remote(server, "PROBE")
+        divider("SERVICE PROBE")
+        port = self.player.connected_port or 22
+        svc = server.service_on_port(port)
+        info(f"Fingerprinting {server.ip}:{port} ...")
+        time.sleep(0.35)
+
+        self.log_remote(
+            server,
+            f"Port scan/fingerprint from {self.player.public_ip}",
+            f"Did not receive identification string from {self.player.public_ip}",
+        )
+        server.raise_ids_alert(2)
+
+        print(f"  IP address:     {server.ip}")
         print(f"  Hostname:       {server.hostname}")
-        print(f"  Firewall level: {server.security_level}")
-        print(f"  Cracked:        {'yes' if server.cracked else 'no'}")
-        info("Probe logged to remote syslog.")
+        print(f"  OS guess:       {server.os_name}")
+        print(f"  Service:        {svc.name if svc else 'unknown'} on port {port}")
+        print(f"  Banner:         {svc.banner if svc else 'n/a'}")
+        print(f"  Firewall/IDS:   level {server.security_level} (alert {server.ids_alert_level}/10)")
+        print(f"  SSH auth:       {'cracked' if server.cracked else 'required'}")
+        warn("Probe activity written to /var/log/syslog and /var/log/auth.log")
 
     def cmd_crack(self, _args: list[str]) -> None:
-        if self.player.is_local():
-            error("Crack requires an active remote connection.")
-            return
-
-        server = self.network.get_server(self.player.connection)
+        server = self.remote_server()
         if server is None:
-            error("Connection lost — host unreachable.")
+            return
+        if self.player.connected_port != 22:
+            error("Brute-force is only implemented for SSH (port 22).")
             return
         if server.cracked:
-            warn(f"{server.hostname} is already cracked.")
+            self.player.has_remote_shell = True
+            warn("Host already cracked — shell access granted.")
             return
 
-        divider("BRUTE-FORCE ATTACK")
-        # CPU level reduces delay; firewall level increases required work.
+        divider("SSH BRUTE-FORCE")
+        wordlist = [
+            "password", "admin", "123456", "letmein", "root", server.ssh_password,
+        ]
+        random.shuffle(wordlist)
+
         difficulty = max(1, server.security_level - self.player.cpu_level + 1)
-        attempts = difficulty * 3
+        attempts = difficulty * 4
         info(
-            f"CPU level {self.player.cpu_level} vs firewall {server.security_level} "
-            f"— running {attempts} attempts..."
+            f"CPU level {self.player.cpu_level} vs target defense {server.security_level} "
+            f"— {attempts} login attempts queued."
         )
 
-        charset = "abcdefghijklmnopqrstuvwxyz0123456789"
         for i in range(1, attempts + 1):
-            guess = "".join(random.choice(charset) for _ in range(6))
-            delay = 0.15 + (server.security_level * 0.1) - (self.player.cpu_level * 0.05)
-            time.sleep(max(0.05, delay))
-            print(f"    attempt {i:02d}/{attempts}: {guess} ... denied")
+            guess = wordlist[i % len(wordlist)]
+            delay = 0.12 + server.security_level * 0.08 - self.player.cpu_level * 0.04
+            time.sleep(max(0.04, delay))
 
-        server.cracked = True
-        self._log_remote(server, "CRACK SUCCESS")
-        success(f"Firewall breached on {server.hostname}.")
-        info("Crack attempt recorded in syslog — cover your tracks!")
+            if guess != server.ssh_password:
+                print(f"    [{i:02d}/{attempts}] ssh {server.ssh_user}@{server.ip} :: {guess} -> FAIL")
+                server.write_auth(
+                    f"Failed password for {server.ssh_user} from {self.player.public_ip} port "
+                    f"{random.randint(40000, 60000)} ssh2"
+                )
+                server.raise_ids_alert(1)
+                continue
 
-    def cmd_ls(self, _args: list[str]) -> None:
-        files = self.player.current_files(self.network)
-        location = self.player.prompt_host
-        divider(f"FILE LISTING — {location}")
-        if not files:
-            info("No files found.")
+            server.cracked = True
+            self.player.has_remote_shell = True
+            server.write_auth(
+                f"Accepted password for {server.ssh_user} from {self.player.public_ip} port "
+                f"{random.randint(40000, 60000)} ssh2"
+            )
+            server.write_syslog("systemd", f"New session opened for user {server.ssh_user}")
+            success(f"Valid credentials: {server.ssh_user}:{guess}")
+            success("Remote shell unlocked. Prompt switched to '#'.")
             return
-        for name in sorted(files):
-            marker = " (log)" if name == "syslog" else ""
-            print(f"  {name}{marker}")
+
+        error("Wordlist exhausted. Upgrade CPU or try another target.")
+
+    def cmd_ls(self, args: list[str]) -> None:
+        if self.player.is_local():
+            files = self.player.files
+        else:
+            server = self.require_remote_shell()
+            if server is None:
+                return
+            files = server.files
+
+        target_dir = args[0] if args else self.player.cwd
+        if not target_dir.endswith("/"):
+            target_dir += "/"
+
+        divider(f"LS {target_dir}")
+        matches = sorted(p for p in files if p.startswith(target_dir))
+        if not matches:
+            info("Directory empty or path not found.")
+            return
+        for path in matches:
+            f = files[path]
+            name = path[len(target_dir):].split("/")[0]
+            if not name:
+                continue
+            if "/" in path[len(target_dir):]:
+                print(f"  {name}/")
+            else:
+                tag = " [LOG]" if path.startswith("/var/log/") else ""
+                print(f"  {f.mode}  {f.owner}:{f.group}  {path}{tag}")
         print()
+
+    def cmd_cat(self, args: list[str]) -> None:
+        if not args:
+            error("Usage: cat [path]")
+            return
+
+        if self.player.is_local():
+            files = self.player.files
+        else:
+            server = self.require_remote_shell()
+            if server is None:
+                return
+            files = server.files
+
+        path = self.resolve_path(args[0], files)
+        if path is None:
+            error(f"No such file: {args[0]}")
+            return
+
+        divider(f"CAT {path}")
+        content = files[path].read()
+        print(content if content else "(empty file)")
+        print()
+
+    def cmd_pwd(self, _args: list[str]) -> None:
+        print(self.player.cwd)
+
+    def cmd_whoami(self, _args: list[str]) -> None:
+        if self.player.is_local() or not self.player.has_remote_shell:
+            print(self.player.username)
+            return
+        server = self.remote_server()
+        print(server.ssh_user if server else self.player.username)
+
+    def cmd_uname(self, _args: list[str]) -> None:
+        if self.player.is_local():
+            print("Linux localhost 6.5.0-hacker #1 SMP x86_64 GNU/Linux")
+            return
+        server = self.remote_server()
+        print(server.os_name if server else "unknown")
 
     def cmd_rm(self, args: list[str]) -> None:
         if not args:
-            error("Usage: rm [filename]")
+            error("Usage: rm [path]")
             return
 
-        filename = args[0]
-        files = self.player.current_files(self.network)
-        location = self.player.prompt_host
+        if self.player.is_local():
+            files = self.player.files
+        else:
+            server = self.require_remote_shell()
+            if server is None:
+                return
+            files = server.files
 
-        divider("REMOVE FILE")
-        if filename not in files:
-            error(f"'{filename}' not found on {location}.")
+        path = self.resolve_path(args[0], files)
+        if path is None:
+            error(f"No such file: {args[0]}")
             return
 
-        del files[filename]
-        success(f"Deleted '{filename}' on {location}.")
-        if filename == "syslog" and not self.player.is_local():
-            self.player.left_footprint = False
-            info("Footprint cleared — safe to disconnect.")
+        divider(f"RM {path}")
+        del files[path]
+        success(f"Removed {path}")
+        if path.startswith("/var/log/") and not self.player.is_local():
+            server = self.remote_server()
+            if server and not server.logs_contain_ip(self.player.public_ip):
+                info("No remaining log entries reference your public IP.")
 
     def cmd_status(self, _args: list[str]) -> None:
-        divider("LOCAL STATUS")
-        print(f"  Money:      ${self.player.money}")
-        print(f"  CPU level:  {self.player.cpu_level}")
-        print(f"  RAM:        {self.player.ram} GB")
-        print(f"  HDD space:  {self.player.hdd_space} GB")
-        print(f"  Local IP:   {self.player.local_ip}")
-        print(f"  Connected:  {self.player.prompt_host}")
+        divider("STATUS")
+        p = self.player
+        print(f"  Money:         ${p.money}")
+        print(f"  CPU level:     {p.cpu_level}")
+        print(f"  RAM:           {p.ram} GB")
+        print(f"  HDD:           {p.hdd_space} GB")
+        print(f"  LAN IP:        {p.lan_ip}")
+        print(f"  Public IP:     {p.public_ip}")
+        print(f"  Connected:     {p.prompt_host}")
+        if p.connected_port:
+            print(f"  Remote port:   {p.connected_port}")
+        print(f"  Shell access:  {'yes' if p.has_remote_shell or p.is_local() else 'no'}")
         print()
 
     def cmd_exit(self, _args: list[str]) -> None:
         divider("SHUTDOWN")
-        print("Connection terminated. Stay stealthy.\n")
+        print("Powering off. Stay stealthy.\n")
         self.running = False
 
     # ----- dispatcher ------------------------------------------------------
@@ -416,28 +687,31 @@ class Game:
         if not parts:
             return
 
-        command = parts[0].lower()
-        args = parts[1:]
-
+        cmd, args = parts[0].lower(), parts[1:]
         handlers: dict[str, Callable[[list[str]], None]] = {
             "help": self.cmd_help,
+            "ifconfig": self.cmd_ifconfig,
             "scan": self.cmd_scan,
+            "nmap": self.cmd_scan,
             "connect": self.cmd_connect,
             "disconnect": self.cmd_disconnect,
             "probe": self.cmd_probe,
             "crack": self.cmd_crack,
             "ls": self.cmd_ls,
+            "cat": self.cmd_cat,
+            "pwd": self.cmd_pwd,
+            "whoami": self.cmd_whoami,
+            "uname": self.cmd_uname,
             "rm": self.cmd_rm,
             "status": self.cmd_status,
             "exit": self.cmd_exit,
             "quit": self.cmd_exit,
         }
-
-        handler = handlers.get(command)
+        handler = handlers.get(cmd)
         if handler:
             handler(args)
         else:
-            error(f"Unknown command '{command}'. Type 'help' for options.")
+            error(f"Unknown command '{cmd}'. Type 'help'.")
 
     def run(self) -> None:
         self.banner()
@@ -445,15 +719,11 @@ class Game:
             try:
                 raw = input(self.prompt())
             except (EOFError, KeyboardInterrupt):
-                print("\n")
+                print()
                 self.cmd_exit([])
                 break
             self.dispatch(raw)
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     Game().run()
