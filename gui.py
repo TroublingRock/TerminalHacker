@@ -16,6 +16,7 @@ from main import (
     Shop,
     TUTORIAL_CURRICULUM,
 )
+from progression import ACHIEVEMENTS, RANKS, ReputationSystem, SaveManager
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -111,7 +112,8 @@ class DesktopApp:
             ("jobs", "[]", "Job Board", "Paid contracts & missions", self.open_job_board),
             ("shop", "$", "Black Market", "CPU, firewall & tools", self.open_shop),
             ("training", "?", "Training", "Tutorial lessons & objectives", self.open_training),
-            ("status", "#", "System Status", "Hardware, VPN, wallet", self.open_status),
+            ("achieve", "*", "Achievements", "Badges & daily challenges", self.open_achievements),
+            ("status", "#", "System Status", "Hardware, VPN, save/load", self.open_status),
         ]
 
         for i, app in enumerate(apps):
@@ -185,9 +187,12 @@ class DesktopApp:
         vpn = "VPN ON" if p.vpn_active else "VPN off"
         unread = self.game.mail.unread_count()
         mail_txt = f" | Mail: {unread} unread" if unread else ""
+        rank_txt = ""
+        if p.phase == "career":
+            rank_txt = f" | {ReputationSystem.rank_name(p)} ({p.reputation} rep)"
         self.taskbar_label.configure(
             text=(
-                f"  {phase}{lesson}  |  {wallet}  |  CPU L{p.cpu_level}  |  "
+                f"  {phase}{lesson}{rank_txt}  |  {wallet}  |  CPU L{p.cpu_level}  |  "
                 f"FW L{p.firewall_level}  |  {vpn}{mail_txt}"
             )
         )
@@ -442,8 +447,20 @@ class DesktopApp:
             scroll.insert(tk.END, f"{m.status_line()}\n\n")
         scroll.configure(state=tk.DISABLED)
 
+        d = self.game.daily
+        daily_txt = f"Today's challenge: COMPLETE (+${d.reward})" if d.completed else (
+            f"Today's challenge: {d.description} — ${d.reward}"
+        )
+        tk.Label(body, text=daily_txt, fg=COLORS["teach"], bg=COLORS["window"],
+                 font=("Helvetica", 10), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(8, 4))
+
         tk.Label(body, text="Contract details also arrive via Mail from brokers.",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(8, 0))
+                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(4, 0))
+
+        btn_row = tk.Frame(body, bg=COLORS["window"])
+        btn_row.pack(fill=tk.X, pady=(10, 0))
+        tk.Button(btn_row, text="Request New Contract", command=self._request_contract,
+                  bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4).pack(side=tk.LEFT)
 
     def open_shop(self) -> None:
         win = self._window("shop", "Black Market — Upgrades", 640, 520)
@@ -508,6 +525,31 @@ class DesktopApp:
                 state=state,
             ).pack(side=tk.RIGHT)
 
+    def _request_contract(self) -> None:
+        self.game.cmd_contracts([])
+        self.refresh_taskbar()
+        self._close_window("jobs")
+        self.open_job_board()
+
+    def open_achievements(self) -> None:
+        win = self._window("achieve", "Achievements & Daily", 560, 440)
+        body: tk.Frame = win._body  # type: ignore[attr-defined]
+
+        tk.Label(body, text="ACHIEVEMENTS", fg=COLORS["accent"], bg=COLORS["window"],
+                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W)
+        scroll = scrolledtext.ScrolledText(body, height=12, bg=COLORS["terminal_bg"],
+                                           fg=COLORS["text"], font=("Helvetica", 10), relief=tk.FLAT)
+        scroll.pack(fill=tk.BOTH, expand=True, pady=8)
+        for key, desc in ACHIEVEMENTS.items():
+            mark = "[x]" if key in self.game.achievements.unlocked else "[ ]"
+            scroll.insert(tk.END, f"{mark} {desc}\n")
+        scroll.configure(state=tk.DISABLED)
+
+        d = self.game.daily
+        daily = "COMPLETE" if d.completed else f"{d.description} — ${d.reward}"
+        tk.Label(body, text=f"TODAY'S CHALLENGE: {daily}", fg=COLORS["teach"],
+                 bg=COLORS["window"], font=("Helvetica", 10), wraplength=520).pack(anchor=tk.W)
+
     def open_training(self) -> None:
         win = self._window("training", "Training Center", 640, 500)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
@@ -568,9 +610,25 @@ class DesktopApp:
         lines.append(f"Routes:      {len(p.routes)}")
         lines.append(f"Tools:       {', '.join(sorted(p.owned_tools)) or 'none'}")
         lines.append(f"Unread mail: {self.game.mail.unread_count()}")
+        if p.phase == "career":
+            lines.append(f"Rank:        {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
+            lines.append(f"IDS level:   {self.game.blue.ids_level}")
+            lines.append(f"Defense:     {'ON' if self.game.blue.defense_mode else 'off'}")
+            nxt = RANKS[min(p.rank_index + 1, len(RANKS) - 1)]
+            if p.rank_index < len(RANKS) - 1:
+                lines.append(f"Next rank:   {nxt.name} at {nxt.rep_required} rep")
 
         tk.Label(body, text="\n".join(lines), fg=COLORS["text"], bg=COLORS["window"],
                  font=("Courier", 11), justify=tk.LEFT, anchor=tk.NW).pack(fill=tk.BOTH, expand=True)
+
+        btn_row = tk.Frame(body, bg=COLORS["window"])
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        tk.Button(btn_row, text="Save Game", command=lambda: (SaveManager.save(self.game), sounds.play("success")),
+                  bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12).pack(side=tk.LEFT)
+        tk.Button(btn_row, text="Load Game", command=lambda: (SaveManager.load(self.game), self.refresh_taskbar()),
+                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_row, text="Chaos Mode (terminal: chaos)", command=self.open_terminal,
+                  bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT)
 
     def run(self) -> None:
         self.root.mainloop()

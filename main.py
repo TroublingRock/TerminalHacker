@@ -136,6 +136,10 @@ class Server:
     files: dict[str, VirtualFile] = field(default_factory=dict)
     extra_files: dict[str, str] = field(default_factory=dict)
     root_only_files: dict[str, str] = field(default_factory=dict)
+    company: str = ""
+    story: str = ""
+    min_rep: int = 0
+    chaos_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.services:
@@ -394,7 +398,11 @@ class TutorialManager:
         p.phase = "career"
         p.money = max(500, 500 + p.tutorial_credits)
         p.tutorial_credits = 0
-        self.game.network.add_career_hosts()
+        p.reputation = 100
+        p.rank_index = 1
+        if not any(r.destination == "10.0.0.0/24" for r in p.routes):
+            p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
+        self.game.network.deploy_company_hosts(p.reputation, False)
         divider("CAREER MODE UNLOCKED")
         success("Training complete. You are cleared for live contracts.")
         teach(
@@ -490,6 +498,8 @@ class Mission:
     reward: int
     require_log_wipe: bool = True
     completed: bool = False
+    rep_reward: int = 50
+    procedural: bool = False
 
     def status_line(self) -> str:
         mark = "[DONE]" if self.completed else "[OPEN]"
@@ -501,10 +511,10 @@ class MissionBoard:
         self.missions = [
             Mission("ghost-001", "ghost_broker",
                     "Hack 10.0.0.42, download corporate_secrets.txt, wipe logs.", "10.0.0.42",
-                    "/home/admin/corporate_secrets.txt", 750),
+                    "/home/admin/corporate_secrets.txt", 750, rep_reward=80),
             Mission("cipher-002", "cipher7",
                     "Crack vault-server (10.0.0.55), privesc, exfil payroll.csv.", "10.0.0.55",
-                    "/root/payroll.csv", 1500),
+                    "/root/payroll.csv", 1500, rep_reward=120),
         ]
         self._announced = False
 
@@ -529,25 +539,44 @@ class MissionBoard:
                     "Accept by completing the objective. Payment on delivery.",
                 )
 
-    def check_completion(self, player: Player, network: VirtualNetwork, mailbox: MailBox | None = None) -> None:
+    def check_completion(self, game: "Game") -> None:
+        player = game.player
         for mission in self.missions:
             if mission.completed:
                 continue
             fname = mission.target_file.rsplit("/", 1)[-1]
             if f"/home/hacker/downloads/{fname}" not in player.files:
                 continue
-            server = network.get_server(mission.target_ip)
+            server = game.network.get_server(mission.target_ip)
             logs_ok = not server or not server.player_left_traces(player)
             if logs_ok:
                 mission.completed = True
                 player.earn(mission.reward, f"contract {mission.broker}")
-                if mailbox:
-                    mailbox.send(
+                self.complete_mission_hooks(game, mission)
+                if game.mail:
+                    game.mail.send(
                         f"{mission.broker}@darknet",
                         f"Payment confirmed — ${mission.reward}",
-                        f"Contract fulfilled.\n\n{mission.briefing}\n\n"
-                        f"Funds transferred. Stay quiet.",
+                        f"Contract fulfilled.\n\n{mission.briefing}\n\nFunds transferred.",
                     )
+
+    def complete_mission_hooks(self, game: "Game", mission: Mission) -> None:
+        from progression import MissionGenerator, ReputationSystem
+
+        game.achievements.contracts_completed += 1
+        if game.achievements.contracts_completed >= 10:
+            game.achievements.unlock("contract_10")
+        ReputationSystem.add_rep(game, mission.rep_reward, mission.mission_id)
+        new_m = MissionGenerator.generate(game)
+        if new_m:
+            self.missions.append(new_m)
+            game.mail.send(
+                f"{new_m.broker}@darknet",
+                f"New contract: {new_m.mission_id}",
+                f"{new_m.briefing}\n\nReward: ${new_m.reward} + {new_m.rep_reward} rep",
+            )
+        from progression import SaveManager
+        SaveManager.save(game)
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +699,11 @@ class Player:
     tutorial_flags: set[str] = field(default_factory=set)
     files: dict[str, VirtualFile] = field(default_factory=dict)
     ticks: int = 0
+    reputation: int = 0
+    rank_index: int = 0
+    chaos_unlocked: bool = False
+    subnets_scanned: set[str] = field(default_factory=set)
+    session_cracked: bool = False
 
     def __post_init__(self) -> None:
         if not self.routes:
@@ -783,58 +817,34 @@ class VirtualNetwork:
             self.servers[s.ip] = s
 
         if career:
-            career_hosts = [
-                Server("192.168.1.10", "corp-gateway", 2, ssh_password="gateway22"),
-                Server("192.168.1.25", "research-node", 3, ssh_password="lab_secret"),
-                Server(
-                    "10.0.0.42", "corp-dc", 3, subnet="10.0.0.0/24", ssh_password="corp42!",
-                    extra_files={"/home/admin/corporate_secrets.txt": "Acquisition: NovaDyne\n"},
-                    privesc_available=True,
-                ),
-                Server(
-                    "10.0.0.55", "vault-server", 5, subnet="10.0.0.0/24", ssh_password="qu4ntum_vault",
-                    privesc_available=True,
-                    root_only_files={"/root/payroll.csv": "ceo,2.1M\n"},
-                ),
-            ]
-            career_hosts[-1].services = [
-                NetworkService(22, "ssh", "OpenSSH_8.9p1"),
-                NetworkService(443, "https", "nginx/1.24.0"),
-            ]
-            for s in career_hosts:
-                self.servers[s.ip] = s
+            self.deploy_company_hosts(150, False)
+
+    def deploy_company_hosts(self, reputation: int, chaos: bool) -> None:
+        from progression import COMPANY_HOSTS, build_company_server
+
+        for spec in COMPANY_HOSTS:
+            if spec["ip"] in self.servers:
+                continue
+            if spec.get("chaos_only") and not chaos:
+                continue
+            if reputation < spec.get("min_rep", 0):
+                continue
+            self.servers[spec["ip"]] = build_company_server(spec)
 
     def add_career_hosts(self) -> None:
-        if "10.0.0.42" in self.servers:
-            return
-        career_hosts = [
-            Server("192.168.1.10", "corp-gateway", 2, ssh_password="gateway22"),
-            Server("192.168.1.25", "research-node", 3, ssh_password="lab_secret"),
-            Server(
-                "10.0.0.42", "corp-dc", 3, subnet="10.0.0.0/24", ssh_password="corp42!",
-                extra_files={"/home/admin/corporate_secrets.txt": "Acquisition: NovaDyne\n"},
-                privesc_available=True,
-            ),
-            Server(
-                "10.0.0.55", "vault-server", 5, subnet="10.0.0.0/24", ssh_password="qu4ntum_vault",
-                privesc_available=True,
-                root_only_files={"/root/payroll.csv": "ceo,2.1M\n"},
-            ),
-        ]
-        career_hosts[-1].services = [
-            NetworkService(22, "ssh", "OpenSSH_8.9p1"),
-            NetworkService(443, "https", "nginx/1.24.0"),
-        ]
-        for s in career_hosts:
-            self.servers[s.ip] = s
+        self.deploy_company_hosts(150, False)
 
     def get_server(self, ip: str) -> Server | None:
         return self.servers.get(ip)
 
     def hosts_in_cidr(self, cidr: str, player: Player) -> list[Server]:
+        from progression import ReputationSystem
+
         return [
             s for s in self.servers.values()
             if ip_in_subnet(s.ip, cidr) and player.has_route_to(s.ip)
+            and player.reputation >= s.min_rep
+            and (not s.chaos_only or ReputationSystem.chaos_available(player))
         ]
 
 
@@ -864,6 +874,9 @@ class ThreatSystem:
 
         if p.ticks % 4 != 0:
             return
+        if self.game.blue.defense_mode and random.random() < 0.28:
+            self._maybe_attack(force=False)
+            return
         if p.firewall_level >= 4:
             return
         gap = max(0, 3 - p.firewall_level)
@@ -884,6 +897,15 @@ class ThreatSystem:
             success(f"Firewall blocked {rival}.")
             if self.game.tutorial.in_tutorial():
                 self.game.tutorial.defense_attacks_triggered += 1
+            else:
+                from progression import ReputationSystem
+                self.game.achievements.blocks_this_session += 1
+                self.game.blue.attacks_blocked += 1
+                if self.game.blue.defense_mode:
+                    ReputationSystem.add_rep(self.game, 25 + self.game.blue.block_bonus(), "defense block")
+                if self.game.achievements.blocks_this_session >= 3:
+                    self.game.achievements.unlock("fortress")
+                self.game.player.tutorial_flags.add("daily_block_done")
             return
 
         loss = random.randint(40, 100) * max(1, power - p.firewall_level)
@@ -907,12 +929,17 @@ class Game:
     BASE_TRACE_CHANCE = 0.35
 
     def __init__(self) -> None:
+        from progression import AchievementTracker, BlueTeamState, DailyChallenge
+
         self.player = Player()
         self.network = VirtualNetwork(career=False)
         self.missions = MissionBoard()
         self.mail = MailBox()
         self.tutorial = TutorialManager(self)
         self.threat = ThreatSystem(self)
+        self.achievements = AchievementTracker()
+        self.daily = DailyChallenge.for_today()
+        self.blue = BlueTeamState()
         self.running = True
         self.gui_mode = False
         self.close_terminal = False
@@ -990,8 +1017,34 @@ class Game:
         self.tutorial.record_command(cmd)
         self.threat.on_tick()
         if self.player.phase == "career":
-            self.missions.check_completion(self.player, self.network, self.mail)
+            self.missions.check_completion(self)
         self.tutorial.check_advance()
+        self._check_daily(cmd)
+        self._check_achievements()
+
+    def try_unlock(self, key: str) -> None:
+        from progression import ACHIEVEMENTS
+        if self.achievements.unlock(key):
+            success(f"ACHIEVEMENT UNLOCKED: {ACHIEVEMENTS.get(key, key)}")
+
+    def _check_daily(self, _cmd: str) -> None:
+        from progression import DAILY_FLAGS
+
+        if self.daily.completed or self.player.phase != "career":
+            return
+        flag = DAILY_FLAGS.get(self.daily.flag, "")
+        if flag and flag in self.player.tutorial_flags:
+            self.daily.completed = True
+            self.player.earn(self.daily.reward, "daily challenge")
+            self.achievements.dailies_completed += 1
+            if self.achievements.dailies_completed >= 5:
+                self.try_unlock("daily_master")
+            success(f"Daily complete: {self.daily.description} (+${self.daily.reward})")
+
+    def _check_achievements(self) -> None:
+        p = self.player
+        if p.cpu_level >= 6 and p.firewall_level >= 5:
+            self.try_unlock("max_gear")
 
     # ----- commands -----
 
@@ -1005,7 +1058,8 @@ class Game:
             "vpn [connect|disconnect|status]", "scan/nmap [CIDR]", "connect [IP] [port]",
             "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
-            "shop", "buy [item]", "missions", "status", "exit",
+            "shop", "buy [item]", "missions", "contracts", "status", "rank",
+            "achievements", "daily", "chaos", "defend", "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
 
@@ -1071,7 +1125,15 @@ class Game:
             return
         for s in targets:
             self.player.discovered_ips.add(s.ip)
-            Console.out(f"  {s.ip} ({s.hostname}) — open: " + ", ".join(str(svc.port) for svc in s.services))
+            company = f" [{s.company}]" if s.company else ""
+            story = f" — {s.story[:50]}..." if s.story else ""
+            Console.out(
+                f"  {s.ip} ({s.hostname}){company} — ports: "
+                + ", ".join(str(svc.port) for svc in s.services) + story
+            )
+        self.player.subnets_scanned.add(cidr)
+        if len(self.player.subnets_scanned) >= 3:
+            self.player.tutorial_flags.add("daily_scan3_done")
         info("Use connect <IP> 22")
 
     def cmd_connect(self, args: list[str]) -> None:
@@ -1112,8 +1174,15 @@ class Game:
             return
         server = self.remote_server()
         if server and server.player_left_traces(self.player):
-            if random.random() < self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08):
-                self.player.penalize(random.randint(50, 120), "Forensic trace after sloppy disconnect")
+            from progression import ReputationSystem
+            chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
+            if getattr(server, "chaos_only", False):
+                chance = min(0.95, chance * 2)
+            if random.random() < chance:
+                self.player.penalize(random.randint(50, 120), "Forensic trace")
+        else:
+            self.try_unlock("ghost_hands")
+            self.player.tutorial_flags.add("daily_zero_trace_done")
         self.player.connection = "localhost"
         self.player.cwd = "/home/hacker"
         self.player.reset_session()
@@ -1155,8 +1224,16 @@ class Game:
             self.player.has_remote_shell = True
             s.write_auth(f"Accepted password for {s.ssh_user} from {self.egress_ip()}")
             success(f"Shell access: {s.ssh_user}:{guess}")
+            self.player.session_cracked = True
+            self.try_unlock("first_blood")
+            if self.player.vpn_active:
+                self.try_unlock("vpn_shadow")
+            else:
+                self.player.tutorial_flags.add("daily_no_vpn_done")
             if self.player.phase == "career":
                 self.player.earn(50 + s.security_level * 25, "crack bounty")
+                from progression import ReputationSystem
+                ReputationSystem.add_rep(self, 15 + s.security_level * 5, "intrusion")
             return
         error("Failed — upgrade CPU or buy hydra/hashcat.")
 
@@ -1186,6 +1263,8 @@ class Game:
         self.player.remote_was_root = True
         self.player.cwd = "/root"
         success("You are now root. Prompt will show root@host#")
+        self.try_unlock("root_queen")
+        self.player.tutorial_flags.add("daily_privesc_done")
         teach("Root can read any file and persist malware — defend with least-privilege.")
 
     def cmd_download(self, args: list[str]) -> None:
@@ -1204,6 +1283,9 @@ class Game:
         local = f"/home/hacker/downloads/{name}"
         self.player.files[local] = VirtualFile(local, f.read(), owner=self.player.username)
         success(f"Exfiltrated to {local}")
+        if s.chaos_only:
+            self.try_unlock("chaos_walker")
+        self.missions.check_completion(self)
 
     def cmd_ls(self, args: list[str]) -> None:
         files = self.player.files if self.player.is_local() else (self.require_shell() and self.remote_server().files)
@@ -1279,7 +1361,8 @@ class Game:
         if not self.player.is_local() or not args:
             error("Usage: buy [item]")
             return
-        Shop.buy(self.player, args[0].lower())
+        if Shop.buy(self.player, args[0].lower()):
+            self.player.tutorial_flags.add("daily_buy_done")
 
     def cmd_missions(self, _a: list[str]) -> None:
         if self.player.phase == "tutorial":
@@ -1301,6 +1384,110 @@ class Game:
         Console.out(f"  VPN:        {'on' if p.vpn_active else 'off'} → {p.effective_egress_ip}")
         Console.out(f"  Routes:     {len(p.routes)}")
         Console.out(f"  Tools:      {', '.join(sorted(p.owned_tools)) or 'none'}")
+        if p.phase == "career":
+            from progression import ReputationSystem
+            Console.out(f"  Rank:       {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
+            Console.out(f"  IDS/FW:     L{p.firewall_level} / IDS L{self.blue.ids_level}")
+            Console.out(f"  Defense:    {'ON' if self.blue.defense_mode else 'off'}")
+            d = "DONE" if self.daily.completed else self.daily.description
+            Console.out(f"  Daily:      {d}")
+
+    def cmd_rank(self, _a: list[str]) -> None:
+        from progression import RANKS, ReputationSystem
+
+        divider("REPUTATION & RANK")
+        p = self.player
+        Console.out(f"  Current: {ReputationSystem.rank_name(p)} — {p.reputation} rep")
+        for i, rank in enumerate(RANKS):
+            mark = ">" if i == p.rank_index else " "
+            nxt = f" (need {rank.rep_required})" if i > p.rank_index else ""
+            Console.out(f"  {mark} {rank.name}{nxt}")
+            if rank.routes:
+                for cidr, gw in rank.routes:
+                    Console.out(f"      unlocks route {cidr} via {gw}")
+
+    def cmd_achievements(self, _a: list[str]) -> None:
+        from progression import ACHIEVEMENTS
+
+        divider("ACHIEVEMENTS")
+        for key, desc in ACHIEVEMENTS.items():
+            mark = "[x]" if key in self.achievements.unlocked else "[ ]"
+            Console.out(f"  {mark} {desc}")
+
+    def cmd_daily(self, _a: list[str]) -> None:
+        divider("DAILY CHALLENGE")
+        if self.daily.completed:
+            success(f"Completed: {self.daily.description}")
+        else:
+            Console.out(f"  {self.daily.description}")
+            Console.out(f"  Reward: ${self.daily.reward}")
+
+    def cmd_chaos(self, _a: list[str]) -> None:
+        from progression import CHAOS_CPU, CHAOS_FW, CHAOS_REP, ReputationSystem
+
+        divider("CHAOS MODE — HIGH RISK TARGETS")
+        if not ReputationSystem.chaos_available(self.player):
+            warn(f"Requires {CHAOS_REP} rep, CPU L{CHAOS_CPU}, FW L{CHAOS_FW}")
+            return
+        self.player.chaos_unlocked = True
+        self.network.deploy_company_hosts(self.player.reputation, True)
+        teach("Trace chance doubled. Rewards are extreme. You asked for chaos.")
+        for s in self.network.servers.values():
+            if s.chaos_only and self.player.has_route_to(s.ip):
+                Console.out(f"  {s.ip} {s.hostname} — FW L{s.security_level} — {s.story}")
+
+    def cmd_defend(self, args: list[str]) -> None:
+        if not args:
+            divider("BLUE TEAM — DEFENSE")
+            Console.out(f"  IDS level:    {self.blue.ids_level}")
+            Console.out(f"  Mode:         {'ACTIVE (+rep on blocks)' if self.blue.defense_mode else 'passive'}")
+            Console.out(f"  Blocks total: {self.blue.attacks_blocked}")
+            Console.out("  Usage: defend on | defend upgrade | defend block [IP]")
+            return
+        action = args[0].lower()
+        if action == "on":
+            self.blue.defense_mode = True
+            success("Defense mode ON — rivals attack more often; blocks earn rep.")
+            return
+        if action == "off":
+            self.blue.defense_mode = False
+            success("Defense mode off.")
+            return
+        if action == "upgrade":
+            cost = 200 * self.blue.ids_level
+            if not self.player.spend(cost, "IDS upgrade"):
+                return
+            self.blue.ids_level += 1
+            success(f"IDS level {self.blue.ids_level}")
+            return
+        if action == "block" and len(args) > 1:
+            ip = args[1]
+            self.blue.blocked_ips.add(ip)
+            success(f"Blocked {ip} on local firewall rules.")
+            return
+        error("Usage: defend [on|off|upgrade|block IP]")
+
+    def cmd_contracts(self, _a: list[str]) -> None:
+        if self.player.phase == "tutorial":
+            warn("Career only.")
+            return
+        from progression import MissionGenerator
+
+        m = MissionGenerator.generate(self)
+        if m:
+            self.missions.missions.append(m)
+            success(f"New contract: {m.briefing} (${m.reward})")
+            self.mail.send(f"{m.broker}@darknet", f"Contract {m.mission_id}", m.briefing)
+        else:
+            warn("No contracts available — complete one first or rank up.")
+
+    def cmd_save(self, _a: list[str]) -> None:
+        from progression import SaveManager
+        SaveManager.save(self)
+
+    def cmd_load(self, _a: list[str]) -> None:
+        from progression import SaveManager
+        SaveManager.load(self)
 
     def cmd_exit(self, _a: list[str]) -> None:
         if self.gui_mode:
@@ -1333,7 +1520,11 @@ class Game:
             "download": self.cmd_download, "ls": self.cmd_ls, "cat": self.cmd_cat,
             "rm": self.cmd_rm, "pwd": self.cmd_pwd, "whoami": self.cmd_whoami,
             "uname": self.cmd_uname, "shop": self.cmd_shop, "buy": self.cmd_buy,
-            "missions": self.cmd_missions, "status": self.cmd_status,
+            "missions": self.cmd_missions, "contracts": self.cmd_contracts,
+            "status": self.cmd_status, "rank": self.cmd_rank,
+            "achievements": self.cmd_achievements, "daily": self.cmd_daily,
+            "chaos": self.cmd_chaos, "defend": self.cmd_defend,
+            "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }
         if cmd in handlers:
