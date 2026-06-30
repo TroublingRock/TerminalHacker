@@ -116,9 +116,10 @@ Faction rep shifts from story choices, contract targets, and board posts. Perks 
 | New hosts | 8 hosts on 10.50/60/70/80 subnets — weeklies & hourlies use expanded 16-entry pools |
 | Story arcs | 3-part exclusive contracts per story branch (ghost / rivals / solo) |
 | Operations | All 9 ops reachable — fixed `op-vault` → `op-treasury`, added shadow/research/hr |
-| Season cycles | Monthly season reset with carryover bonus; 4 heists in rotation |
+| Season cycles | Monthly season reset with carryover bonus; **12 heists**, **4 active/month**, 3-month cycle |
 | Rival counters | Procedural hosts may spawn rival-race counter-missions |
 | Endless depth | 6 floor archetypes, 5 modifiers, boss floors every 5 with tool puzzles |
+| Heist retention | First-clear consumable + faction rep; branch mastery bonuses; repeat payout scales down |
 
 ### Balance notes (v1.2)
 

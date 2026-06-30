@@ -205,6 +205,11 @@ class MetaState:
     heist_branch: str = ""
     heist_score: int = 0
     heists_cleared: int = 0
+    heists_first_cleared: set[str] = field(default_factory=set)
+    heist_clear_counts: dict[str, int] = field(default_factory=dict)
+    heist_branches_cleared: dict[str, set[str]] = field(default_factory=dict)
+    heist_month_key: str = ""
+    heist_rotation_key: str = ""
     inventory: dict[str, int] = field(default_factory=dict)
     burner_commands_left: int = 0
     burner_mask_ip: str = ""
@@ -528,19 +533,23 @@ class WeeklyHeistManager:
         if game.player.phase != "career":
             return
         wk = WeeklyHeistManager.week_key()
-        if game.meta.weekly_heist_week == wk:
+        from longevity_content import HeistRotationManager, heist_branch_choices, all_weekly_heists
+        rot_key = HeistRotationManager.rotation_key()
+        if game.meta.heist_rotation_key == rot_key:
             return
+        game.meta.heist_rotation_key = rot_key
         game.meta.weekly_heist_week = wk
         game.meta.weekly_heist_done = False
         game.meta.weekly_heist_step = 0
         game.meta.heist_branch = ""
         game.missions.missions = [m for m in game.missions.missions if not getattr(m, "heist_id", "")]
-        from longevity_content import heist_for_week, heist_branch_choices, all_weekly_heists
-        week_num = int(wk.split("-W")[-1])
-        heist = heist_for_week(week_num)
+        from longevity_content import HeistRotationManager, heist_branch_choices, all_weekly_heists
+        heist = HeistRotationManager.current_heist()
+        game.meta.heist_month_key = HeistRotationManager.month_key()
         game.meta.weekly_heist_id = heist["id"]
         part = heist["parts"][0]
         mid = f"{heist['id']}-s1"
+        heist_mods = list(heist.get("modifiers", ["deadline"]))
         m = Mission(
             mid, heist["broker"], part["briefing"],
             part.get("target_ip", ""), part.get("target_file", ""),
@@ -548,10 +557,13 @@ class WeeklyHeistManager:
             mission_type=part.get("mission_type", "exfil"),
             require_privesc=part.get("require_privesc", False),
             heist_id=heist["id"], heist_step=1, weekly_bounty=True,
-            modifiers=["deadline"],
+            modifiers=heist_mods,
         )
-        m.timing_limit_ticks = 30
-        m.timing_start_tick = game.player.ticks
+        if "deadline" in heist_mods and not m.timing_limit_ticks:
+            m.timing_limit_ticks = 30
+            m.timing_start_tick = game.player.ticks
+        if "rival_race" in heist_mods:
+            game.meta.rival_race_prog[mid] = 0
         game.missions.missions.insert(0, m)
         game.mail.send(
             f"{heist['broker']}@darknet",
@@ -606,13 +618,11 @@ class WeeklyHeistManager:
         if step >= 3:
             game.meta.weekly_heist_done = True
             game.meta.heists_cleared += 1
-            bonus = 500 + game.meta.heist_score
-            game.player.earn(bonus, "weekly heist bonus")
+            from longevity_content import HeistRewardManager
+            bonus, tag = HeistRewardManager.on_complete(game, hid, game.meta.heist_branch)
             from retention import RetentionManager
             RetentionManager.add_season_xp(game, 200, "weekly heist")
-            success(f"WEEKLY HEIST COMPLETE — bonus ${bonus}")
-            if game.meta.heists_cleared >= 4:
-                game.achievements.unlock("heist_master")
+            success(f"WEEKLY HEIST COMPLETE — bonus ${bonus} ({tag})")
 
     @staticmethod
     def choose_branch(game: Game, branch: str) -> bool:
@@ -648,15 +658,17 @@ class WeeklyHeistManager:
 
     @staticmethod
     def status_lines(game: Game) -> list[str]:
-        from longevity_content import all_weekly_heists
+        from longevity_content import HeistRotationManager, all_weekly_heists
 
         hid = game.meta.weekly_heist_id
         heist = next((h for h in all_weekly_heists() if h["id"] == hid), None)
         name = heist["name"] if heist else "—"
-        return [
+        lines = [
             f"  Heist:     {name}",
             f"  Phase:     {game.meta.weekly_heist_step}/3",
             f"  Branch:    {game.meta.heist_branch or '—'}",
             f"  Done:      {'yes' if game.meta.weekly_heist_done else 'no'}",
             f"  Score:     {game.meta.heist_score}",
         ]
+        lines.extend(HeistRotationManager.pool_status_lines(game))
+        return lines

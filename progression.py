@@ -118,7 +118,8 @@ ACHIEVEMENTS: dict[str, str] = {
     "puzzle_slayer": "Complete 5 puzzle-host contracts",
     "social_engineer": "Complete 3 social engineering contracts",
     "pivot_pro": "Complete 3 multi-host pivot contracts",
-    "heist_master": "Complete 4 weekly heist arcs",
+    "heist_master": "Complete 12 weekly heist arcs",
+    "heist_legend": "First-clear all 12 heist arcs",
     "arc_ghost": "Complete the ghost story contract arc",
     "arc_rivals": "Complete the rivals story contract arc",
     "arc_solo": "Complete the solo story contract arc",
@@ -486,6 +487,13 @@ class SaveManager:
                 "heist_branch": game.meta.heist_branch,
                 "heist_score": game.meta.heist_score,
                 "heists_cleared": game.meta.heists_cleared,
+                "heists_first_cleared": list(game.meta.heists_first_cleared),
+                "heist_clear_counts": game.meta.heist_clear_counts,
+                "heist_branches_cleared": {
+                    k: list(v) for k, v in game.meta.heist_branches_cleared.items()
+                },
+                "heist_month_key": game.meta.heist_month_key,
+                "heist_rotation_key": game.meta.heist_rotation_key,
                 "inventory": game.meta.inventory,
                 "burner_commands_left": game.meta.burner_commands_left,
                 "burner_mask_ip": game.meta.burner_mask_ip,
@@ -716,6 +724,13 @@ class SaveManager:
                 heist_branch=md.get("heist_branch", ""),
                 heist_score=md.get("heist_score", 0),
                 heists_cleared=md.get("heists_cleared", 0),
+                heists_first_cleared=set(md.get("heists_first_cleared", [])),
+                heist_clear_counts=md.get("heist_clear_counts", {}),
+                heist_branches_cleared={
+                    k: set(v) for k, v in md.get("heist_branches_cleared", {}).items()
+                },
+                heist_month_key=md.get("heist_month_key", ""),
+                heist_rotation_key=md.get("heist_rotation_key", ""),
                 inventory=md.get("inventory", {}),
                 burner_commands_left=md.get("burner_commands_left", 0),
                 burner_mask_ip=md.get("burner_mask_ip", ""),
