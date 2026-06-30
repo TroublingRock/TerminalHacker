@@ -459,9 +459,15 @@ class MasteryGrader:
         score = 100
         notes: list[str] = []
 
-        if server and server.player_left_traces(p):
+        from depth_systems import SpecializationManager, ToolManager
+        score += SpecializationManager.grade_bonus(game)
+
+        if server and server.player_left_traces(p) and not ToolManager.logs_clean_enough(game, server, p):
             score -= 35
             notes.append("log traces (-35)")
+        elif server and server.ip in game.meta.forged_servers:
+            score -= 8
+            notes.append("forged logs (-8)")
         elif mission.require_log_wipe and server:
             notes.append("clean logs (+)")
 

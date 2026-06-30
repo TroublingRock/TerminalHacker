@@ -1059,6 +1059,10 @@ class RetentionManager:
         from session_content import HourlyManager
         HourlyManager.refresh(game)
 
+        from depth_systems import RivalHeatManager, WeeklyHeistManager
+        RivalHeatManager.decay_on_login(game)
+        WeeklyHeistManager.refresh(game)
+
         from story_system import StoryManager
         StoryManager.ensure_intro(game)
         from social_board import SocialBoardManager
@@ -1696,6 +1700,48 @@ class RetentionManager:
         if mtype == "defense":
             return "op_defense_done" in p.tutorial_flags
 
+        from depth_systems import ModifierManager, ToolManager
+
+        if ModifierManager.requires_vpn(mission) and not p.vpn_active:
+            return False
+
+        def logs_ok(server, require_wipe: bool) -> bool:
+            if not require_wipe:
+                return True
+            if not server:
+                return True
+            return ToolManager.logs_clean_enough(game, server, p)
+
+        if getattr(mission, "heist_id", "") and mtype in (
+            "exfil", "root_heist", "ghost", "social", "recon", "scan_subnet",
+        ):
+            if mtype == "ghost":
+                return mission.target_ip in game.retention.ghost_targets_done
+            if mtype == "recon":
+                return (
+                    mission.target_ip in p.discovered_ips
+                    and mission.target_ip in game.retention.session_probed
+                )
+            if mtype == "scan_subnet":
+                return mission.target_ip in p.subnets_scanned
+            if mtype == "social":
+                if not mission.target_file:
+                    return False
+                fname = mission.target_file.rsplit("/", 1)[-1]
+                if f"/home/hacker/downloads/{fname}" not in p.files:
+                    return False
+                return logs_ok(game.network.get_server(mission.target_ip), mission.require_log_wipe)
+            if not mission.target_file:
+                return mtype == "ghost"
+            fname = mission.target_file.rsplit("/", 1)[-1]
+            if f"/home/hacker/downloads/{fname}" not in p.files:
+                return False
+            server = game.network.get_server(mission.target_ip)
+            if mtype == "root_heist" and mission.require_privesc:
+                if mission.target_ip not in p.privesc_hosts and not p.remote_was_root:
+                    return False
+            return logs_ok(server, mission.require_log_wipe)
+
         if mtype == "social":
             server = game.network.get_server(mission.target_ip)
             if not mission.target_file:
@@ -1706,13 +1752,13 @@ class RetentionManager:
             pid = getattr(server, "puzzle_id", "") if server else ""
             if pid == "http_intel":
                 if f"curl_{mission.target_ip}_http_intel_read" not in game.variety.social_flags:
-                    return False
+                    if mission.target_ip not in game.meta.phished_ips:
+                        return False
             elif pid == "spearphish_read":
                 if f"spear_{mission.target_ip}" not in game.variety.social_flags:
-                    return False
-            if server and mission.require_log_wipe and server.player_left_traces(p):
-                return False
-            return True
+                    if mission.target_ip not in game.meta.phished_ips:
+                        return False
+            return logs_ok(server, mission.require_log_wipe)
 
         if mtype == "timing":
             from variety_content import VarietyManager
@@ -1724,7 +1770,7 @@ class RetentionManager:
             if f"/home/hacker/downloads/{fname}" not in p.files:
                 return False
             server = game.network.get_server(mission.target_ip)
-            return not server or not server.player_left_traces(p)
+            return logs_ok(server, mission.require_log_wipe)
 
         if mtype == "pivot":
             step = game.variety.pivot_step.get(mission.mission_id, 0)
@@ -1737,9 +1783,9 @@ class RetentionManager:
                 return False
             jump = game.network.get_server(mission.pivot_host)
             target = game.network.get_server(mission.target_ip)
-            if jump and jump.player_left_traces(p):
+            if jump and not logs_ok(jump, True):
                 return False
-            if target and target.player_left_traces(p):
+            if target and not logs_ok(target, True):
                 return False
             return True
 
@@ -1753,10 +1799,6 @@ class RetentionManager:
                 if mission.target_ip not in p.privesc_hosts and not p.remote_was_root:
                     return False
             server = game.network.get_server(mission.target_ip)
-            if mission.require_log_wipe and server and server.player_left_traces(p):
-                return False
-            if mtype == "root_heist" and "/root/" in mission.target_file:
-                return p.remote_was_root or fname in [k.rsplit("/", 1)[-1] for k in p.files if "/downloads/" in k]
-            return not server or not server.player_left_traces(p)
+            return logs_ok(server, mission.require_log_wipe)
 
         return False

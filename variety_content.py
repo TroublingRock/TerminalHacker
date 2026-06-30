@@ -365,12 +365,24 @@ class VarietyMissionGenerator:
         mid = f"proc-{game.variety.procedural_counter}-{random.randint(1000, 9999)}"
 
         if mtype == "social":
-            return VarietyMissionGenerator._social(game, server, company, mid, random.choice(BROKERS))
+            return VarietyMissionGenerator._finish(
+                game, VarietyMissionGenerator._social(game, server, company, mid, random.choice(BROKERS)))
         if mtype == "timing":
-            return VarietyMissionGenerator._timing(game, server, company, mid, random.choice(BROKERS))
+            return VarietyMissionGenerator._finish(
+                game, VarietyMissionGenerator._timing(game, server, company, mid, random.choice(BROKERS)))
         if mtype == "pivot":
-            return VarietyMissionGenerator._pivot(game, server, company, mid, random.choice(BROKERS))
-        return VarietyMissionGenerator._classic(game, server, company, mid, random.choice(BROKERS), mtype)
+            return VarietyMissionGenerator._finish(
+                game, VarietyMissionGenerator._pivot(game, server, company, mid, random.choice(BROKERS)))
+        return VarietyMissionGenerator._finish(
+            game,
+            VarietyMissionGenerator._classic(game, server, company, mid, random.choice(BROKERS), mtype),
+        )
+
+    @staticmethod
+    def _finish(game: Game, mission: "Mission") -> "Mission":
+        from depth_systems import ModifierManager
+        ModifierManager.apply_to_mission(mission, game)
+        return mission
 
     @staticmethod
     def _pick_loot_file(server: Server) -> str:

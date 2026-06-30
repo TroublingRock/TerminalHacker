@@ -523,6 +523,9 @@ class Mission:
     pivot_host: str = ""
     timing_limit_ticks: int = 0
     timing_start_tick: int = 0
+    modifiers: list[str] = field(default_factory=list)
+    heist_id: str = ""
+    heist_step: int = 0
 
     def status_line(self) -> str:
         mark = "[DONE]" if self.completed else "[OPEN]"
@@ -533,8 +536,12 @@ class Mission:
             tag = " [LATERAL]"
         elif self.endless_floor:
             tag = " [ENDLESS]"
+        elif self.weekly_bounty and self.heist_id:
+            tag = f" [HEIST {self.heist_step}]"
         elif self.weekly_bounty:
             tag = " [WEEKLY]"
+        elif self.modifiers:
+            tag = f" [+{len(self.modifiers)} MOD]"
         elif self.operation_id:
             tag = f" [OP {self.operation_step}]"
         elif self.mission_type not in ("exfil",):
@@ -599,6 +606,8 @@ class MissionBoard:
             grade, mult, summary = MasteryGrader.grade(game, mission)
             mission.grade = grade
             payout = int(mission.reward * mult)
+            from depth_systems import ModifierManager
+            payout = int(payout * ModifierManager.payout_mult(mission, game))
             if mission.hourly_event and mission.reward_multiplier > 1:
                 payout = int(payout * mission.reward_multiplier)
             rep = mission.rep_reward + MasteryGrader.rep_bonus(grade)
@@ -642,6 +651,10 @@ class MissionBoard:
             if game.variety.pivot_completions >= 3:
                 game.achievements.unlock("pivot_pro")
         if game.player.phase == "career":
+            from depth_systems import RivalHeatManager, WeeklyHeistManager
+            RivalHeatManager.on_contract_complete(game, mission)
+            if getattr(mission, "heist_id", ""):
+                WeeklyHeistManager.on_step_complete(game, mission)
             from social_board import SocialBoardManager
             SocialBoardManager.on_contract_complete(game, mission)
         new_m = MissionGenerator.generate(game)
@@ -1010,6 +1023,8 @@ class ThreatSystem:
         gap = max(0, 3 - p.firewall_level)
         from retention import RetentionManager
         threat_bonus = RetentionManager.rival_threat_bonus(self.game)
+        from depth_systems import RivalHeatManager
+        threat_bonus += RivalHeatManager.threat_bonus(self.game)
         # Rookie grace: first ~20 commands in career, rivals probe less often
         rookie = p.ticks < 20 and len(self.game.retention.completed_operations) == 0
         chance = (0.12 if rookie else 0.16) * gap + threat_bonus
@@ -1020,6 +1035,9 @@ class ThreatSystem:
         p = self.game.player
         from retention import RetentionManager
         rival = RetentionManager.pick_rival_attacker(self.game)
+        from depth_systems import RivalHeatManager
+        if sum(self.game.meta.subnet_heat.values()) >= 3:
+            rival = RivalHeatManager.pick_attacker(self.game)
         power = RetentionManager.rival_attack_power(
             self.game, random.randint(2, 4),
         )
@@ -1038,7 +1056,9 @@ class ThreatSystem:
                 self.game.achievements.blocks_this_session += 1
                 self.game.blue.attacks_blocked += 1
                 if self.game.blue.defense_mode:
-                    ReputationSystem.add_rep(self.game, 25 + self.game.blue.block_bonus(), "defense block")
+                    from depth_systems import SpecializationManager
+                    rep = int((25 + self.game.blue.block_bonus()) * SpecializationManager.defense_rep_mult(self.game))
+                    ReputationSystem.add_rep(self.game, rep, "defense block")
                 if self.game.achievements.blocks_this_session >= 3:
                     self.game.achievements.unlock("fortress")
                 self.game.player.tutorial_flags.add("daily_block_done")
@@ -1098,6 +1118,8 @@ class Game:
         self.story = StoryState()
         self.board = SocialBoardState()
         self.variety = VarietyState()
+        from depth_systems import MetaState
+        self.meta = MetaState()
         self.daily = RetentionManager.make_daily_challenge()
         self.blue = BlueTeamState()
         self.running = True
@@ -1200,6 +1222,8 @@ class Game:
         if self.player.phase == "career":
             from retention import RetentionManager
             RetentionManager.check_bridge_triggers(self)
+            from depth_systems import ModifierManager
+            ModifierManager.on_post_command(self)
 
     def try_unlock(self, key: str) -> None:
         from progression import ACHIEVEMENTS
@@ -1242,7 +1266,8 @@ class Game:
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
-            "endless", "story", "board",
+            "endless", "story", "board", "spec", "heist", "heat",
+            "phish", "tunnel", "plant", "forge",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1337,6 +1362,8 @@ class Game:
             return
         ip = args[0]
         port = int(args[1]) if len(args) > 1 else 22
+        from depth_systems import ToolManager
+        ip, port = ToolManager.resolve_connect(self, ip, port)
         if ip not in self.player.discovered_ips:
             error("Unknown host — scan first.")
             return
@@ -1381,6 +1408,8 @@ class Game:
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
             if getattr(server, "chaos_only", False):
                 chance = min(0.95, chance * 2)
+            from depth_systems import RivalHeatManager
+            chance += RivalHeatManager.trace_bonus(self, server)
             if self.player.phase == "endless":
                 from endless_mode import EndlessManager
                 chance = max(0.05, chance + EndlessManager.trace_modifier(self))
@@ -1442,9 +1471,17 @@ class Game:
         if puzzle_msg:
             error(puzzle_msg)
             return
+        from depth_systems import ToolManager
+        if ToolManager.has_backdoor(self, s.ip):
+            s.cracked = True
+            self.player.has_remote_shell = True
+            success(f"Backdoor shell on {s.hostname} — no brute-force needed.")
+            return
 
         divider("SSH BRUTE-FORCE")
         words = ["password", "admin", "123456", s.ssh_password]
+        if s.ip in self.meta.phished_ips:
+            words = [s.ssh_password] + words
         if "hydra" in self.player.owned_tools:
             words = [s.ssh_password] + [w for w in words if w != s.ssh_password]
         attempts = max(2, int((s.security_level - self.player.cpu_level + 2) * 3 * self.player.crack_attempt_reduction()))
@@ -1539,8 +1576,12 @@ class Game:
         if not self.player.has_route_to(ip):
             error(f"No route to {ip}.")
             return
+        from depth_systems import ModifierManager
         from variety_content import PuzzleManager, VarietyManager
 
+        if ModifierManager.blocks_curl(self, ip):
+            error("Air-gapped target — curl blocked for active contract.")
+            return
         body = VarietyManager.fetch_http(self, ip, path)
         divider(f"CURL {url}")
         if body is None:
@@ -1569,6 +1610,9 @@ class Game:
         local = f"/home/hacker/downloads/{name}"
         self.player.files[local] = VirtualFile(local, f.read(), owner=self.player.username)
         success(f"Exfiltrated to {local}")
+        from depth_systems import ModifierManager
+        if self.remote_server():
+            ModifierManager.on_decoy_download(self, self.remote_server(), path)
         from session_content import LateralManager
         LateralManager.on_exfil_step(self, s.ip, path)
         if s.chaos_only:
@@ -1665,11 +1709,19 @@ class Game:
         if not self.player.is_local():
             error("Shop on localhost only.")
             return
+        from depth_systems import ModifierManager
+        if ModifierManager.shop_blocked(self):
+            error("Active no-shop contract — finish it before buying gear.")
+            return
         Shop.list_items(self.player)
 
     def cmd_buy(self, args: list[str]) -> None:
         if not self.player.is_local() or not args:
             error("Usage: buy [item]")
+            return
+        from depth_systems import ModifierManager
+        if ModifierManager.shop_blocked(self):
+            error("Active no-shop contract — finish it before buying gear.")
             return
         if Shop.buy(self.player, args[0].lower()):
             self.player.tutorial_flags.add("daily_buy_done")
@@ -2046,6 +2098,58 @@ class Game:
             return
         error(f"Usage: board [<{'|'.join(BOARD_NAMES)}>|post|upvote]")
 
+    def cmd_spec(self, args: list[str]) -> None:
+        from depth_systems import SPECIALIZATIONS, SpecializationManager
+
+        divider("SPECIALIZATION")
+        spec = self.meta.specialization
+        if spec:
+            Console.out(f"  Active: {SPECIALIZATIONS[spec]['name']} — {SPECIALIZATIONS[spec]['desc']}")
+        elif self.meta.spec_unlock_pending:
+            Console.out("  UNLOCKED — pick with: spec pick <ghost|broker|saboteur|architect>")
+        else:
+            Console.out("  Unlocks at rank Packet Runner or Ghost in the Wires.")
+        if args and args[0] == "pick" and len(args) > 1:
+            SpecializationManager.pick(self, args[1].lower())
+        elif args and args[0] == "respec":
+            SpecializationManager.respec(self)
+
+    def cmd_heist(self, args: list[str]) -> None:
+        from depth_systems import WeeklyHeistManager
+
+        divider("WEEKLY HEIST")
+        for line in WeeklyHeistManager.status_lines(self):
+            Console.out(line)
+        if args and args[0] == "choose" and len(args) > 1:
+            WeeklyHeistManager.choose_branch(self, args[1].lower())
+
+    def cmd_heat(self, _a: list[str]) -> None:
+        from depth_systems import RivalHeatManager
+
+        divider("SUBNET HEAT — RIVAL PRESSURE")
+        for line in RivalHeatManager.status_lines(self):
+            Console.out(line)
+        Console.out("\n  High heat = more traces and rival attacks on that subnet.")
+
+    def cmd_phish(self, args: list[str]) -> None:
+        if not args:
+            error("Usage: phish <IP>")
+            return
+        from depth_systems import ToolManager
+        ToolManager.cmd_phish(self, args[0])
+
+    def cmd_tunnel(self, args: list[str]) -> None:
+        from depth_systems import ToolManager
+        ToolManager.cmd_tunnel(self, args)
+
+    def cmd_plant(self, _a: list[str]) -> None:
+        from depth_systems import ToolManager
+        ToolManager.cmd_plant(self)
+
+    def cmd_forge(self, _a: list[str]) -> None:
+        from depth_systems import ToolManager
+        ToolManager.cmd_forge(self)
+
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
         SaveManager.save(self)
@@ -2095,6 +2199,9 @@ class Game:
             "intel": self.cmd_intel, "rivals": self.cmd_rivals, "bridge": self.cmd_bridge,
             "chains": self.cmd_chains, "hourly": self.cmd_hourly, "grades": self.cmd_grades,
             "endless": self.cmd_endless, "story": self.cmd_story, "board": self.cmd_board,
+            "spec": self.cmd_spec, "heist": self.cmd_heist, "heat": self.cmd_heat,
+            "phish": self.cmd_phish, "tunnel": self.cmd_tunnel, "plant": self.cmd_plant,
+            "forge": self.cmd_forge,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

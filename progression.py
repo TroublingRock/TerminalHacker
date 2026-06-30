@@ -118,6 +118,7 @@ ACHIEVEMENTS: dict[str, str] = {
     "puzzle_slayer": "Complete 5 puzzle-host contracts",
     "social_engineer": "Complete 3 social engineering contracts",
     "pivot_pro": "Complete 3 multi-host pivot contracts",
+    "heist_master": "Complete 4 weekly heist arcs",
 }
 
 DAILY_POOL = [
@@ -212,6 +213,8 @@ class ReputationSystem:
             )
             if p.rank_index >= 3:
                 game.achievements.unlock("rank_ghost")
+            from depth_systems import SpecializationManager
+            SpecializationManager.on_rank_up(game, p.rank_index)
 
     @staticmethod
     def chaos_available(player: Player) -> bool:
@@ -331,7 +334,10 @@ class SaveManager:
                  "social_file": getattr(m, "social_file", ""),
                  "pivot_host": getattr(m, "pivot_host", ""),
                  "timing_limit_ticks": getattr(m, "timing_limit_ticks", 0),
-                 "timing_start_tick": getattr(m, "timing_start_tick", 0)}
+                 "timing_start_tick": getattr(m, "timing_start_tick", 0),
+                 "modifiers": getattr(m, "modifiers", []),
+                 "heist_id": getattr(m, "heist_id", ""),
+                 "heist_step": getattr(m, "heist_step", 0)}
                 for m in game.missions.missions
             ],
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
@@ -443,6 +449,23 @@ class SaveManager:
                 "pivot_completions": game.variety.pivot_completions,
                 "puzzle_completions": game.variety.puzzle_completions,
             },
+            "meta": {
+                "specialization": game.meta.specialization,
+                "spec_unlock_pending": game.meta.spec_unlock_pending,
+                "backdoors": list(game.meta.backdoors),
+                "forged_servers": list(game.meta.forged_servers),
+                "phished_ips": list(game.meta.phished_ips),
+                "tunnels": {str(k): v for k, v in game.meta.tunnels.items()},
+                "subnet_heat": game.meta.subnet_heat,
+                "rival_race_prog": game.meta.rival_race_prog,
+                "weekly_heist_id": game.meta.weekly_heist_id,
+                "weekly_heist_step": game.meta.weekly_heist_step,
+                "weekly_heist_week": game.meta.weekly_heist_week,
+                "weekly_heist_done": game.meta.weekly_heist_done,
+                "heist_branch": game.meta.heist_branch,
+                "heist_score": game.meta.heist_score,
+                "heists_cleared": game.meta.heists_cleared,
+            },
         }
 
     @staticmethod
@@ -454,6 +477,7 @@ class SaveManager:
         from story_system import StoryState
         from social_board import BoardPost, SocialBoardState
         from variety_content import VarietyManager, VarietyState
+        from depth_systems import MetaState
 
         pd = data["player"]
         daily_data = pd.pop("daily", None)
@@ -513,6 +537,9 @@ class SaveManager:
                 pivot_host=md.get("pivot_host", ""),
                 timing_limit_ticks=md.get("timing_limit_ticks", 0),
                 timing_start_tick=md.get("timing_start_tick", 0),
+                modifiers=md.get("modifiers", []),
+                heist_id=md.get("heist_id", ""),
+                heist_step=md.get("heist_step", 0),
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
@@ -634,6 +661,26 @@ class SaveManager:
                 pivot_completions=vd.get("pivot_completions", 0),
                 puzzle_completions=vd.get("puzzle_completions", 0),
             )
+        md = data.get("meta", {})
+        if md:
+            tunnels = {int(k): tuple(v) for k, v in md.get("tunnels", {}).items()}
+            game.meta = MetaState(
+                specialization=md.get("specialization", ""),
+                spec_unlock_pending=md.get("spec_unlock_pending", False),
+                backdoors=set(md.get("backdoors", [])),
+                forged_servers=set(md.get("forged_servers", [])),
+                phished_ips=set(md.get("phished_ips", [])),
+                tunnels=tunnels,
+                subnet_heat=md.get("subnet_heat", {}),
+                rival_race_prog=md.get("rival_race_prog", {}),
+                weekly_heist_id=md.get("weekly_heist_id", ""),
+                weekly_heist_step=md.get("weekly_heist_step", 0),
+                weekly_heist_week=md.get("weekly_heist_week", ""),
+                weekly_heist_done=md.get("weekly_heist_done", False),
+                heist_branch=md.get("heist_branch", ""),
+                heist_score=md.get("heist_score", 0),
+                heists_cleared=md.get("heists_cleared", 0),
+            )
         if p.phase == "endless" and game.endless.active:
             for ip in game.endless.floor_hosts:
                 if ip in game.network.servers:
@@ -643,6 +690,8 @@ class SaveManager:
             RetentionManager.on_career_session(game)
             from session_content import HourlyManager
             HourlyManager.refresh(game)
+            from depth_systems import WeeklyHeistManager
+            WeeklyHeistManager.refresh(game)
         elif p.phase == "endless" and game.endless.active and not game.endless.floor_hosts:
             EndlessManager._spawn_floor(game)
 

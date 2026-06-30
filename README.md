@@ -85,9 +85,17 @@ Progress **auto-saves** every few commands, on milestones, and when you quit.
 | New contract types | `social`, `timing` (command window), `pivot` (multi-host) |
 | Procedural hosts | Unique companies, paths like `/data/lake/...`, random puzzles |
 
-- **curl** — `curl http://IP/security_notice.txt` fetches public web intel before SSH
-- **Puzzles** on corp-gateway, vendor-vpn, hr-portal, research-node, fin-trading, corp-dc
-- Request contracts (`contracts`) — 45% chance spawns a fresh procedural host
+### Depth systems (v1.6)
+
+| System | Command |
+|--------|---------|
+| Contract modifiers | Shown on contracts as `[MODS: ...]` |
+| Tools | `phish`, `tunnel`, `plant`, `forge` |
+| Subnet heat / rivals | `heat` |
+| Specialization | `spec pick ghost\|broker\|saboteur\|architect` |
+| Weekly heist arc | `heist` / `heist choose <branch>` |
+
+Modifiers: air-gapped, honey-net, split-tunnel, deadline, no-shop, rival-race.
 
 ### Balance notes (v1.2)
 
