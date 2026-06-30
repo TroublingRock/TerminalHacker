@@ -118,7 +118,7 @@ class DesktopApp:
             bg=COLORS["desktop"], font=title_font,
         ).pack(side=tk.LEFT)
         tk.Label(
-            header, text="  v1.4 — Cybersecurity Training Environment",
+            header, text="  v1.5 — Cybersecurity Training Environment",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 11),
         ).pack(side=tk.LEFT, padx=(8, 0))
 

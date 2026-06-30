@@ -142,6 +142,7 @@ class Server:
     min_rep: int = 0
     chaos_only: bool = False
     endless_only: bool = False
+    puzzle_id: str = ""
 
     def __post_init__(self) -> None:
         if not self.services:
@@ -405,7 +406,7 @@ class TutorialManager:
         p.rank_index = 1
         if not any(r.destination == "10.0.0.0/24" for r in p.routes):
             p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
-        self.game.network.deploy_company_hosts(p.reputation, False)
+        self.game.network.deploy_company_hosts_with_puzzles(self.game, p.reputation, False)
         divider("CAREER MODE UNLOCKED")
         success("Training complete. You are cleared for live contracts.")
         teach(
@@ -517,6 +518,11 @@ class Mission:
     reward_multiplier: float = 1.0
     grade: str = ""
     endless_floor: bool = False
+    puzzle_id: str = ""
+    social_file: str = ""
+    pivot_host: str = ""
+    timing_limit_ticks: int = 0
+    timing_start_tick: int = 0
 
     def status_line(self) -> str:
         mark = "[DONE]" if self.completed else "[OPEN]"
@@ -531,7 +537,7 @@ class Mission:
             tag = " [WEEKLY]"
         elif self.operation_id:
             tag = f" [OP {self.operation_step}]"
-        elif self.mission_type != "exfil":
+        elif self.mission_type not in ("exfil",):
             tag = f" [{self.mission_type.upper()}]"
         grade_tag = f" Grade:{self.grade}" if self.grade else ""
         return f"{mark}{tag} {self.broker}: {self.briefing} (reward ${self.reward}){grade_tag}"
@@ -581,6 +587,13 @@ class MissionBoard:
                 continue
             if game.player.phase != "endless" and getattr(mission, "endless_floor", False):
                 continue
+            if mission.mission_type == "timing":
+                from variety_content import VarietyManager
+                if VarietyManager.timing_expired(game, mission):
+                    mission.completed = True
+                    from main import warn
+                    warn(f"TIMING FAILED: {mission.briefing[:50]}... — window closed.")
+                    continue
             if not RetentionManager.mission_is_satisfied(game, mission):
                 continue
             grade, mult, summary = MasteryGrader.grade(game, mission)
@@ -616,6 +629,18 @@ class MissionBoard:
         HourlyManager.on_complete(game, mission)
         from endless_mode import EndlessManager
         EndlessManager.on_mission_complete(game, mission)
+        if getattr(mission, "puzzle_id", "") or mission.mission_type in ("social", "timing", "pivot"):
+            game.variety.puzzle_completions += 1
+            if game.variety.puzzle_completions >= 5:
+                game.achievements.unlock("puzzle_slayer")
+        if mission.mission_type == "social":
+            game.variety.social_completions += 1
+            if game.variety.social_completions >= 3:
+                game.achievements.unlock("social_engineer")
+        if mission.mission_type == "pivot":
+            game.variety.pivot_completions += 1
+            if game.variety.pivot_completions >= 3:
+                game.achievements.unlock("pivot_pro")
         if game.player.phase == "career":
             from social_board import SocialBoardManager
             SocialBoardManager.on_contract_complete(game, mission)
@@ -924,6 +949,11 @@ class VirtualNetwork:
                 continue
             self.servers[spec["ip"]] = build_company_server(spec)
 
+    def deploy_company_hosts_with_puzzles(self, game: "Game", reputation: int, chaos: bool) -> None:
+        self.deploy_company_hosts(reputation, chaos)
+        from variety_content import VarietyManager
+        VarietyManager.deploy_puzzles(game)
+
     def add_career_hosts(self) -> None:
         self.deploy_company_hosts(150, False)
 
@@ -1052,6 +1082,7 @@ class Game:
         from endless_mode import EndlessState
         from story_system import StoryState
         from social_board import SocialBoardState
+        from variety_content import VarietyState
 
         self.player = Player()
         self.player._game_ref = self
@@ -1066,6 +1097,7 @@ class Game:
         self.endless = EndlessState()
         self.story = StoryState()
         self.board = SocialBoardState()
+        self.variety = VarietyState()
         self.daily = RetentionManager.make_daily_challenge()
         self.blue = BlueTeamState()
         self.running = True
@@ -1205,7 +1237,7 @@ class Game:
         cmds = [
             "lesson", "help", "ifconfig", "route", "route add [net] via [gw]",
             "vpn [connect|disconnect|status]", "scan/nmap [CIDR]", "connect [IP] [port]",
-            "disconnect", "probe", "crack", "sudo -l", "privesc",
+            "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
@@ -1383,7 +1415,12 @@ class Game:
         s.raise_ids_alert(1)
         from retention import RetentionManager
         RetentionManager.on_probe(self, s.ip)
+        from variety_content import PuzzleManager
+        PuzzleManager.on_probe(self, s)
         Console.out(f"  {s.hostname} | FW L{s.security_level} | cracked={s.cracked}")
+        hint = PuzzleManager.puzzle_hint(s)
+        if hint:
+            teach(hint)
         if s.ip == "192.168.1.50":
             self.player.tutorial_flags.add("probed_training")
 
@@ -1399,6 +1436,11 @@ class Game:
         block_msg = LateralManager.pivot_blocked(self, s.ip)
         if block_msg:
             error(block_msg)
+            return
+        from variety_content import PuzzleManager
+        puzzle_msg = PuzzleManager.can_crack(self, s)
+        if puzzle_msg:
+            error(puzzle_msg)
             return
 
         divider("SSH BRUTE-FORCE")
@@ -1431,6 +1473,8 @@ class Game:
             RetentionManager.on_crack(self, s.ip, s.security_level)
             from session_content import LateralManager
             LateralManager.on_crack(self, s.ip)
+            from variety_content import VarietyManager
+            VarietyManager.on_pivot_crack(self, s.ip)
             if "daily_shop_bought" not in self.player.tutorial_flags:
                 self.player.tutorial_flags.add("daily_no_shop_done")
             if self.player.phase == "career":
@@ -1478,6 +1522,36 @@ class Game:
         if self.remote_server() and self.player.remote_was_root:
             self.player.tutorial_flags.add("daily_privesc_dl_done")
         teach("Root can read any file and persist malware — defend with least-privilege.")
+
+    def cmd_curl(self, args: list[str]) -> None:
+        if not args:
+            error("Usage: curl http://IP/path")
+            return
+        url = args[0]
+        m = re.match(r"https?://([^/]+)(/.*)?", url, re.I)
+        if not m:
+            error("Usage: curl http://IP/path")
+            return
+        ip, path = m.group(1), m.group(2) or "/"
+        if ip not in self.player.discovered_ips:
+            error("Unknown host — scan first.")
+            return
+        if not self.player.has_route_to(ip):
+            error(f"No route to {ip}.")
+            return
+        from variety_content import PuzzleManager, VarietyManager
+
+        body = VarietyManager.fetch_http(self, ip, path)
+        divider(f"CURL {url}")
+        if body is None:
+            warn("404 Not Found")
+            return
+        Console.out(body)
+        server = self.network.get_server(ip)
+        if server:
+            self.log_remote(server, f"HTTP GET {path}", f"GET {path}")
+            PuzzleManager.on_curl(self, server, path, body)
+        info("HTTP fetch complete — check intel before SSH.")
 
     def cmd_download(self, args: list[str]) -> None:
         s = self.require_shell()
@@ -1538,6 +1612,14 @@ class Game:
         if not self.player.is_local():
             from session_content import LateralManager
             LateralManager.on_read_intel(self, path)
+            from variety_content import PuzzleManager, VarietyManager
+            PuzzleManager.on_cat(self, self.remote_server(), path)
+            if self.remote_server():
+                for m in self.missions.missions:
+                    if m.mission_type == "pivot" and path.endswith("pivot_bridge.txt"):
+                        if self.remote_server().ip == m.pivot_host:
+                            self.variety.pivot_step[m.mission_id] = 2
+                            success("Pivot creds acquired — breach the target host.")
         if path == "/var/log/auth.log" and not self.player.is_local():
             self.player.tutorial_flags.add("read_authlog")
             self.player.tutorial_flags.add("daily_read_auth_done")
@@ -1665,7 +1747,7 @@ class Game:
             warn(f"Requires {CHAOS_REP} rep, CPU L{CHAOS_CPU}, FW L{CHAOS_FW}")
             return
         self.player.chaos_unlocked = True
-        self.network.deploy_company_hosts(self.player.reputation, True)
+        self.network.deploy_company_hosts_with_puzzles(self, self.player.reputation, True)
         teach("Trace chance doubled. Rewards are extreme. You asked for chaos.")
         for s in self.network.servers.values():
             if s.chaos_only and self.player.has_route_to(s.ip):
@@ -2001,7 +2083,7 @@ class Game:
             "lesson": self.cmd_lesson, "help": self.cmd_help, "ifconfig": self.cmd_ifconfig,
             "vpn": self.cmd_vpn, "scan": self.cmd_scan, "nmap": self.cmd_scan,
             "connect": self.cmd_connect, "disconnect": self.cmd_disconnect,
-            "probe": self.cmd_probe, "crack": self.cmd_crack, "privesc": self.cmd_privesc,
+            "probe": self.cmd_probe, "crack": self.cmd_crack, "curl": self.cmd_curl, "privesc": self.cmd_privesc,
             "download": self.cmd_download, "ls": self.cmd_ls, "cat": self.cmd_cat,
             "rm": self.cmd_rm, "pwd": self.cmd_pwd, "whoami": self.cmd_whoami,
             "uname": self.cmd_uname, "shop": self.cmd_shop, "buy": self.cmd_buy,

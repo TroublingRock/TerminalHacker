@@ -115,6 +115,9 @@ ACHIEVEMENTS: dict[str, str] = {
     "endless_floor_25": "Reach floor 25 in endless mode",
     "story_fork": "Make 3 branching story choices",
     "board_karma_100": "Earn 100 board karma",
+    "puzzle_slayer": "Complete 5 puzzle-host contracts",
+    "social_engineer": "Complete 3 social engineering contracts",
+    "pivot_pro": "Complete 3 multi-host pivot contracts",
 }
 
 DAILY_POOL = [
@@ -200,7 +203,7 @@ class ReputationSystem:
                 if not any(r.destination == cidr for r in p.routes):
                     p.routes.append(Route(cidr, gw))
                     success(f"Route unlocked: {cidr} via {gw}")
-            game.network.deploy_company_hosts(p.reputation, p.chaos_unlocked)
+            game.network.deploy_company_hosts_with_puzzles(game, p.reputation, p.chaos_unlocked)
             if p.rank_index >= 3:
                 p.chaos_unlocked = True
             game.mail.send(
@@ -229,57 +232,8 @@ class MissionGenerator:
 
     @classmethod
     def generate(cls, game: Game):
-        from main import Mission, VirtualFile
-
-        if game.player.phase not in ("career",):
-            return None
-        if sum(1 for m in game.missions.missions if not m.completed) >= 5:
-            return None
-        candidates = [
-            s for s in game.network.servers.values()
-            if not getattr(s, "chaos_only", False)
-            and game.player.reputation >= getattr(s, "min_rep", 0)
-            and game.player.has_route_to(s.ip)
-        ]
-        if not candidates:
-            return None
-        server = random.choice(candidates)
-        archetype = random.choice(["exfil", "exfil", "ghost", "root_heist", "clean_sweep"])
-        user = server.ssh_user
-        tpl_path, tpl_body = random.choice(FILE_TEMPLATES)
-        n = random.randint(1, 99)
-        rel = tpl_path.format(user=user, n=n)
-        if archetype == "ghost":
-            rel = ""
-        elif archetype == "root_heist":
-            rel = f"/root/secret_{n}.txt"
-            if rel not in server.files:
-                server.files[rel] = VirtualFile(rel, tpl_body.format(n=n), owner="root", mode="rw-------", requires_root=True)
-        elif rel not in server.files:
-            server.files[rel] = VirtualFile(rel, tpl_body.format(n=n))
-        reward = 320 + server.security_level * 100 + random.randint(0, 180)
-        rep = 35 + server.security_level * 12
-        company = getattr(server, "company", "Unknown")
-        if archetype == "ghost":
-            briefing = f"[{company}] Ghost run on {server.hostname} ({server.ip}) — crack, leave zero traces."
-            reward += 200
-        elif archetype == "root_heist":
-            fname = rel.rsplit("/", 1)[-1]
-            briefing = f"[{company}] Root heist on {server.hostname} — privesc, exfil {fname}, wipe logs."
-            reward += 300
-            rep += 30
-        elif archetype == "clean_sweep":
-            briefing = f"[{company}] Clean sweep on {server.hostname} — crack, wipe ALL logs, exfil {rel.rsplit('/', 1)[-1]}."
-            reward += 150
-        else:
-            fname = rel.rsplit("/", 1)[-1]
-            briefing = f"[{company}] Hit {server.hostname} ({server.ip}), exfil {fname}, wipe logs."
-        return Mission(
-            cls.next_id(), random.choice(BROKERS), briefing,
-            server.ip, rel, reward, rep_reward=rep, procedural=True,
-            mission_type=archetype,
-            require_privesc=archetype == "root_heist",
-        )
+        from variety_content import VarietyMissionGenerator
+        return VarietyMissionGenerator.generate(game)
 
 
 class SaveManager:
@@ -372,7 +326,12 @@ class SaveManager:
                  "hourly_event": getattr(m, "hourly_event", False),
                  "reward_multiplier": getattr(m, "reward_multiplier", 1.0),
                  "grade": getattr(m, "grade", ""),
-                 "endless_floor": getattr(m, "endless_floor", False)}
+                 "endless_floor": getattr(m, "endless_floor", False),
+                 "puzzle_id": getattr(m, "puzzle_id", ""),
+                 "social_file": getattr(m, "social_file", ""),
+                 "pivot_host": getattr(m, "pivot_host", ""),
+                 "timing_limit_ticks": getattr(m, "timing_limit_ticks", 0),
+                 "timing_start_tick": getattr(m, "timing_start_tick", 0)}
                 for m in game.missions.missions
             ],
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
@@ -467,6 +426,23 @@ class SaveManager:
                 "_counter": game.board._counter,
                 "seeded": game.board.seeded,
             },
+            "variety": {
+                "puzzle_progress": {
+                    ip: {
+                        "probes": prog.get("probes", 0),
+                        "flags": list(prog.get("flags", [])),
+                    }
+                    for ip, prog in game.variety.puzzle_progress.items()
+                },
+                "pivot_step": game.variety.pivot_step,
+                "social_flags": list(game.variety.social_flags),
+                "procedural_counter": game.variety.procedural_counter,
+                "procedural_ips": game.variety.procedural_ips,
+                "hosts_puzzled": list(game.variety.hosts_puzzled),
+                "social_completions": game.variety.social_completions,
+                "pivot_completions": game.variety.pivot_completions,
+                "puzzle_completions": game.variety.puzzle_completions,
+            },
         }
 
     @staticmethod
@@ -477,6 +453,7 @@ class SaveManager:
         from endless_mode import EndlessManager, EndlessState
         from story_system import StoryState
         from social_board import BoardPost, SocialBoardState
+        from variety_content import VarietyManager, VarietyState
 
         pd = data["player"]
         daily_data = pd.pop("daily", None)
@@ -531,6 +508,11 @@ class SaveManager:
                 reward_multiplier=md.get("reward_multiplier", 1.0),
                 grade=md.get("grade", ""),
                 endless_floor=md.get("endless_floor", False),
+                puzzle_id=md.get("puzzle_id", ""),
+                social_file=md.get("social_file", ""),
+                pivot_host=md.get("pivot_host", ""),
+                timing_limit_ticks=md.get("timing_limit_ticks", 0),
+                timing_start_tick=md.get("timing_start_tick", 0),
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
@@ -636,12 +618,28 @@ class SaveManager:
                 _counter=bd.get("_counter", 0),
                 seeded=bd.get("seeded", False),
             )
+        vd = data.get("variety", {})
+        if vd:
+            pp = {}
+            for ip, prog in vd.get("puzzle_progress", {}).items():
+                pp[ip] = {"probes": prog.get("probes", 0), "flags": set(prog.get("flags", []))}
+            game.variety = VarietyState(
+                puzzle_progress=pp,
+                pivot_step=vd.get("pivot_step", {}),
+                social_flags=set(vd.get("social_flags", [])),
+                procedural_counter=vd.get("procedural_counter", 0),
+                procedural_ips=vd.get("procedural_ips", []),
+                hosts_puzzled=set(vd.get("hosts_puzzled", [])),
+                social_completions=vd.get("social_completions", 0),
+                pivot_completions=vd.get("pivot_completions", 0),
+                puzzle_completions=vd.get("puzzle_completions", 0),
+            )
         if p.phase == "endless" and game.endless.active:
             for ip in game.endless.floor_hosts:
                 if ip in game.network.servers:
                     game.network.servers[ip].endless_only = True
         if p.phase == "career":
-            game.network.deploy_company_hosts(p.reputation, p.chaos_unlocked)
+            game.network.deploy_company_hosts_with_puzzles(game, p.reputation, p.chaos_unlocked)
             RetentionManager.on_career_session(game)
             from session_content import HourlyManager
             HourlyManager.refresh(game)
@@ -663,4 +661,6 @@ def build_company_server(spec: dict) -> Server:
     s.story = spec.get("story", "")
     s.min_rep = spec.get("min_rep", 0)
     s.chaos_only = spec.get("chaos_only", False)
+    from variety_content import COMPANY_PUZZLE_MAP
+    s.puzzle_id = spec.get("puzzle_id", COMPANY_PUZZLE_MAP.get(spec["ip"], ""))
     return s

@@ -77,9 +77,17 @@ Progress **auto-saves** every few commands, on milestones, and when you quit.
 | Branching story choices | `story` / `story choose <id>` |
 | Darknet social boards | `board` / `board post` / `board upvote` |
 
-- **Endless** — procedural floors, relic drops every 5 floors, permadeath on trace/breach/bankruptcy
-- **Story** — pick ghost/rivals/solo lane; affects weekly beats, chaos unlock, and operation order
-- **Boards** — `/intel`, `/rivals`, `/flex`, `/lfg` with NPC threads and player karma
+### Gameplay variety (v1.5)
+
+| Feature | How it works |
+|---------|----------------|
+| Per-host puzzles | Probe twice, `curl` HTTP intel, spearphish files, port 2222, honeypot decoys |
+| New contract types | `social`, `timing` (command window), `pivot` (multi-host) |
+| Procedural hosts | Unique companies, paths like `/data/lake/...`, random puzzles |
+
+- **curl** — `curl http://IP/security_notice.txt` fetches public web intel before SSH
+- **Puzzles** on corp-gateway, vendor-vpn, hr-portal, research-node, fin-trading, corp-dc
+- Request contracts (`contracts`) — 45% chance spawns a fresh procedural host
 
 ### Balance notes (v1.2)
 

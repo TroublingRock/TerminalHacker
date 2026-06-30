@@ -222,7 +222,7 @@ class StoryManager:
         SocialBoardManager.on_story_choice(game, choice_key, pick["label"])
         if flag == "story_chaos_unlock":
             game.player.chaos_unlocked = True
-            game.network.deploy_company_hosts(game.player.reputation, True)
+            game.network.deploy_company_hosts_with_puzzles(game, game.player.reputation, True)
         return True
 
     @staticmethod

@@ -1696,6 +1696,53 @@ class RetentionManager:
         if mtype == "defense":
             return "op_defense_done" in p.tutorial_flags
 
+        if mtype == "social":
+            server = game.network.get_server(mission.target_ip)
+            if not mission.target_file:
+                return False
+            fname = mission.target_file.rsplit("/", 1)[-1]
+            if f"/home/hacker/downloads/{fname}" not in p.files:
+                return False
+            pid = getattr(server, "puzzle_id", "") if server else ""
+            if pid == "http_intel":
+                if f"curl_{mission.target_ip}_http_intel_read" not in game.variety.social_flags:
+                    return False
+            elif pid == "spearphish_read":
+                if f"spear_{mission.target_ip}" not in game.variety.social_flags:
+                    return False
+            if server and mission.require_log_wipe and server.player_left_traces(p):
+                return False
+            return True
+
+        if mtype == "timing":
+            from variety_content import VarietyManager
+            if VarietyManager.timing_expired(game, mission):
+                return False
+            if not mission.target_file:
+                return False
+            fname = mission.target_file.rsplit("/", 1)[-1]
+            if f"/home/hacker/downloads/{fname}" not in p.files:
+                return False
+            server = game.network.get_server(mission.target_ip)
+            return not server or not server.player_left_traces(p)
+
+        if mtype == "pivot":
+            step = game.variety.pivot_step.get(mission.mission_id, 0)
+            if step < 2:
+                return False
+            if not mission.target_file:
+                return False
+            fname = mission.target_file.rsplit("/", 1)[-1]
+            if f"/home/hacker/downloads/{fname}" not in p.files:
+                return False
+            jump = game.network.get_server(mission.pivot_host)
+            target = game.network.get_server(mission.target_ip)
+            if jump and jump.player_left_traces(p):
+                return False
+            if target and target.player_left_traces(p):
+                return False
+            return True
+
         if mtype in ("exfil", "root_heist", "clean_sweep"):
             if not mission.target_file:
                 return False
