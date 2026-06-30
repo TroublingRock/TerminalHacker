@@ -366,6 +366,8 @@ class SaveManager:
                 "operation_unlock_day": game.retention.operation_unlock_day,
                 "operation_parts_done": game.retention.operation_parts_done,
                 "completed_operations": game.retention.completed_operations,
+                "operation_cooldown_until": game.retention.operation_cooldown_until,
+                "weekly_story_week": game.retention.weekly_story_week,
                 "ghost_targets_done": list(game.retention.ghost_targets_done),
             },
         }
@@ -455,6 +457,8 @@ class SaveManager:
                 operation_unlock_day=rd.get("operation_unlock_day", ""),
                 operation_parts_done=rd.get("operation_parts_done", []),
                 completed_operations=rd.get("completed_operations", []),
+                operation_cooldown_until=rd.get("operation_cooldown_until", ""),
+                weekly_story_week=rd.get("weekly_story_week", ""),
                 ghost_targets_done=set(rd.get("ghost_targets_done", [])),
             )
         if p.phase == "career":

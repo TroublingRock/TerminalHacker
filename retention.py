@@ -190,6 +190,159 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "require_privesc": True,
         "mission_type": "root_heist",
     },
+    {
+        "id": "wb-research",
+        "broker": "nullbyte",
+        "title": "AI Model Extraction",
+        "briefing": "WEEKLY: Steal model_weights.bin from research-node (192.168.1.25).",
+        "target_ip": "192.168.1.25",
+        "target_file": "/home/admin/model_weights.bin",
+        "reward": 1250,
+        "rep_reward": 115,
+        "min_rep": 0,
+    },
+    {
+        "id": "wb-vault",
+        "broker": "cipher7",
+        "title": "Treasury Vault Raid",
+        "briefing": "WEEKLY: Privesc vault-server (10.0.0.55), exfil payroll.csv as root.",
+        "target_ip": "10.0.0.55",
+        "target_file": "/root/payroll.csv",
+        "reward": 2200,
+        "rep_reward": 175,
+        "min_rep": 150,
+        "require_privesc": True,
+        "mission_type": "root_heist",
+    },
+    {
+        "id": "wb-chaos-c2",
+        "broker": "shade_runner",
+        "title": "C2 Takedown",
+        "briefing": "WEEKLY: Crack chaos-c2 (203.0.113.66), exfil rival_plans.txt, survive traces.",
+        "target_ip": "203.0.113.66",
+        "target_file": "/root/rival_plans.txt",
+        "reward": 3500,
+        "rep_reward": 200,
+        "min_rep": 750,
+        "require_privesc": True,
+        "mission_type": "root_heist",
+    },
+    {
+        "id": "wb-dark-vault",
+        "broker": "packet_queen",
+        "title": "Cold Wallet Job",
+        "briefing": "WEEKLY: Hit dark-vault (203.0.113.99) — root heist on cold_wallet.dat.",
+        "target_ip": "203.0.113.99",
+        "target_file": "/root/cold_wallet.dat",
+        "reward": 5000,
+        "rep_reward": 250,
+        "min_rep": 750,
+        "require_privesc": True,
+        "mission_type": "root_heist",
+    },
+]
+
+# ---------------------------------------------------------------------------
+# Weekly story mail — narrative beat each Monday (ties to bounty + season arc)
+# ---------------------------------------------------------------------------
+
+WEEKLY_STORY_MAIL: list[dict[str, str]] = [
+    {
+        "sender": "ghost_broker@darknet",
+        "subject": "WEEK 1 INTEL — NovaDyne's perimeter is soft",
+        "body": (
+            "Operator,\n\n"
+            "Welcome to the live board. NovaDyne Corp thought their gateway was hardened — "
+            "it isn't. CipherLink left a vendor jump box wide open on the lab subnet.\n\n"
+            "This week: breach the perimeter or ghost the vendor box. Brokers are grading "
+            "your tradecraft, not just your loot.\n\n"
+            "Rivals haven't noticed you yet. That changes soon.\n\n"
+            "— ghost_broker"
+        ),
+    },
+    {
+        "sender": "cipher7@darknet",
+        "subject": "WEEK 2 INTEL — Helix Capital bleeds data",
+        "body": (
+            "cipher7 here.\n\n"
+            "Helix Capital's HFT rigs went live last quarter. Their algo configs are worth "
+            "more than cash — every hedge fund on the darknet wants fin-trading (172.16.0.20).\n\n"
+            "NovaDyne HR also has dirt: terminations.csv on hr-portal lists who's 'disappeared' "
+            "before the merger. Steal it if you want leverage.\n\n"
+            "ghost_broker says you're reliable. Prove it.\n\n"
+            "— cipher7"
+        ),
+    },
+    {
+        "sender": "ghost_broker@darknet",
+        "subject": "WEEK 3 INTEL — Rivals are mapping your IP",
+        "body": (
+            "Operator,\n\n"
+            "acid_k ran a probe on your public address. Your firewall held — barely. "
+            "Turn on defense mode and treat blue-team as billable work.\n\n"
+            "NovaDyne R&D has prototype weights on research-node. Treasury vault-server "
+            "holds payroll keys the board doesn't want leaked.\n\n"
+            "Multi-day operations are live on your board. Finish what you start — "
+            "phases unlock daily.\n\n"
+            "— ghost_broker"
+        ),
+    },
+    {
+        "sender": "nullbyte@darknet",
+        "subject": "WEEK 4 INTEL — Chaos subnet is calling",
+        "body": (
+            "nullbyte.\n\n"
+            "You've earned whispers about 203.0.113.0/24 — the chaos edge. Rival collective "
+            "C2 nodes live there. Trace chance doubles. Rewards triple.\n\n"
+            "Operation Dark Echo was practice. The real prize is chaos-c2 and dark-vault. "
+            "You need Ghost in the Wires clearance and maxed gear.\n\n"
+            "Week 4 bounty is not for amateurs. Neither is the season finale.\n\n"
+            "— nullbyte"
+        ),
+    },
+]
+
+WEEKLY_RIVAL_MAIL: list[dict[str, str]] = [
+    {
+        "sender": "acid_k@rival.net",
+        "subject": "I see you on the NovaDyne board",
+        "body": (
+            "So the training wheels are off.\n\n"
+            "I watched you hit the gateway. Cute. My crew owns half the 10.0.0.x segment — "
+            "stay in your lane or I'll drain your wallet.\n\n"
+            "— acid_k"
+        ),
+    },
+    {
+        "sender": "phantom_pkt@rival.net",
+        "subject": "Helix is OUR mark",
+        "body": (
+            "Finance sector is contested territory.\n\n"
+            "Fin-trading IDS is tuned for script kiddies, not me. You're not me. "
+            "Back off Helix or I'll publish your public IP to every blue team in the city.\n\n"
+            "— phantom_pkt"
+        ),
+    },
+    {
+        "sender": "nyx_root@rival.net",
+        "subject": "Defense mode won't save you",
+        "body": (
+            "I saw your firewall block. Once.\n\n"
+            "Rivals adapt. Your IDS is a toy. I'm mapping your box while you play hero "
+            "on corporate subnets.\n\n"
+            "— nyx_root"
+        ),
+    },
+    {
+        "sender": "zero_cool@rival.net",
+        "subject": "Chaos is where operators go to die",
+        "body": (
+            "203.0.113.x isn't a playground.\n\n"
+            "I lost two accounts on chaos-c2 last month. Forensics triple-tap anyone who "
+            "touches the dark vault. You want Net God? Earn it.\n\n"
+            "— zero_cool"
+        ),
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -297,9 +450,212 @@ OPERATIONS: list[dict[str, Any]] = [
             },
         ],
     },
+    {
+        "id": "op-treasury",
+        "name": "Operation Quantum Ledger",
+        "broker": "cipher7",
+        "min_rep": 150,
+        "parts": [
+            {
+                "step": 1,
+                "briefing": "OP DAY 1: Recon vault-server (10.0.0.55) — scan DMZ and probe.",
+                "target_ip": "10.0.0.55",
+                "mission_type": "recon",
+                "reward": 400,
+                "rep_reward": 50,
+            },
+            {
+                "step": 2,
+                "briefing": "OP DAY 2: Crack vault-server, privesc to root.",
+                "target_ip": "10.0.0.55",
+                "mission_type": "ghost",
+                "reward": 700,
+                "rep_reward": 80,
+            },
+            {
+                "step": 3,
+                "briefing": "OP DAY 3: Exfil payroll.csv from vault-server as root, wipe logs.",
+                "target_ip": "10.0.0.55",
+                "target_file": "/root/payroll.csv",
+                "mission_type": "root_heist",
+                "require_privesc": True,
+                "reward": 1500,
+                "rep_reward": 130,
+            },
+        ],
+    },
+    {
+        "id": "op-research",
+        "name": "Operation Stolen Weights",
+        "broker": "nullbyte",
+        "min_rep": 0,
+        "parts": [
+            {
+                "step": 1,
+                "briefing": "OP DAY 1: Scan lab subnet for research-node (192.168.1.25).",
+                "target_ip": "192.168.1.0/24",
+                "mission_type": "scan_subnet",
+                "reward": 350,
+                "rep_reward": 45,
+            },
+            {
+                "step": 2,
+                "briefing": "OP DAY 2: Crack research-node, exfil model_weights.bin.",
+                "target_ip": "192.168.1.25",
+                "target_file": "/home/admin/model_weights.bin",
+                "mission_type": "exfil",
+                "reward": 850,
+                "rep_reward": 95,
+            },
+            {
+                "step": 3,
+                "briefing": "OP DAY 3: Ghost run on corp-gateway to cover your tracks.",
+                "target_ip": "192.168.1.10",
+                "mission_type": "ghost",
+                "reward": 950,
+                "rep_reward": 100,
+            },
+        ],
+    },
+    {
+        "id": "op-hr",
+        "name": "Operation Paper Trail",
+        "broker": "shade_runner",
+        "min_rep": 150,
+        "parts": [
+            {
+                "step": 1,
+                "briefing": "OP DAY 1: Probe hr-portal (10.0.0.88).",
+                "target_ip": "10.0.0.88",
+                "mission_type": "recon",
+                "reward": 380,
+                "rep_reward": 48,
+            },
+            {
+                "step": 2,
+                "briefing": "OP DAY 2: Crack hr-portal, steal terminations.csv, wipe logs.",
+                "target_ip": "10.0.0.88",
+                "target_file": "/home/admin/terminations.csv",
+                "mission_type": "exfil",
+                "reward": 750,
+                "rep_reward": 85,
+            },
+            {
+                "step": 3,
+                "briefing": "OP DAY 3: Clean sweep — zero traces on hr-portal after exfil.",
+                "target_ip": "10.0.0.88",
+                "mission_type": "ghost",
+                "reward": 900,
+                "rep_reward": 95,
+            },
+        ],
+    },
+    {
+        "id": "op-counter",
+        "name": "Operation Hardline",
+        "broker": "ghost_broker",
+        "min_rep": 200,
+        "parts": [
+            {
+                "step": 1,
+                "briefing": "OP DAY 1: Blue team drill — run 'defend on' and block a rival attack.",
+                "target_ip": "",
+                "mission_type": "defense",
+                "reward": 450,
+                "rep_reward": 55,
+            },
+            {
+                "step": 2,
+                "briefing": "OP DAY 2: Offense returns — ghost run on vendor-vpn (192.168.1.30).",
+                "target_ip": "192.168.1.30",
+                "mission_type": "ghost",
+                "reward": 700,
+                "rep_reward": 75,
+            },
+            {
+                "step": 3,
+                "briefing": "OP DAY 3: Crack corp-dc, exfil corporate_secrets.txt.",
+                "target_ip": "10.0.0.42",
+                "target_file": "/home/admin/corporate_secrets.txt",
+                "mission_type": "exfil",
+                "reward": 1300,
+                "rep_reward": 125,
+            },
+        ],
+    },
+    {
+        "id": "op-ledger",
+        "name": "Operation Wire Trap",
+        "broker": "packet_queen",
+        "min_rep": 400,
+        "parts": [
+            {
+                "step": 1,
+                "briefing": "OP DAY 1: Scan finance subnet 172.16.0.0/24.",
+                "target_ip": "172.16.0.0/24",
+                "mission_type": "scan_subnet",
+                "reward": 420,
+                "rep_reward": 52,
+            },
+            {
+                "step": 2,
+                "briefing": "OP DAY 2: Ghost run on fin-trading — in and out silent.",
+                "target_ip": "172.16.0.20",
+                "mission_type": "ghost",
+                "reward": 800,
+                "rep_reward": 90,
+            },
+            {
+                "step": 3,
+                "briefing": "OP DAY 3: Root heist on bank-core — wire_keys.env.",
+                "target_ip": "172.16.0.33",
+                "target_file": "/root/wire_keys.env",
+                "mission_type": "root_heist",
+                "require_privesc": True,
+                "reward": 2000,
+                "rep_reward": 160,
+            },
+        ],
+    },
+    {
+        "id": "op-chaos",
+        "name": "Operation Blackout",
+        "broker": "nullbyte",
+        "min_rep": 750,
+        "parts": [
+            {
+                "step": 1,
+                "briefing": "OP DAY 1: Scan chaos subnet 203.0.113.0/24 — route required.",
+                "target_ip": "203.0.113.0/24",
+                "mission_type": "scan_subnet",
+                "reward": 600,
+                "rep_reward": 70,
+            },
+            {
+                "step": 2,
+                "briefing": "OP DAY 2: Crack chaos-c2, privesc, exfil rival_plans.txt.",
+                "target_ip": "203.0.113.66",
+                "target_file": "/root/rival_plans.txt",
+                "mission_type": "root_heist",
+                "require_privesc": True,
+                "reward": 2500,
+                "rep_reward": 180,
+            },
+            {
+                "step": 3,
+                "briefing": "OP DAY 3: Final job — dark-vault cold_wallet.dat. Double trace risk.",
+                "target_ip": "203.0.113.99",
+                "target_file": "/root/cold_wallet.dat",
+                "mission_type": "root_heist",
+                "require_privesc": True,
+                "reward": 4000,
+                "rep_reward": 250,
+            },
+        ],
+    },
 ]
 
-MISSION_ARCHETYPES = ("exfil", "ghost", "root_heist", "recon", "scan_chaos", "clean_sweep")
+MISSION_ARCHETYPES = ("exfil", "ghost", "root_heist", "recon", "scan_chaos", "scan_subnet", "clean_sweep", "defense")
 
 
 @dataclass
@@ -317,6 +673,8 @@ class RetentionState:
     operation_unlock_day: str = ""
     operation_parts_done: list[str] = field(default_factory=list)
     completed_operations: list[str] = field(default_factory=list)
+    operation_cooldown_until: str = ""
+    weekly_story_week: str = ""
     daily_earnings: int = 0
     daily_cracks: int = 0
     daily_rep_earned: int = 0
@@ -471,6 +829,7 @@ class RetentionManager:
 
         r.weekly_key = wk
         r.weekly_completed = False
+        RetentionManager._send_weekly_story(game)
         spec = WEEKLY_BOUNTIES[date.today().isocalendar().week % len(WEEKLY_BOUNTIES)]
         if game.player.reputation < spec.get("min_rep", 0):
             return
@@ -498,15 +857,36 @@ class RetentionManager:
         )
 
     @staticmethod
+    def _send_weekly_story(game: Game) -> None:
+        wk = RetentionManager.week_key()
+        r = game.retention
+        if r.weekly_story_week == wk:
+            return
+        r.weekly_story_week = wk
+        idx = date.today().isocalendar().week % len(WEEKLY_STORY_MAIL)
+        story = WEEKLY_STORY_MAIL[idx]
+        game.mail.send(story["sender"], story["subject"], story["body"])
+        rival = WEEKLY_RIVAL_MAIL[idx % len(WEEKLY_RIVAL_MAIL)]
+        game.mail.send(rival["sender"], rival["subject"], rival["body"])
+
+    @staticmethod
+    def current_week_story() -> dict[str, str]:
+        return WEEKLY_STORY_MAIL[date.today().isocalendar().week % len(WEEKLY_STORY_MAIL)]
+
+    @staticmethod
     def _maybe_offer_operation(game: Game) -> None:
         from main import Mission
 
         r = game.retention
         if r.active_operation:
             return
+        if r.operation_cooldown_until and r.operation_cooldown_until > RetentionManager.today():
+            return
 
         for op in OPERATIONS:
             if op["id"] in r.completed_operations:
+                continue
+            if game.player.reputation < op.get("min_rep", 0):
                 continue
             if r.active_operation:
                 return
@@ -528,6 +908,8 @@ class RetentionManager:
 
         mid = f"{op['id']}-s{part['step']}"
         game.missions.missions = [m for m in game.missions.missions if not m.operation_id]
+        if part.get("mission_type") == "defense":
+            game.player.tutorial_flags.discard("op_defense_done")
         game.missions.missions.insert(
             0,
             Mission(
@@ -583,8 +965,10 @@ class RetentionManager:
             game.mail.send(
                 f"{mission.broker}@darknet",
                 f"OPERATION COMPLETE: {op['name']}",
-                "All phases done. New operation available in a few days.\n\n— broker",
+                "All phases done. Next operation unlocks tomorrow.\n\n— broker",
             )
+            r.operation_cooldown_until = (date.today() + timedelta(days=1)).isoformat()
+            RetentionManager._maybe_offer_operation(game)
             return
 
         r.operation_step = mission.operation_step + 1
@@ -642,8 +1026,33 @@ class RetentionManager:
             game.player.tutorial_flags.add("daily_probe_crack_done")
 
     @staticmethod
+    def on_defense_block(game: Game) -> None:
+        game.player.tutorial_flags.add("op_defense_done")
+        RetentionManager._check_defense_missions(game)
+
+    @staticmethod
+    def _check_defense_missions(game: Game) -> None:
+        for m in game.missions.missions:
+            if m.completed or m.mission_type != "defense":
+                continue
+            if "op_defense_done" in game.player.tutorial_flags:
+                RetentionManager._complete_mission(game, m)
+
+    @staticmethod
+    def on_scan_subnet(game: Game, cidr: str) -> None:
+        p = game.player
+        for m in game.missions.missions:
+            if m.completed:
+                continue
+            if m.mission_type == "scan_subnet" and m.target_ip == cidr:
+                RetentionManager._complete_mission(game, m)
+            if m.mission_type == "scan_chaos" and cidr == "203.0.113.0/24":
+                RetentionManager._complete_mission(game, m)
+
+    @staticmethod
     def on_probe(game: Game, server_ip: str) -> None:
         game.retention.session_probed.add(server_ip)
+        RetentionManager._check_recon_missions(game, server_ip)
 
     @staticmethod
     def on_ghost_complete(game: Game, server_ip: str) -> None:
@@ -710,6 +1119,10 @@ class RetentionManager:
             )
         if mtype == "scan_chaos":
             return "203.0.113.0/24" in p.subnets_scanned
+        if mtype == "scan_subnet":
+            return mission.target_ip in p.subnets_scanned
+        if mtype == "defense":
+            return "op_defense_done" in p.tutorial_flags
 
         if mtype in ("exfil", "root_heist", "clean_sweep"):
             if not mission.target_file:

@@ -931,6 +931,8 @@ class ThreatSystem:
                     self.game.player.tutorial_flags.add("daily_defend_block_done")
                     self.game.player.tutorial_flags.add("daily_active_defense_done")
                 self.game.player.tutorial_flags.add("daily_survive_done")
+                from retention import RetentionManager
+                RetentionManager.on_defense_block(self.game)
             return
 
         loss = random.randint(40, 100) * max(1, power - p.firewall_level)
@@ -1088,7 +1090,7 @@ class Game:
             "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
-            "achievements", "daily", "chaos", "defend", "streak", "season", "operation",
+            "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "intel",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1169,6 +1171,8 @@ class Game:
             self.player.tutorial_flags.add("daily_scan_finance_done")
         if cidr == "203.0.113.0/24":
             self.player.tutorial_flags.add("daily_scan_chaos_done")
+        from retention import RetentionManager
+        RetentionManager.on_scan_subnet(self, cidr)
         self.missions.check_completion(self)
         info("Use connect <IP> 22")
 
@@ -1599,6 +1603,24 @@ class Game:
             if m.operation_id == r.active_operation and not m.completed:
                 Console.out(f"  Objective: {m.briefing}")
 
+    def cmd_intel(self, _a: list[str]) -> None:
+        from retention import RetentionManager, WEEKLY_RIVAL_MAIL, WEEKLY_STORY_MAIL
+
+        story = RetentionManager.current_week_story()
+        idx = date.today().isocalendar().week % len(WEEKLY_STORY_MAIL)
+        rival = WEEKLY_RIVAL_MAIL[idx % len(WEEKLY_RIVAL_MAIL)]
+        divider("WEEKLY INTEL BRIEFING")
+        Console.out(f"  From: {story['sender']}")
+        Console.out(f"  Re:   {story['subject']}\n")
+        Console.out(story["body"])
+        Console.out(f"\n--- Rival chatter ({rival['sender']}) ---\n")
+        Console.out(rival["body"])
+        r = self.retention
+        Console.out(
+            f"\n  Streak: {r.streak}d | Season: {r.season_tier}/30 | "
+            f"Ops done: {len(r.completed_operations)}/{len(__import__('retention').OPERATIONS)}"
+        )
+
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
         SaveManager.save(self)
@@ -1644,6 +1666,7 @@ class Game:
             "achievements": self.cmd_achievements, "daily": self.cmd_daily,
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
             "streak": self.cmd_streak, "season": self.cmd_season, "operation": self.cmd_operation,
+            "intel": self.cmd_intel,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

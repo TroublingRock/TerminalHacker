@@ -457,8 +457,10 @@ class DesktopApp:
         r = self.game.retention
         tk.Label(body, text=daily_txt, fg=COLORS["teach"], bg=COLORS["window"],
                  font=("Helvetica", 10), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(8, 4))
-        tk.Label(body, text=f"Streak: {r.streak} days | Season {r.season_tier}/{len(SEASON_TIERS)} | Type 'operation' in terminal for multi-day ops",
+        tk.Label(body, text=f"Streak: {r.streak} days | Season {r.season_tier}/{len(SEASON_TIERS)} | Ops {len(r.completed_operations)} done",
                  fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(0, 4))
+        tk.Button(body, text="Weekly Intel (terminal: intel)", command=self.open_terminal,
+                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=8, pady=2).pack(anchor=tk.W, pady=(0, 4))
 
         tk.Label(body, text="Contract details also arrive via Mail from brokers.",
                  fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(4, 0))
