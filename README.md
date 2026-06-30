@@ -108,6 +108,18 @@ Consumables: **Burner IP Kit** (mask egress for 8 commands), **Zero-day Exploit*
 
 Faction rep shifts from story choices, contract targets, and board posts. Perks include shop discounts, payout bonuses, trace reduction, and broker freebies.
 
+### Longevity expansion (v1.8)
+
+| System | What's new |
+|--------|------------|
+| Tool puzzles | `phish_gate`, `tunnel_jump`, `plant_backdoor`, `forge_cover` — require phish/tunnel/plant/forge |
+| New hosts | 8 hosts on 10.50/60/70/80 subnets — weeklies & hourlies use expanded 16-entry pools |
+| Story arcs | 3-part exclusive contracts per story branch (ghost / rivals / solo) |
+| Operations | All 9 ops reachable — fixed `op-vault` → `op-treasury`, added shadow/research/hr |
+| Season cycles | Monthly season reset with carryover bonus; 4 heists in rotation |
+| Rival counters | Procedural hosts may spawn rival-race counter-missions |
+| Endless depth | 6 floor archetypes, 5 modifiers, boss floors every 5 with tool puzzles |
+
 ### Balance notes (v1.2)
 
 - Trace chance tuned for fair early career (~28% base)

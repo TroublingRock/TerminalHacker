@@ -138,10 +138,22 @@ STORY_NODES: dict[str, dict[str, Any]] = {
 }
 
 OPERATION_PRIORITY: dict[str, list[str]] = {
-    "story_ally_ghost": ["op-nova", "op-vault", "op-helix", "op-ledger", "op-counter", "op-chaos"],
-    "story_ally_rivals": ["op-counter", "op-chaos", "op-nova", "op-helix", "op-vault", "op-ledger"],
-    "story_solo": ["op-helix", "op-nova", "op-ledger", "op-vault", "op-counter", "op-chaos"],
-    "default": ["op-nova", "op-helix", "op-vault", "op-ledger", "op-counter", "op-chaos"],
+    "story_ally_ghost": [
+        "op-nova", "op-treasury", "op-helix", "op-shadow", "op-research",
+        "op-hr", "op-ledger", "op-counter", "op-chaos",
+    ],
+    "story_ally_rivals": [
+        "op-counter", "op-chaos", "op-shadow", "op-nova", "op-helix",
+        "op-treasury", "op-research", "op-hr", "op-ledger",
+    ],
+    "story_solo": [
+        "op-helix", "op-nova", "op-research", "op-shadow", "op-ledger",
+        "op-treasury", "op-hr", "op-counter", "op-chaos",
+    ],
+    "default": [
+        "op-nova", "op-helix", "op-treasury", "op-shadow", "op-research",
+        "op-hr", "op-ledger", "op-counter", "op-chaos",
+    ],
 }
 
 
@@ -222,6 +234,8 @@ class StoryManager:
         SocialBoardManager.on_story_choice(game, choice_key, pick["label"])
         from faction_consumables import FactionRepManager
         FactionRepManager.on_story_choice(game, choice_key)
+        from longevity_content import StoryArcManager
+        StoryArcManager.deliver_arc(game, choice_key)
         if flag == "story_chaos_unlock":
             game.player.chaos_unlocked = True
             game.network.deploy_company_hosts_with_puzzles(game, game.player.reputation, True)

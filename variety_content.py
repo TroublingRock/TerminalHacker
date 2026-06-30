@@ -68,6 +68,10 @@ HOST_PUZZLES: dict[str, dict[str, Any]] = {
     },
 }
 
+from longevity_content import TOOL_PUZZLES, EXTENDED_PUZZLE_MAP  # noqa: E402
+
+HOST_PUZZLES.update(TOOL_PUZZLES)
+
 # Fixed puzzle assignments for canonical company hosts
 COMPANY_PUZZLE_MAP: dict[str, str] = {
     "192.168.1.10": "staggered_probe",
@@ -77,6 +81,7 @@ COMPANY_PUZZLE_MAP: dict[str, str] = {
     "172.16.0.20": "port_hop",
     "10.0.0.42": "dual_account",
 }
+COMPANY_PUZZLE_MAP.update(EXTENDED_PUZZLE_MAP)
 
 # ---------------------------------------------------------------------------
 # Procedural host generation — non-reskin paths and identities
@@ -187,6 +192,9 @@ class PuzzleManager:
             server.files[path] = VirtualFile(path, spec["jump_body"].format(admin_password=admin_pw), owner=user)
             server.admin_ssh_user = spec["admin_user"]  # type: ignore[attr-defined]
             server.admin_ssh_password = admin_pw  # type: ignore[attr-defined]
+        elif pid == "tunnel_jump":
+            from longevity_content import ToolPuzzleManager
+            ToolPuzzleManager.apply_tunnel_puzzle(server)
 
     @staticmethod
     def on_probe(game: Game, server: Server) -> None:
@@ -250,6 +258,10 @@ class PuzzleManager:
                 return f"Connect to SSH on port {HOST_PUZZLES[pid]['alt_ssh_port']}, not {game.player.connected_port}."
         if pid == "dual_account" and HOST_PUZZLES[pid]["flag"] not in flags:
             return "Read jump_creds.txt on low-priv shell before admin crack."
+        from longevity_content import ToolPuzzleManager
+        extra = ToolPuzzleManager.can_crack_extra(game, server, pid)
+        if extra:
+            return extra
         return None
 
     @staticmethod
@@ -324,6 +336,9 @@ class ProceduralHostGenerator:
         puzzle = random.choice(list(HOST_PUZZLES.keys()))
         server.puzzle_id = puzzle
         PuzzleManager.apply_to_server(game, server, puzzle)
+
+        from longevity_content import RivalCounterManager
+        RivalCounterManager.on_procedural_spawn(game, ip)
 
         game.network.servers[ip] = server
         game.variety.procedural_counter = n

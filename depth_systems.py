@@ -535,8 +535,9 @@ class WeeklyHeistManager:
         game.meta.weekly_heist_step = 0
         game.meta.heist_branch = ""
         game.missions.missions = [m for m in game.missions.missions if not getattr(m, "heist_id", "")]
-        idx = int(wk.split("-W")[-1]) % len(WEEKLY_HEISTS)
-        heist = WEEKLY_HEISTS[idx]
+        from longevity_content import heist_for_week, heist_branch_choices, all_weekly_heists
+        week_num = int(wk.split("-W")[-1])
+        heist = heist_for_week(week_num)
         game.meta.weekly_heist_id = heist["id"]
         part = heist["parts"][0]
         mid = f"{heist['id']}-s1"
@@ -561,11 +562,12 @@ class WeeklyHeistManager:
     @staticmethod
     def on_step_complete(game: Game, mission: Mission) -> None:
         from main import Mission, success
+        from longevity_content import all_weekly_heists, heist_branch_choices
 
         hid = getattr(mission, "heist_id", "")
         if not hid:
             return
-        heist = next((h for h in WEEKLY_HEISTS if h["id"] == hid), None)
+        heist = next((h for h in all_weekly_heists() if h["id"] == hid), None)
         if not heist:
             return
         step = getattr(mission, "heist_step", 0)
@@ -577,9 +579,7 @@ class WeeklyHeistManager:
             game.mail.send(
                 f"{heist['broker']}@darknet",
                 f"HEIST branch — {heist['name']}",
-                "Choose path:\n"
-                "  heist choose steal|sabotage|frame  (Helix)\n"
-                "  heist choose dc|hr|vault           (Nova)\n",
+                f"Choose path:\n{heist_branch_choices(heist)}\n",
             )
             success("Heist phase 1 done — type 'heist choose <branch>'")
             return
@@ -617,12 +617,13 @@ class WeeklyHeistManager:
     @staticmethod
     def choose_branch(game: Game, branch: str) -> bool:
         from main import Mission, error, success
+        from longevity_content import all_weekly_heists
 
         hid = game.meta.weekly_heist_id
         if game.meta.weekly_heist_step != 2 or game.meta.heist_branch:
             error("No heist branch choice pending.")
             return False
-        heist = next((h for h in WEEKLY_HEISTS if h["id"] == hid), None)
+        heist = next((h for h in all_weekly_heists() if h["id"] == hid), None)
         if not heist:
             return False
         part = heist["parts"][1]
@@ -647,8 +648,10 @@ class WeeklyHeistManager:
 
     @staticmethod
     def status_lines(game: Game) -> list[str]:
+        from longevity_content import all_weekly_heists
+
         hid = game.meta.weekly_heist_id
-        heist = next((h for h in WEEKLY_HEISTS if h["id"] == hid), None)
+        heist = next((h for h in all_weekly_heists() if h["id"] == hid), None)
         name = heist["name"] if heist else "—"
         return [
             f"  Heist:     {name}",

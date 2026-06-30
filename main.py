@@ -526,6 +526,8 @@ class Mission:
     modifiers: list[str] = field(default_factory=list)
     heist_id: str = ""
     heist_step: int = 0
+    story_arc: str = ""
+    rival_counter: bool = False
 
     def status_line(self) -> str:
         mark = "[DONE]" if self.completed else "[OPEN]"
@@ -544,6 +546,10 @@ class Mission:
             tag = f" [+{len(self.modifiers)} MOD]"
         elif self.operation_id:
             tag = f" [OP {self.operation_step}]"
+        elif getattr(self, "story_arc", ""):
+            tag = f" [ARC {self.story_arc}]"
+        elif getattr(self, "rival_counter", False):
+            tag = " [RIVAL]"
         elif self.mission_type not in ("exfil",):
             tag = f" [{self.mission_type.upper()}]"
         grade_tag = f" Grade:{self.grade}" if self.grade else ""
@@ -661,6 +667,9 @@ class MissionBoard:
             SocialBoardManager.on_contract_complete(game, mission)
             from faction_consumables import FactionRepManager
             FactionRepManager.on_contract_complete(game, mission)
+            from longevity_content import RivalCounterManager, StoryArcManager
+            RivalCounterManager.on_contract_complete(game, mission)
+            StoryArcManager.on_arc_mission_complete(game, mission)
         new_m = MissionGenerator.generate(game)
         if new_m:
             self.missions.append(new_m)
@@ -988,6 +997,9 @@ class VirtualNetwork:
         self.deploy_company_hosts(reputation, chaos)
         from variety_content import VarietyManager
         VarietyManager.deploy_puzzles(game)
+        from longevity_content import ExtendedHostManager
+        ExtendedHostManager.deploy(game, reputation, chaos)
+        ExtendedHostManager.apply_rank_routes(game)
 
     def add_career_hosts(self) -> None:
         self.deploy_company_hosts(150, False)
@@ -1238,10 +1250,11 @@ class Game:
         if self.player.phase == "career":
             HourlyManager.refresh(self)
             self.missions.check_completion(self)
-        elif self.player.phase == "endless":
+        if self.player.phase == "endless":
             self.missions.check_completion(self)
             from endless_mode import EndlessManager
             EndlessManager.check_bankruptcy(self)
+            EndlessManager.on_post_command(self)
         self.tutorial.check_advance()
         self._check_daily(cmd)
         self._check_achievements()

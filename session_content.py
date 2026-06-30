@@ -538,7 +538,9 @@ class HourlyManager:
         # Remove expired hourly missions
         game.missions.missions = [m for m in game.missions.missions if not m.hourly_event]
 
-        spec = HOURLY_EVENTS[slot % len(HOURLY_EVENTS)]
+        from longevity_content import hourly_for_slot
+
+        spec = hourly_for_slot(slot)
         if game.player.reputation < spec.get("min_rep", 0):
             return
 

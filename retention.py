@@ -991,6 +991,8 @@ class RetentionState:
     season_xp: int = 0
     season_tier: int = 0
     season_claimed: int = 0
+    season_month: str = ""
+    season_cycles: int = 0
     weekly_key: str = ""
     weekly_completed: bool = False
     active_operation: str = ""
@@ -1067,6 +1069,8 @@ class RetentionManager:
         StoryManager.ensure_intro(game)
         from social_board import SocialBoardManager
         SocialBoardManager.on_career_session(game)
+        from longevity_content import SeasonCycleManager
+        SeasonCycleManager.on_career_session(game)
 
         if r.last_login == today and r.streak > 0:
             teach(
@@ -1175,7 +1179,8 @@ class RetentionManager:
         r.weekly_key = wk
         r.weekly_completed = False
         RetentionManager._send_weekly_story(game)
-        spec = WEEKLY_BOUNTIES[date.today().isocalendar().week % len(WEEKLY_BOUNTIES)]
+        from longevity_content import bounty_for_week
+        spec = bounty_for_week(date.today().isocalendar().week)
         if game.player.reputation < spec.get("min_rep", 0):
             return
 
@@ -1710,6 +1715,9 @@ class RetentionManager:
                 return True
             if not server:
                 return True
+            from longevity_content import ToolPuzzleManager
+            if not ToolPuzzleManager.mission_extra_checks(game, server, mission):
+                return False
             return ToolManager.logs_clean_enough(game, server, p)
 
         if getattr(mission, "heist_id", "") and mtype in (

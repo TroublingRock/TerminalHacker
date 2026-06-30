@@ -29,7 +29,7 @@ RELIC_DEFS: dict[str, dict[str, Any]] = {
     },
 }
 
-FLOOR_ARCHETYPES = ("exfil", "ghost", "root_heist")
+FLOOR_ARCHETYPES = ("exfil", "ghost", "root_heist", "social", "timing", "tunnel")
 
 
 @dataclass
@@ -48,6 +48,9 @@ class EndlessState:
     career_money: int = 0
     pending_relic_pick: bool = False
     relic_options: list[str] = field(default_factory=list)
+    floor_modifier: str = ""
+    boss_floor: bool = False
+    floor_commands: int = 0
 
 
 class EndlessManager:
@@ -170,6 +173,8 @@ class EndlessManager:
     @staticmethod
     def _spawn_floor(game: Game) -> None:
         from main import Mission, Route, Server, VirtualFile
+        from longevity_content import BOSS_PUZZLES, FLOOR_MODIFIERS
+        from variety_content import PuzzleManager
 
         e = game.endless
         EndlessManager._purge_floor_hosts(game)
@@ -186,12 +191,16 @@ class EndlessManager:
         sec_base = 2 + floor // 2
         archetype = FLOOR_ARCHETYPES[floor % len(FLOOR_ARCHETYPES)]
         boss_idx = host_count - 1
+        e.boss_floor = floor % 5 == 0
+        mod_keys = list(FLOOR_MODIFIERS.keys())
+        e.floor_modifier = mod_keys[floor % len(mod_keys)] if floor > 1 else ""
+        e.floor_commands = 0
 
         for i in range(host_count):
             ip = f"10.{octet}.{10 + i}"
             sec = sec_base + (1 if i == boss_idx else 0)
-            privesc = archetype == "root_heist" and i == boss_idx
-            hostname = f"abyss-node-{floor}-{i}"
+            privesc = archetype in ("root_heist", "tunnel") and i == boss_idx
+            hostname = f"abyss-boss-{floor}" if i == boss_idx and e.boss_floor else f"abyss-node-{floor}-{i}"
             pwd = random.choice(["abyss42!", "floor_key", "rng_pass", f"deep{floor}"])
             s = Server(
                 ip, hostname, sec, subnet=cidr,
@@ -211,39 +220,65 @@ class EndlessManager:
                     root_file, f"ROOT LOOT floor {floor}\n", owner="root",
                     mode="rw-------", requires_root=True,
                 )
+            if i == boss_idx and e.boss_floor:
+                pid = BOSS_PUZZLES[floor % len(BOSS_PUZZLES)]
+                s.puzzle_id = pid
+                PuzzleManager.apply_to_server(game, s, pid)
+                if pid == "tunnel_jump":
+                    from longevity_content import ToolPuzzleManager
+                    ToolPuzzleManager.apply_tunnel_puzzle(s)
             game.network.servers[ip] = s
             e.floor_hosts.append(ip)
             game.player.discovered_ips.add(ip)
 
         boss_ip = e.floor_hosts[boss_idx]
         boss = game.network.servers[boss_ip]
+        mod_tag = f" [MOD:{e.floor_modifier}]" if e.floor_modifier else ""
         if archetype == "ghost":
             target_file = ""
-            briefing = f"[FLOOR {floor}] Ghost the boss host {boss.hostname} ({boss_ip}) — zero traces."
+            briefing = f"[FLOOR {floor}] Ghost the boss host {boss.hostname} ({boss_ip}) — zero traces.{mod_tag}"
             mtype = "ghost"
             req_priv = False
         elif archetype == "root_heist":
             target_file = f"/root/floor_{floor}_root.txt"
-            briefing = f"[FLOOR {floor}] Root heist on {boss.hostname} — privesc, exfil, wipe."
+            briefing = f"[FLOOR {floor}] Root heist on {boss.hostname} — privesc, exfil, wipe.{mod_tag}"
             mtype = "root_heist"
             req_priv = True
+        elif archetype == "social":
+            target_file = f"/home/ops/floor_{floor}_loot.txt"
+            briefing = f"[FLOOR {floor}] Social op — phish then exfil {boss.hostname}.{mod_tag}"
+            mtype = "social"
+            req_priv = False
+        elif archetype == "timing":
+            target_file = f"/home/ops/floor_{floor}_loot.txt"
+            briefing = f"[FLOOR {floor}] Speed exfil {boss.hostname} — command window.{mod_tag}"
+            mtype = "timing"
+            req_priv = False
+        elif archetype == "tunnel":
+            target_file = f"/home/ops/floor_{floor}_loot.txt"
+            briefing = f"[FLOOR {floor}] Tunnel to {boss.hostname} (port 8022), exfil loot.{mod_tag}"
+            mtype = "exfil"
+            req_priv = False
         else:
             target_file = f"/home/ops/floor_{floor}_loot.txt"
-            briefing = f"[FLOOR {floor}] Crack {boss.hostname}, exfil loot, wipe logs."
+            briefing = f"[FLOOR {floor}] Crack {boss.hostname}, exfil loot, wipe logs.{mod_tag}"
             mtype = "exfil"
             req_priv = False
 
-        reward = 200 + floor * 80
+        reward = 200 + floor * 80 + (150 if e.boss_floor else 0)
         mid = f"endless-f{floor}"
         e.floor_mission_id = mid
-        game.missions.missions.insert(
-            0,
-            Mission(
-                mid, "nullbyte", briefing, boss_ip, target_file, reward,
-                rep_reward=0, mission_type=mtype, require_privesc=req_priv,
-                endless_floor=True, procedural=True,
-            ),
+        m = Mission(
+            mid, "nullbyte", briefing, boss_ip, target_file, reward,
+            rep_reward=0, mission_type=mtype, require_privesc=req_priv,
+            endless_floor=True, procedural=True,
         )
+        if e.floor_modifier == "speed_run" or archetype == "timing":
+            m.timing_limit_ticks = 12
+            m.timing_start_tick = game.player.ticks
+        if e.floor_modifier:
+            m.modifiers = [e.floor_modifier]
+        game.missions.missions.insert(0, m)
 
     @staticmethod
     def on_mission_complete(game: Game, mission: Mission) -> None:
@@ -307,9 +342,26 @@ class EndlessManager:
 
     @staticmethod
     def trace_modifier(game: Game) -> float:
+        bonus = 0.0
         if "ghost_chip" in game.endless.relics:
-            return -0.08
-        return 0.0
+            bonus -= 0.08
+        if game.endless.floor_modifier == "trace_storm":
+            bonus += 0.12
+        return bonus
+
+    @staticmethod
+    def on_post_command(game: Game) -> None:
+        if not game.endless.active:
+            return
+        e = game.endless
+        e.floor_commands += 1
+        if e.floor_modifier == "rival_hunt" and e.floor_commands % 3 == 0:
+            from main import warn
+            warn("RIVAL HUNT: abyss probe — IDS spike on floor subnet.")
+            for ip in e.floor_hosts:
+                s = game.network.get_server(ip)
+                if s:
+                    s.raise_ids_alert(1)
 
     @staticmethod
     def crack_bonus(game: Player) -> float:
@@ -335,6 +387,12 @@ class EndlessManager:
             f"  Total runs:   {e.total_runs}",
             f"  Relics:       {', '.join(e.relics) or 'none'}",
         ]
+        if e.floor_modifier:
+            from longevity_content import FLOOR_MODIFIERS
+            mod = FLOOR_MODIFIERS.get(e.floor_modifier, {})
+            lines.append(f"  Modifier:   {mod.get('label', e.floor_modifier)} — {mod.get('desc', '')}")
+        if e.boss_floor:
+            lines.append("  BOSS FLOOR — tool puzzle on boss host")
         if e.pending_relic_pick:
             lines.append(f"  RELIC PICK: endless relic <{'|'.join(e.relic_options)}>")
         return lines

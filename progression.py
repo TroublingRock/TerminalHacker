@@ -119,6 +119,10 @@ ACHIEVEMENTS: dict[str, str] = {
     "social_engineer": "Complete 3 social engineering contracts",
     "pivot_pro": "Complete 3 multi-host pivot contracts",
     "heist_master": "Complete 4 weekly heist arcs",
+    "arc_ghost": "Complete the ghost story contract arc",
+    "arc_rivals": "Complete the rivals story contract arc",
+    "arc_solo": "Complete the solo story contract arc",
+    "season_veteran": "Survive 3 monthly season resets",
     "faction_broker": "Reach 50 rep with Darknet Brokers",
     "faction_rival": "Reach 50 rep with Rival Syndicate",
     "faction_corp": "Reach 50 rep with Corporate Security",
@@ -347,7 +351,9 @@ class SaveManager:
                  "timing_start_tick": getattr(m, "timing_start_tick", 0),
                  "modifiers": getattr(m, "modifiers", []),
                  "heist_id": getattr(m, "heist_id", ""),
-                 "heist_step": getattr(m, "heist_step", 0)}
+                 "heist_step": getattr(m, "heist_step", 0),
+                 "story_arc": getattr(m, "story_arc", ""),
+                 "rival_counter": getattr(m, "rival_counter", False)}
                 for m in game.missions.missions
             ],
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
@@ -370,6 +376,8 @@ class SaveManager:
                 "longest_streak": game.retention.longest_streak,
                 "season_xp": game.retention.season_xp,
                 "season_tier": game.retention.season_tier,
+                "season_month": game.retention.season_month,
+                "season_cycles": game.retention.season_cycles,
                 "weekly_key": game.retention.weekly_key,
                 "weekly_completed": game.retention.weekly_completed,
                 "active_operation": game.retention.active_operation,
@@ -423,6 +431,9 @@ class SaveManager:
                 "career_money": game.endless.career_money,
                 "pending_relic_pick": game.endless.pending_relic_pick,
                 "relic_options": game.endless.relic_options,
+                "floor_modifier": game.endless.floor_modifier,
+                "boss_floor": game.endless.boss_floor,
+                "floor_commands": game.endless.floor_commands,
             },
             "story": {
                 "current_node": game.story.current_node,
@@ -558,6 +569,8 @@ class SaveManager:
                 modifiers=md.get("modifiers", []),
                 heist_id=md.get("heist_id", ""),
                 heist_step=md.get("heist_step", 0),
+                story_arc=md.get("story_arc", ""),
+                rival_counter=md.get("rival_counter", False),
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
@@ -584,6 +597,8 @@ class SaveManager:
                 longest_streak=rd.get("longest_streak", 0),
                 season_xp=rd.get("season_xp", 0),
                 season_tier=rd.get("season_tier", 0),
+                season_month=rd.get("season_month", ""),
+                season_cycles=rd.get("season_cycles", 0),
                 weekly_key=rd.get("weekly_key", ""),
                 weekly_completed=rd.get("weekly_completed", False),
                 active_operation=rd.get("active_operation", ""),
@@ -645,6 +660,9 @@ class SaveManager:
                 career_money=ed.get("career_money", 0),
                 pending_relic_pick=ed.get("pending_relic_pick", False),
                 relic_options=ed.get("relic_options", []),
+                floor_modifier=ed.get("floor_modifier", ""),
+                boss_floor=ed.get("boss_floor", False),
+                floor_commands=ed.get("floor_commands", 0),
             )
         std = data.get("story", {})
         if std:
