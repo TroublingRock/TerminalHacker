@@ -340,6 +340,9 @@ class ProceduralHostGenerator:
         from longevity_content import RivalCounterManager
         RivalCounterManager.on_procedural_spawn(game, ip)
 
+        from llm_content import LLMContentManager
+        LLMContentManager.enrich_host_story(game, server)
+
         game.network.servers[ip] = server
         game.variety.procedural_counter = n
         game.variety.procedural_ips.append(ip)
@@ -397,6 +400,9 @@ class VarietyMissionGenerator:
     def _finish(game: Game, mission: "Mission") -> "Mission":
         from depth_systems import ModifierManager
         ModifierManager.apply_to_mission(mission, game)
+        server = game.network.get_server(mission.target_ip)
+        from llm_content import LLMContentManager
+        LLMContentManager.enrich_briefing(game, mission, server)
         return mission
 
     @staticmethod

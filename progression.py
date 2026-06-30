@@ -471,6 +471,13 @@ class SaveManager:
                 "pivot_completions": game.variety.pivot_completions,
                 "puzzle_completions": game.variety.puzzle_completions,
             },
+            "llm": {
+                "user_enabled": game.llm.user_enabled,
+                "cache": game.llm.cache,
+                "session_calls": game.llm.session_calls,
+                "total_calls": game.llm.total_calls,
+                "last_error": game.llm.last_error,
+            },
             "meta": {
                 "specialization": game.meta.specialization,
                 "spec_unlock_pending": game.meta.spec_unlock_pending,
@@ -704,6 +711,16 @@ class SaveManager:
                 social_completions=vd.get("social_completions", 0),
                 pivot_completions=vd.get("pivot_completions", 0),
                 puzzle_completions=vd.get("puzzle_completions", 0),
+            )
+        from llm_content import LLMState
+        ld = data.get("llm", {})
+        if ld:
+            game.llm = LLMState(
+                user_enabled=ld.get("user_enabled", True),
+                cache=ld.get("cache", {}),
+                session_calls=ld.get("session_calls", 0),
+                total_calls=ld.get("total_calls", 0),
+                last_error=ld.get("last_error", ""),
             )
         md = data.get("meta", {})
         if md:

@@ -196,6 +196,10 @@ class SocialBoardManager:
         author = broker if "@" not in broker else broker.split("@")[0]
         if broker.endswith("_broker") or broker in ("ghost_broker", "cipher7", "shade_runner", "packet_queen", "nullbyte"):
             author = broker
+        from llm_content import LLMContentManager
+        llm_body = LLMContentManager.enrich_board_reply(game, author, body)
+        if llm_body:
+            body = llm_body
         SocialBoardManager._add_post(
             game, board, author,
             f"RE: your contract",

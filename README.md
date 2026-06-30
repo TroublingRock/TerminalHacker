@@ -121,6 +121,23 @@ Faction rep shifts from story choices, contract targets, and board posts. Perks 
 | Endless depth | 6 floor archetypes, 5 modifiers, boss floors every 5 with tool puzzles |
 | Heist retention | First-clear consumable + faction rep; branch mastery bonuses; repeat payout scales down |
 
+### LLM dynamic content (v1.9, optional)
+
+Use **Groq** or **OpenAI** keys for infinite flavor text — procedural briefings, host lore, board replies, rival mail.
+
+```bash
+cp llm.json.example ~/.terminalhacker/llm.json
+# Edit api_key, or export GROQ_API_KEY / OPENAI_API_KEY
+```
+
+| Command | Purpose |
+|---------|---------|
+| `llm` | Status — provider, call budget, cache |
+| `llm test` | Verify API key works |
+| `llm on` / `llm off` | Toggle without deleting config |
+
+Defaults: Groq `llama-3.3-70b-versatile`, 12 calls/session, cached per save. Falls back to templates if no key.
+
 ### Balance notes (v1.2)
 
 - Trace chance tuned for fair early career (~28% base)

@@ -1157,6 +1157,8 @@ class Game:
         self.story = StoryState()
         self.board = SocialBoardState()
         self.variety = VarietyState()
+        from llm_content import LLMState
+        self.llm = LLMState()
         from depth_systems import MetaState
         self.meta = MetaState()
         self.daily = RetentionManager.make_daily_challenge()
@@ -1310,7 +1312,7 @@ class Game:
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
             "phish", "tunnel", "plant", "forge",
-            "use [item]", "factions",
+            "use [item]", "factions", "llm [test|on|off]",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -2221,6 +2223,29 @@ class Game:
             Console.out(line)
         Console.out("\n  Shift rep via story choices, contracts, and board posts.")
 
+    def cmd_llm(self, args: list[str]) -> None:
+        from llm_content import LLMContentManager
+
+        if not args:
+            divider("LLM DYNAMIC CONTENT")
+            for line in LLMContentManager.status_lines(self):
+                Console.out(line)
+            Console.out("\n  llm test | llm on | llm off")
+            return
+        action = args[0].lower()
+        if action == "test":
+            LLMContentManager.test_generation(self)
+            return
+        if action == "on":
+            self.llm.user_enabled = True
+            success("LLM flavor text enabled.")
+            return
+        if action == "off":
+            self.llm.user_enabled = False
+            success("LLM flavor text disabled (templates only).")
+            return
+        error("Usage: llm [test|on|off]")
+
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
         SaveManager.save(self)
@@ -2273,6 +2298,7 @@ class Game:
             "spec": self.cmd_spec, "heist": self.cmd_heist, "heat": self.cmd_heat,
             "phish": self.cmd_phish, "tunnel": self.cmd_tunnel, "plant": self.cmd_plant,
             "forge": self.cmd_forge, "use": self.cmd_use, "factions": self.cmd_factions,
+            "llm": self.cmd_llm,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

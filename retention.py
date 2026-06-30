@@ -1049,6 +1049,8 @@ class RetentionManager:
 
         r = game.retention
         today = RetentionManager.today()
+        if r.last_login != today:
+            game.llm.session_calls = 0
         RetentionManager._reset_daily_counters(r, today)
         RetentionManager._process_login(game, today)
         RetentionManager._refresh_weekly(game)
@@ -1071,6 +1073,8 @@ class RetentionManager:
         SocialBoardManager.on_career_session(game)
         from longevity_content import SeasonCycleManager
         SeasonCycleManager.on_career_session(game)
+        from llm_content import LLMContentManager
+        LLMContentManager.maybe_rival_taunt(game)
 
         if r.last_login == today and r.streak > 0:
             teach(
@@ -1225,7 +1229,12 @@ class RetentionManager:
         rival_body = rival["body"]
         if addendum:
             rival_body += f"\n\n--- Based on your ops ---\n{addendum}"
-        game.mail.send(story["sender"], story["subject"], story["body"])
+        story_body = story["body"]
+        from llm_content import LLMContentManager
+        llm_story = LLMContentManager.enrich_weekly_flavor(game, story["subject"], story_body)
+        if llm_story:
+            story_body = llm_story
+        game.mail.send(story["sender"], story["subject"], story_body)
         game.mail.send(rival["sender"], rival["subject"], rival_body)
 
     @staticmethod
