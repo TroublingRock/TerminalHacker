@@ -118,7 +118,7 @@ class DesktopApp:
             bg=COLORS["desktop"], font=title_font,
         ).pack(side=tk.LEFT)
         tk.Label(
-            header, text="  v1.3 — Cybersecurity Training Environment",
+            header, text="  v1.4 — Cybersecurity Training Environment",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 11),
         ).pack(side=tk.LEFT, padx=(8, 0))
 
@@ -129,6 +129,7 @@ class DesktopApp:
             ("terminal", ">_", "Terminal", "SSH shell & hacking commands", self.open_terminal),
             ("mail", "@", "Mail", "NPC brokers & training messages", self.open_mail),
             ("jobs", "[]", "Job Board", "Paid contracts & missions", self.open_job_board),
+            ("board", "//", "Darknet Board", "Intel, rivals, flex & LFG posts", self.open_social_board),
             ("shop", "$", "Black Market", "CPU, firewall & tools", self.open_shop),
             ("training", "?", "Training", "Tutorial lessons & objectives", self.open_training),
             ("achieve", "*", "Achievements", "Badges & daily challenges", self.open_achievements),
@@ -136,7 +137,7 @@ class DesktopApp:
         ]
 
         for i, app in enumerate(apps):
-            row, col = divmod(i, 3)
+            row, col = divmod(i, 4)
             self._desktop_icon(icons, *app, row=row, col=col)
 
         hint = tk.Label(
@@ -195,7 +196,7 @@ class DesktopApp:
 
     def refresh_taskbar(self) -> None:
         p = self.game.player
-        phase = "TRAINING" if p.phase == "tutorial" else "CAREER"
+        phase = "TRAINING" if p.phase == "tutorial" else ("ENDLESS" if p.phase == "endless" else "CAREER")
         if p.phase == "tutorial":
             wallet = f"Tutorial ${p.tutorial_credits} | Career ${p.money} locked"
         else:
@@ -522,6 +523,37 @@ class DesktopApp:
         tk.Button(btn_row, text="Request New Contract", command=self._request_contract,
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4).pack(side=tk.LEFT)
 
+    def open_social_board(self) -> None:
+        from social_board import BOARD_NAMES, SocialBoardManager
+
+        win = self._window("board", "Darknet Board — Social Channels", 680, 520)
+        body: tk.Frame = win._body  # type: ignore[attr-defined]
+        p = self.game.player
+
+        tk.Label(body, text="DARKNET BOARDS", fg=COLORS["accent"], bg=COLORS["window"],
+                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W)
+        if p.phase not in ("career", "endless"):
+            tk.Label(body, text="Complete training to access the board.",
+                     fg=COLORS["warn"], bg=COLORS["window"]).pack(anchor=tk.W, pady=12)
+            return
+
+        SocialBoardManager.seed_if_needed(self.game)
+        tk.Label(body, text=f"Karma: {self.game.board.karma}  |  Boards: {', '.join(BOARD_NAMES)}",
+                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 10)).pack(anchor=tk.W, pady=(4, 8))
+
+        scroll = scrolledtext.ScrolledText(body, height=18, bg=COLORS["terminal_bg"],
+                                           fg=COLORS["text"], font=("Helvetica", 10), relief=tk.FLAT)
+        scroll.pack(fill=tk.BOTH, expand=True)
+        for post in SocialBoardManager.list_posts(self.game, limit=20):
+            tag = " [YOU]" if post.player_post else ""
+            scroll.insert(tk.END, f"/{post.board}/{tag} {post.author}: {post.title}\n")
+            scroll.insert(tk.END, f"  {post.body[:200]}{'...' if len(post.body) > 200 else ''}\n")
+            scroll.insert(tk.END, f"  id={post.post_id}  +{post.likes} likes\n\n")
+        scroll.configure(state=tk.DISABLED)
+
+        tk.Label(body, text="Terminal: board post flex Title | body  |  board upvote post-0001",
+                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(8, 0))
+
     def open_shop(self) -> None:
         win = self._window("shop", "Black Market — Upgrades", 640, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
@@ -657,7 +689,9 @@ class DesktopApp:
         p = self.game.player
 
         lines = []
-        if p.phase == "career":
+        if p.phase == "endless":
+            lines.append("Phase:       endless (roguelike run)")
+        elif p.phase == "career":
             lines.append("Phase:       career (training complete)")
         else:
             lines.append(f"Phase:       tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
@@ -675,16 +709,23 @@ class DesktopApp:
         lines.append(f"Unread mail: {self.game.mail.unread_count()}")
         if self.game.last_autosave:
             lines.append(f"Auto-save:   {self.game.last_autosave} (~/.terminalhacker/save.json)")
+        if p.phase == "endless":
+            from endless_mode import EndlessManager
+            lines.extend(EndlessManager.status_lines(self.game)[1:])
         if p.phase == "career":
             lines.append(f"Rank:        {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
             lines.append(f"Streak:      {self.game.retention.streak} days (best {self.game.retention.longest_streak})")
             lines.append(f"Season:      tier {self.game.retention.season_tier}/{len(SEASON_TIERS)} ({self.game.retention.season_xp} XP)")
+            lines.append(f"Story flags: {', '.join(sorted(self.game.story.flags)) or 'none'}")
+            lines.append(f"Board karma: {self.game.board.karma}")
             lines.append(f"Rival threat: {self.game.retention.rival_aggression}/10 ({self.game.retention.last_rival or 'none'})")
             lines.append(f"IDS level:   {self.game.blue.ids_level}")
             lines.append(f"Defense:     {'ON' if self.game.blue.defense_mode else 'off'}")
             nxt = RANKS[min(p.rank_index + 1, len(RANKS) - 1)]
             if p.rank_index < len(RANKS) - 1:
                 lines.append(f"Next rank:   {nxt.name} at {nxt.rep_required} rep")
+        elif p.phase == "endless":
+            lines.append(f"Best floor:  {self.game.endless.best_floor} (meta)")
 
         tk.Label(body, text="\n".join(lines), fg=COLORS["text"], bg=COLORS["window"],
                  font=("Courier", 11), justify=tk.LEFT, anchor=tk.NW).pack(fill=tk.BOTH, expand=True)
@@ -697,6 +738,9 @@ class DesktopApp:
                   bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         tk.Button(btn_row, text="Chaos Mode (terminal: chaos)", command=self.open_terminal,
                   bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT)
+        if p.phase == "career":
+            tk.Button(btn_row, text="Endless Run (endless start)", command=self.open_terminal,
+                      bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
 
     def run(self) -> None:
         self.root.mainloop()

@@ -111,6 +111,10 @@ ACHIEVEMENTS: dict[str, str] = {
     "chain_master": "Complete all 5 lateral movement chains",
     "grade_s_master": "Earn 10 S-rank contract grades",
     "hourly_hunter": "Complete 10 hourly flash events",
+    "endless_floor_10": "Reach floor 10 in endless mode",
+    "endless_floor_25": "Reach floor 25 in endless mode",
+    "story_fork": "Make 3 branching story choices",
+    "board_karma_100": "Earn 100 board karma",
 }
 
 DAILY_POOL = [
@@ -227,7 +231,7 @@ class MissionGenerator:
     def generate(cls, game: Game):
         from main import Mission, VirtualFile
 
-        if game.player.phase != "career":
+        if game.player.phase not in ("career",):
             return None
         if sum(1 for m in game.missions.missions if not m.completed) >= 5:
             return None
@@ -367,7 +371,8 @@ class SaveManager:
                  "lateral_chain_id": getattr(m, "lateral_chain_id", ""),
                  "hourly_event": getattr(m, "hourly_event", False),
                  "reward_multiplier": getattr(m, "reward_multiplier", 1.0),
-                 "grade": getattr(m, "grade", "")}
+                 "grade": getattr(m, "grade", ""),
+                 "endless_floor": getattr(m, "endless_floor", False)}
                 for m in game.missions.missions
             ],
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
@@ -428,6 +433,40 @@ class SaveManager:
                 "hourly_completed": game.session.hourly_completed,
                 "hourly_completions": game.session.hourly_completions,
             },
+            "endless": {
+                "active": game.endless.active,
+                "floor": game.endless.floor,
+                "score": game.endless.score,
+                "run_money": game.endless.run_money,
+                "best_floor": game.endless.best_floor,
+                "total_runs": game.endless.total_runs,
+                "deaths": game.endless.deaths,
+                "relics": game.endless.relics,
+                "floor_hosts": game.endless.floor_hosts,
+                "floor_subnet": game.endless.floor_subnet,
+                "floor_mission_id": game.endless.floor_mission_id,
+                "career_money": game.endless.career_money,
+                "pending_relic_pick": game.endless.pending_relic_pick,
+                "relic_options": game.endless.relic_options,
+            },
+            "story": {
+                "current_node": game.story.current_node,
+                "flags": list(game.story.flags),
+                "choices_made": game.story.choices_made,
+                "week_beat": game.story.week_beat,
+                "intro_sent": game.story.intro_sent,
+            },
+            "board": {
+                "posts": [
+                    {"post_id": p.post_id, "board": p.board, "author": p.author,
+                     "title": p.title, "body": p.body, "timestamp": p.timestamp,
+                     "likes": p.likes, "player_post": p.player_post, "upvoted": p.upvoted}
+                    for p in game.board.posts[:80]
+                ],
+                "karma": game.board.karma,
+                "_counter": game.board._counter,
+                "seeded": game.board.seeded,
+            },
         }
 
     @staticmethod
@@ -435,6 +474,9 @@ class SaveManager:
         from main import MailMessage, Mission, Route, VirtualFile
         from retention import RetentionManager, RetentionState
         from session_content import LateralManager, SessionState
+        from endless_mode import EndlessManager, EndlessState
+        from story_system import StoryState
+        from social_board import BoardPost, SocialBoardState
 
         pd = data["player"]
         daily_data = pd.pop("daily", None)
@@ -488,6 +530,7 @@ class SaveManager:
                 hourly_event=md.get("hourly_event", False),
                 reward_multiplier=md.get("reward_multiplier", 1.0),
                 grade=md.get("grade", ""),
+                endless_floor=md.get("endless_floor", False),
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
@@ -558,11 +601,52 @@ class SaveManager:
             chain = LateralManager.chain_by_id(game.session.active_chain_id)
             if chain:
                 LateralManager._inject_intel_files(game, chain)
+        ed = data.get("endless", {})
+        if ed:
+            game.endless = EndlessState(
+                active=ed.get("active", False),
+                floor=ed.get("floor", 0),
+                score=ed.get("score", 0),
+                run_money=ed.get("run_money", 0),
+                best_floor=ed.get("best_floor", 0),
+                total_runs=ed.get("total_runs", 0),
+                deaths=ed.get("deaths", 0),
+                relics=ed.get("relics", []),
+                floor_hosts=ed.get("floor_hosts", []),
+                floor_subnet=ed.get("floor_subnet", ""),
+                floor_mission_id=ed.get("floor_mission_id", ""),
+                career_money=ed.get("career_money", 0),
+                pending_relic_pick=ed.get("pending_relic_pick", False),
+                relic_options=ed.get("relic_options", []),
+            )
+        std = data.get("story", {})
+        if std:
+            game.story = StoryState(
+                current_node=std.get("current_node", ""),
+                flags=set(std.get("flags", [])),
+                choices_made=std.get("choices_made", []),
+                week_beat=std.get("week_beat", 0),
+                intro_sent=std.get("intro_sent", False),
+            )
+        bd = data.get("board", {})
+        if bd:
+            game.board = SocialBoardState(
+                posts=[BoardPost(**pd) for pd in bd.get("posts", [])],
+                karma=bd.get("karma", 0),
+                _counter=bd.get("_counter", 0),
+                seeded=bd.get("seeded", False),
+            )
+        if p.phase == "endless" and game.endless.active:
+            for ip in game.endless.floor_hosts:
+                if ip in game.network.servers:
+                    game.network.servers[ip].endless_only = True
         if p.phase == "career":
             game.network.deploy_company_hosts(p.reputation, p.chaos_unlocked)
             RetentionManager.on_career_session(game)
             from session_content import HourlyManager
             HourlyManager.refresh(game)
+        elif p.phase == "endless" and game.endless.active and not game.endless.floor_hosts:
+            EndlessManager._spawn_floor(game)
 
 
 def build_company_server(spec: dict) -> Server:

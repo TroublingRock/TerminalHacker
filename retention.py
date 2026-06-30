@@ -1059,6 +1059,11 @@ class RetentionManager:
         from session_content import HourlyManager
         HourlyManager.refresh(game)
 
+        from story_system import StoryManager
+        StoryManager.ensure_intro(game)
+        from social_board import SocialBoardManager
+        SocialBoardManager.on_career_session(game)
+
         if r.last_login == today and r.streak > 0:
             teach(
                 f"Streak day {r.streak} | Season tier {r.season_tier}/{len(SEASON_TIERS)} | "
@@ -1199,10 +1204,15 @@ class RetentionManager:
         if r.weekly_story_week == wk:
             return
         r.weekly_story_week = wk
+        from story_system import StoryManager
+        StoryManager.send_weekly_beat(game)
         idx = date.today().isocalendar().week % len(WEEKLY_STORY_MAIL)
         story = WEEKLY_STORY_MAIL[idx]
         rival = WEEKLY_RIVAL_MAIL[idx % len(WEEKLY_RIVAL_MAIL)]
         addendum = RetentionManager._story_addendum(game)
+        story_add = StoryManager.narrative_addendum(game)
+        if story_add:
+            addendum = f"{addendum}\n{story_add}".strip() if addendum else story_add
         rival_body = rival["body"]
         if addendum:
             rival_body += f"\n\n--- Based on your ops ---\n{addendum}"
@@ -1315,7 +1325,7 @@ class RetentionManager:
         if r.operation_cooldown_until and r.operation_cooldown_until > RetentionManager.today():
             return
 
-        for op in OPERATIONS:
+        for op in RetentionManager._operation_offer_order(game):
             if op["id"] in r.completed_operations:
                 continue
             if game.player.reputation < op.get("min_rep", 0):
@@ -1333,6 +1343,13 @@ class RetentionManager:
                 f"{part['briefing']}\n\nMulti-day op. Next phase unlocks tomorrow.\n\n— {op['broker']}",
             )
             return
+
+    @staticmethod
+    def _operation_offer_order(game: Game) -> list[dict]:
+        from story_system import StoryManager
+        order = StoryManager.operation_order(game)
+        by_id = {op["id"]: op for op in OPERATIONS}
+        return [by_id[oid] for oid in order if oid in by_id]
 
     @staticmethod
     def _inject_operation_mission(game: Game, op: dict, part: dict) -> None:

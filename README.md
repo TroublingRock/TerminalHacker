@@ -69,6 +69,18 @@ Progress **auto-saves** every few commands, on milestones, and when you quit.
 - **Mastery grades** — S/A/B/C ratings on contract completion affect payout and rep
 - **Hourly flash events** — rotating 2–3x bounty contracts that expire each real-world hour
 
+### Meta systems (v1.4)
+
+| System | Command |
+|--------|---------|
+| Roguelike endless mode | `endless` / `endless start` |
+| Branching story choices | `story` / `story choose <id>` |
+| Darknet social boards | `board` / `board post` / `board upvote` |
+
+- **Endless** — procedural floors, relic drops every 5 floors, permadeath on trace/breach/bankruptcy
+- **Story** — pick ghost/rivals/solo lane; affects weekly beats, chaos unlock, and operation order
+- **Boards** — `/intel`, `/rivals`, `/flex`, `/lfg` with NPC threads and player karma
+
 ### Balance notes (v1.2)
 
 - Trace chance tuned for fair early career (~28% base)

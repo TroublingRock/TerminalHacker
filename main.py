@@ -141,6 +141,7 @@ class Server:
     story: str = ""
     min_rep: int = 0
     chaos_only: bool = False
+    endless_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.services:
@@ -515,6 +516,7 @@ class Mission:
     hourly_event: bool = False
     reward_multiplier: float = 1.0
     grade: str = ""
+    endless_floor: bool = False
 
     def status_line(self) -> str:
         mark = "[DONE]" if self.completed else "[OPEN]"
@@ -523,6 +525,8 @@ class Mission:
             tag = f" [HOURLY {self.reward_multiplier}x]"
         elif self.lateral_chain_id:
             tag = " [LATERAL]"
+        elif self.endless_floor:
+            tag = " [ENDLESS]"
         elif self.weekly_bounty:
             tag = " [WEEKLY]"
         elif self.operation_id:
@@ -573,6 +577,10 @@ class MissionBoard:
         for mission in self.missions:
             if mission.completed:
                 continue
+            if game.player.phase == "endless" and not getattr(mission, "endless_floor", False):
+                continue
+            if game.player.phase != "endless" and getattr(mission, "endless_floor", False):
+                continue
             if not RetentionManager.mission_is_satisfied(game, mission):
                 continue
             grade, mult, summary = MasteryGrader.grade(game, mission)
@@ -606,6 +614,11 @@ class MissionBoard:
         RetentionManager.on_contract_complete(game, mission)
         RetentionManager.on_operation_step_complete(game, mission)
         HourlyManager.on_complete(game, mission)
+        from endless_mode import EndlessManager
+        EndlessManager.on_mission_complete(game, mission)
+        if game.player.phase == "career":
+            from social_board import SocialBoardManager
+            SocialBoardManager.on_contract_complete(game, mission)
         new_m = MissionGenerator.generate(game)
         if new_m:
             self.missions.append(new_m)
@@ -782,6 +795,9 @@ class Player:
     def wallet_label(self) -> str:
         if self.phase == "tutorial":
             return f"Tutorial budget: ${self.tutorial_credits} | Career funds: ${self.money} (locked)"
+        if self.phase == "endless" and self._game_ref:
+            from endless_mode import EndlessManager
+            return EndlessManager.run_wallet_label(self._game_ref)
         return f"Career balance: ${self.money}"
 
     def is_local(self) -> bool:
@@ -805,6 +821,16 @@ class Player:
                 return True
             error(f"Need ${amount} tutorial credits (have ${self.tutorial_credits}).")
             return False
+        if self.phase == "endless" and self._game_ref:
+            e = self._game_ref.endless
+            if e.run_money >= amount:
+                e.run_money -= amount
+                success(f"{reason} (-${amount}, run wallet ${e.run_money})")
+                from endless_mode import EndlessManager
+                EndlessManager.check_bankruptcy(self._game_ref)
+                return True
+            error(f"Need ${amount}, run wallet has ${e.run_money}.")
+            return False
         if self.money >= amount:
             self.money -= amount
             success(f"{reason} (-${amount}, balance ${self.money})")
@@ -816,6 +842,10 @@ class Player:
         if self.phase == "tutorial":
             self.tutorial_credits += amount
             success(f"+${amount} tutorial credits ({reason})")
+        elif self.phase == "endless" and self._game_ref:
+            self._game_ref.endless.run_money += amount
+            self._game_ref.endless.score += amount // 2
+            success(f"+${amount} run wallet ({reason})")
         else:
             self.money += amount
             success(f"+${amount} ({reason})")
@@ -829,12 +859,22 @@ class Player:
             self.tutorial_credits -= loss
             warn(f"[TRAINING] {reason} — lost ${loss} from tutorial budget (${self.tutorial_credits} left)")
             teach("Your career wallet was protected during training.")
+        elif self.phase == "endless" and self._game_ref:
+            e = self._game_ref.endless
+            e.run_money = max(0, e.run_money - amount)
+            warn(f"{reason} — lost ${amount}. Run wallet: ${e.run_money}")
+            from endless_mode import EndlessManager
+            EndlessManager.check_bankruptcy(self._game_ref)
         else:
             self.money = max(0, self.money - amount)
             warn(f"{reason} — lost ${amount}. Balance: ${self.money}")
 
     def crack_speed_bonus(self) -> float:
-        return self.cpu_level * 0.05 + {0: 0, 1: 0.15, 2: 0.35}[self.cracker_tier]
+        bonus = self.cpu_level * 0.05 + {0: 0, 1: 0.15, 2: 0.35}[self.cracker_tier]
+        if self.phase == "endless":
+            from endless_mode import EndlessManager
+            bonus += EndlessManager.crack_bonus(self)
+        return bonus
 
     def crack_attempt_reduction(self) -> float:
         return {0: 1.0, 1: 0.75, 2: 0.55}[self.cracker_tier]
@@ -925,6 +965,11 @@ class ThreatSystem:
                 tutorial.on_defense_tick()
             return
 
+        if p.phase == "endless":
+            if p.ticks % 3 == 0 and random.random() < 0.22:
+                self._maybe_attack(force=False)
+            return
+
         if p.ticks % 4 != 0:
             return
         if self.game.blue.defense_mode and random.random() < 0.28:
@@ -979,6 +1024,9 @@ class ThreatSystem:
         if p.phase == "career" and p.money < 1200:
             loss = min(loss, max(35, p.money // 3))
         p.penalize(loss, f"{rival} breached your defenses")
+        if p.phase == "endless" and self.game.endless.active:
+            from endless_mode import EndlessManager
+            EndlessManager.on_death(self.game, f"{rival} breach")
         self.game.mail.send(
             f"{rival}@rival.net",
             "We found your box",
@@ -1001,6 +1049,9 @@ class Game:
         from progression import AchievementTracker, BlueTeamState
         from retention import RetentionManager, RetentionState
         from session_content import SessionState
+        from endless_mode import EndlessState
+        from story_system import StoryState
+        from social_board import SocialBoardState
 
         self.player = Player()
         self.player._game_ref = self
@@ -1012,6 +1063,9 @@ class Game:
         self.achievements = AchievementTracker()
         self.retention = RetentionState()
         self.session = SessionState()
+        self.endless = EndlessState()
+        self.story = StoryState()
+        self.board = SocialBoardState()
         self.daily = RetentionManager.make_daily_challenge()
         self.blue = BlueTeamState()
         self.running = True
@@ -1103,6 +1157,10 @@ class Game:
         if self.player.phase == "career":
             HourlyManager.refresh(self)
             self.missions.check_completion(self)
+        elif self.player.phase == "endless":
+            self.missions.check_completion(self)
+            from endless_mode import EndlessManager
+            EndlessManager.check_bankruptcy(self)
         self.tutorial.check_advance()
         self._check_daily(cmd)
         self._check_achievements()
@@ -1152,6 +1210,7 @@ class Game:
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
+            "endless", "story", "board",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1290,8 +1349,15 @@ class Game:
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
             if getattr(server, "chaos_only", False):
                 chance = min(0.95, chance * 2)
+            if self.player.phase == "endless":
+                from endless_mode import EndlessManager
+                chance = max(0.05, chance + EndlessManager.trace_modifier(self))
             if random.random() < chance:
-                self.player.penalize(random.randint(50, 120), "Forensic trace")
+                if self.player.phase == "endless":
+                    from endless_mode import EndlessManager
+                    EndlessManager.on_death(self, "forensic trace")
+                else:
+                    self.player.penalize(random.randint(50, 120), "Forensic trace")
         else:
             self.try_unlock("ghost_hands")
             self.player.tutorial_flags.add("daily_zero_trace_done")
@@ -1825,6 +1891,79 @@ class Game:
             Console.out(f"  {mid}: {grade} ({mult}x)")
         Console.out(f"\n  S-ranks earned: {self.session.s_rank_total}")
 
+    def cmd_endless(self, args: list[str]) -> None:
+        from endless_mode import EndlessManager, RELIC_DEFS
+
+        if not args:
+            divider("ENDLESS MODE — ROGUELIKE RUN")
+            for line in EndlessManager.status_lines(self):
+                Console.out(line)
+            if self.player.phase == "career":
+                Console.out("\n  Type 'endless start' to begin a run (permadeath).")
+            return
+        action = args[0].lower()
+        if action == "start":
+            EndlessManager.start_run(self)
+            return
+        if action == "quit":
+            EndlessManager.quit_run(self)
+            return
+        if action == "relic" and len(args) > 1:
+            EndlessManager.pick_relic(self, args[1].lower())
+            return
+        error("Usage: endless [start|quit|relic <name>]")
+
+    def cmd_story(self, args: list[str]) -> None:
+        from story_system import StoryManager
+
+        divider("BRANCHING STORY")
+        for line in StoryManager.status_lines(self):
+            Console.out(line)
+        if args and args[0] == "choose" and len(args) > 1:
+            StoryManager.make_choice(self, args[1].lower())
+            return
+        if self.player.phase == "career":
+            Console.out("\n  Type 'story choose <ghost|rivals|solo|...>' when Mail prompts.")
+
+    def cmd_board(self, args: list[str]) -> None:
+        from social_board import BOARD_NAMES, SocialBoardManager
+
+        if self.player.phase not in ("career", "endless"):
+            warn("Board unlocks in career mode.")
+            return
+        SocialBoardManager.seed_if_needed(self)
+        if not args:
+            divider("DARKNET BOARDS — intel | rivals | flex | lfg")
+            Console.out(f"  Karma: {self.board.karma}")
+            for p in SocialBoardManager.list_posts(self):
+                Console.out(f"  {SocialBoardManager.format_post(p)}")
+            Console.out("\n  board <name> | board post <board> <title> | <body>")
+            Console.out("  board upvote <post-id>")
+            return
+        action = args[0].lower()
+        if action in BOARD_NAMES:
+            divider(f"BOARD /{action}/")
+            for p in SocialBoardManager.list_posts(self, action):
+                Console.out(f"  {SocialBoardManager.format_post(p)}")
+                Console.out(f"    {p.body[:120]}{'...' if len(p.body) > 120 else ''}\n")
+            return
+        if action == "post":
+            if len(args) < 3:
+                error("Usage: board post <board> <title> | <body>")
+                return
+            board = args[1].lower()
+            rest = " ".join(args[2:])
+            if "|" in rest:
+                title, body = [x.strip() for x in rest.split("|", 1)]
+            else:
+                title, body = rest[:40], rest
+            SocialBoardManager.player_post(self, board, title, body)
+            return
+        if action == "upvote" and len(args) > 1:
+            SocialBoardManager.upvote(self, args[1])
+            return
+        error(f"Usage: board [<{'|'.join(BOARD_NAMES)}>|post|upvote]")
+
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
         SaveManager.save(self)
@@ -1873,6 +2012,7 @@ class Game:
             "streak": self.cmd_streak, "season": self.cmd_season, "operation": self.cmd_operation,
             "intel": self.cmd_intel, "rivals": self.cmd_rivals, "bridge": self.cmd_bridge,
             "chains": self.cmd_chains, "hourly": self.cmd_hourly, "grades": self.cmd_grades,
+            "endless": self.cmd_endless, "story": self.cmd_story, "board": self.cmd_board,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }
