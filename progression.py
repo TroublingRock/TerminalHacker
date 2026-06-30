@@ -99,10 +99,13 @@ ACHIEVEMENTS: dict[str, str] = {
     "root_queen": "Privilege escalate to root",
     "rank_ghost": "Reach Ghost in the Wires rank",
     "chaos_walker": "Exfiltrate from a chaos target",
-    "daily_master": "Complete 5 daily challenges",
+    "daily_master": "Complete 30 daily challenges",
     "fortress": "Block 3 rival attacks in one session",
     "max_gear": "Max CPU and firewall",
     "contract_10": "Complete 10 contracts",
+    "streak_7": "Maintain a 7-day login streak",
+    "streak_30": "Maintain a 30-day login streak",
+    "season_complete": "Finish the 30-tier season track",
 }
 
 DAILY_POOL = [
@@ -176,6 +179,8 @@ class ReputationSystem:
         p = game.player
         p.reputation += amount
         success(f"+{amount} rep ({reason}) — total {p.reputation}")
+        from retention import RetentionManager
+        RetentionManager.on_rep_gain(game, amount)
         while p.rank_index < len(RANKS) - 1 and p.reputation >= RANKS[p.rank_index + 1].rep_required:
             p.rank_index += 1
             rank = RANKS[p.rank_index]
@@ -229,23 +234,41 @@ class MissionGenerator:
         if not candidates:
             return None
         server = random.choice(candidates)
+        archetype = random.choice(["exfil", "exfil", "ghost", "root_heist", "clean_sweep"])
         user = server.ssh_user
         tpl_path, tpl_body = random.choice(FILE_TEMPLATES)
         n = random.randint(1, 99)
         rel = tpl_path.format(user=user, n=n)
-        if rel not in server.files:
+        if archetype == "ghost":
+            rel = ""
+        elif archetype == "root_heist":
+            rel = f"/root/secret_{n}.txt"
+            if rel not in server.files:
+                server.files[rel] = VirtualFile(rel, tpl_body.format(n=n), owner="root", mode="rw-------", requires_root=True)
+        elif rel not in server.files:
             server.files[rel] = VirtualFile(rel, tpl_body.format(n=n))
         reward = 400 + server.security_level * 120 + random.randint(0, 200)
         rep = 40 + server.security_level * 15
-        fname = rel.rsplit("/", 1)[-1]
         company = getattr(server, "company", "Unknown")
-        briefing = (
-            f"[{company}] Hit {server.hostname} ({server.ip}), "
-            f"exfil {fname}, wipe logs."
-        )
+        if archetype == "ghost":
+            briefing = f"[{company}] Ghost run on {server.hostname} ({server.ip}) — crack, leave zero traces."
+            reward += 200
+        elif archetype == "root_heist":
+            fname = rel.rsplit("/", 1)[-1]
+            briefing = f"[{company}] Root heist on {server.hostname} — privesc, exfil {fname}, wipe logs."
+            reward += 300
+            rep += 30
+        elif archetype == "clean_sweep":
+            briefing = f"[{company}] Clean sweep on {server.hostname} — crack, wipe ALL logs, exfil {rel.rsplit('/', 1)[-1]}."
+            reward += 150
+        else:
+            fname = rel.rsplit("/", 1)[-1]
+            briefing = f"[{company}] Hit {server.hostname} ({server.ip}), exfil {fname}, wipe logs."
         return Mission(
             cls.next_id(), random.choice(BROKERS), briefing,
             server.ip, rel, reward, rep_reward=rep, procedural=True,
+            mission_type=archetype,
+            require_privesc=archetype == "root_heist",
         )
 
 
@@ -294,6 +317,7 @@ class SaveManager:
                 "tutorial_flags": list(p.tutorial_flags),
                 "ticks": p.ticks,
                 "subnets_scanned": list(p.subnets_scanned),
+                "privesc_hosts": list(p.privesc_hosts),
                 "downloads": [k for k in p.files if "/downloads/" in k],
                 "daily": {
                     "challenge_id": game.daily.challenge_id,
@@ -307,7 +331,13 @@ class SaveManager:
                 {"mission_id": m.mission_id, "broker": m.broker, "briefing": m.briefing,
                  "target_ip": m.target_ip, "target_file": m.target_file,
                  "reward": m.reward, "rep_reward": getattr(m, "rep_reward", 0),
-                 "completed": m.completed, "procedural": getattr(m, "procedural", False)}
+                 "completed": m.completed, "procedural": getattr(m, "procedural", False),
+                 "mission_type": getattr(m, "mission_type", "exfil"),
+                 "require_privesc": getattr(m, "require_privesc", False),
+                 "require_log_wipe": getattr(m, "require_log_wipe", True),
+                 "weekly_bounty": getattr(m, "weekly_bounty", False),
+                 "operation_id": getattr(m, "operation_id", ""),
+                 "operation_step": getattr(m, "operation_step", 0)}
                 for m in game.missions.missions
             ],
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
@@ -323,11 +353,27 @@ class SaveManager:
                      "defense_mode": game.blue.defense_mode},
             "announced": game.missions._announced,
             "mail_counter": game.mail._counter,
+            "retention": {
+                "last_login": game.retention.last_login,
+                "streak": game.retention.streak,
+                "longest_streak": game.retention.longest_streak,
+                "season_xp": game.retention.season_xp,
+                "season_tier": game.retention.season_tier,
+                "weekly_key": game.retention.weekly_key,
+                "weekly_completed": game.retention.weekly_completed,
+                "active_operation": game.retention.active_operation,
+                "operation_step": game.retention.operation_step,
+                "operation_unlock_day": game.retention.operation_unlock_day,
+                "operation_parts_done": game.retention.operation_parts_done,
+                "completed_operations": game.retention.completed_operations,
+                "ghost_targets_done": list(game.retention.ghost_targets_done),
+            },
         }
 
     @staticmethod
     def _deserialize(game: Game, data: dict) -> None:
         from main import MailMessage, Mission, Route, VirtualFile
+        from retention import RetentionManager, RetentionState
 
         pd = data["player"]
         daily_data = pd.pop("daily", None)
@@ -349,6 +395,8 @@ class SaveManager:
                         p.files[path] = VirtualFile(path, "restored\n")
             elif k == "subnets_scanned":
                 p.subnets_scanned = set(v)
+            elif k == "privesc_hosts":
+                p.privesc_hosts = set(v)
             elif hasattr(p, k):
                 setattr(p, k, v)
 
@@ -370,6 +418,11 @@ class SaveManager:
                 completed=md["completed"],
                 rep_reward=md.get("rep_reward", 50),
                 procedural=md.get("procedural", False),
+                mission_type=md.get("mission_type", "exfil"),
+                require_privesc=md.get("require_privesc", False),
+                weekly_bounty=md.get("weekly_bounty", False),
+                operation_id=md.get("operation_id", ""),
+                operation_step=md.get("operation_step", 0),
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
@@ -387,8 +440,26 @@ class SaveManager:
         game.blue.attacks_blocked = bd.get("attacks_blocked", 0)
         game.blue.defense_mode = bd.get("defense_mode", False)
         game.missions._announced = data.get("announced", False)
+        rd = data.get("retention", {})
+        if rd:
+            game.retention = RetentionState(
+                last_login=rd.get("last_login", ""),
+                streak=rd.get("streak", 0),
+                longest_streak=rd.get("longest_streak", 0),
+                season_xp=rd.get("season_xp", 0),
+                season_tier=rd.get("season_tier", 0),
+                weekly_key=rd.get("weekly_key", ""),
+                weekly_completed=rd.get("weekly_completed", False),
+                active_operation=rd.get("active_operation", ""),
+                operation_step=rd.get("operation_step", 0),
+                operation_unlock_day=rd.get("operation_unlock_day", ""),
+                operation_parts_done=rd.get("operation_parts_done", []),
+                completed_operations=rd.get("completed_operations", []),
+                ghost_targets_done=set(rd.get("ghost_targets_done", [])),
+            )
         if p.phase == "career":
             game.network.deploy_company_hosts(p.reputation, p.chaos_unlocked)
+            RetentionManager.on_career_session(game)
 
 
 def build_company_server(spec: dict) -> Server:

@@ -13,6 +13,7 @@ import random
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Callable
 
 
@@ -417,6 +418,8 @@ class TutorialManager:
             "Training sandbox disabled. Traces and fines now affect your real balance.\n"
             "Use VPN, upgrade firewall, and read your Mail for contracts.",
         )
+        from retention import RetentionManager
+        RetentionManager.on_career_session(self.game)
 
     def on_defense_tick(self) -> None:
         if not self.in_tutorial() or self.player.tutorial_step != self.DEFENSE_LESSON:
@@ -500,10 +503,22 @@ class Mission:
     completed: bool = False
     rep_reward: int = 50
     procedural: bool = False
+    mission_type: str = "exfil"
+    require_privesc: bool = False
+    weekly_bounty: bool = False
+    operation_id: str = ""
+    operation_step: int = 0
 
     def status_line(self) -> str:
         mark = "[DONE]" if self.completed else "[OPEN]"
-        return f"{mark} {self.broker}: {self.briefing} (reward ${self.reward})"
+        tag = ""
+        if self.weekly_bounty:
+            tag = " [WEEKLY]"
+        elif self.operation_id:
+            tag = f" [OP {self.operation_step}]"
+        elif self.mission_type != "exfil":
+            tag = f" [{self.mission_type.upper()}]"
+        return f"{mark}{tag} {self.broker}: {self.briefing} (reward ${self.reward})"
 
 
 class MissionBoard:
@@ -540,33 +555,34 @@ class MissionBoard:
                 )
 
     def check_completion(self, game: "Game") -> None:
-        player = game.player
+        from retention import RetentionManager
+
         for mission in self.missions:
             if mission.completed:
                 continue
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in player.files:
+            if not RetentionManager.mission_is_satisfied(game, mission):
                 continue
-            server = game.network.get_server(mission.target_ip)
-            logs_ok = not server or not server.player_left_traces(player)
-            if logs_ok:
-                mission.completed = True
-                player.earn(mission.reward, f"contract {mission.broker}")
-                self.complete_mission_hooks(game, mission)
-                if game.mail:
-                    game.mail.send(
-                        f"{mission.broker}@darknet",
-                        f"Payment confirmed — ${mission.reward}",
-                        f"Contract fulfilled.\n\n{mission.briefing}\n\nFunds transferred.",
-                    )
+            mission.completed = True
+            game.player.earn(mission.reward, f"contract {mission.broker}")
+            self.complete_mission_hooks(game, mission)
+            if game.mail:
+                game.mail.send(
+                    f"{mission.broker}@darknet",
+                    f"Payment confirmed — ${mission.reward}",
+                    f"Contract fulfilled.\n\n{mission.briefing}\n\nFunds transferred.",
+                )
 
     def complete_mission_hooks(self, game: "Game", mission: Mission) -> None:
         from progression import MissionGenerator, ReputationSystem
+        from retention import RetentionManager
 
+        game.player.tutorial_flags.add("daily_contract_done")
         game.achievements.contracts_completed += 1
         if game.achievements.contracts_completed >= 10:
             game.achievements.unlock("contract_10")
         ReputationSystem.add_rep(game, mission.rep_reward, mission.mission_id)
+        RetentionManager.on_contract_complete(game, mission)
+        RetentionManager.on_operation_step_complete(game, mission)
         new_m = MissionGenerator.generate(game)
         if new_m:
             self.missions.append(new_m)
@@ -703,7 +719,9 @@ class Player:
     rank_index: int = 0
     chaos_unlocked: bool = False
     subnets_scanned: set[str] = field(default_factory=set)
+    privesc_hosts: set[str] = field(default_factory=set)
     session_cracked: bool = False
+    _game_ref: "Game | None" = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not self.routes:
@@ -769,6 +787,9 @@ class Player:
         else:
             self.money += amount
             success(f"+${amount} ({reason})")
+            if self._game_ref:
+                from retention import RetentionManager
+                RetentionManager.on_earn(self._game_ref, amount)
 
     def penalize(self, amount: int, reason: str) -> None:
         if self.phase == "tutorial":
@@ -906,6 +927,10 @@ class ThreatSystem:
                 if self.game.achievements.blocks_this_session >= 3:
                     self.game.achievements.unlock("fortress")
                 self.game.player.tutorial_flags.add("daily_block_done")
+                if self.game.blue.defense_mode:
+                    self.game.player.tutorial_flags.add("daily_defend_block_done")
+                    self.game.player.tutorial_flags.add("daily_active_defense_done")
+                self.game.player.tutorial_flags.add("daily_survive_done")
             return
 
         loss = random.randint(40, 100) * max(1, power - p.firewall_level)
@@ -929,16 +954,19 @@ class Game:
     BASE_TRACE_CHANCE = 0.35
 
     def __init__(self) -> None:
-        from progression import AchievementTracker, BlueTeamState, DailyChallenge
+        from progression import AchievementTracker, BlueTeamState
+        from retention import RetentionManager, RetentionState
 
         self.player = Player()
+        self.player._game_ref = self
         self.network = VirtualNetwork(career=False)
         self.missions = MissionBoard()
         self.mail = MailBox()
         self.tutorial = TutorialManager(self)
         self.threat = ThreatSystem(self)
         self.achievements = AchievementTracker()
-        self.daily = DailyChallenge.for_today()
+        self.retention = RetentionState()
+        self.daily = RetentionManager.make_daily_challenge()
         self.blue = BlueTeamState()
         self.running = True
         self.gui_mode = False
@@ -1028,7 +1056,7 @@ class Game:
             success(f"ACHIEVEMENT UNLOCKED: {ACHIEVEMENTS.get(key, key)}")
 
     def _check_daily(self, _cmd: str) -> None:
-        from progression import DAILY_FLAGS
+        from retention import DAILY_FLAGS, RetentionManager
 
         if self.daily.completed or self.player.phase != "career":
             return
@@ -1037,7 +1065,8 @@ class Game:
             self.daily.completed = True
             self.player.earn(self.daily.reward, "daily challenge")
             self.achievements.dailies_completed += 1
-            if self.achievements.dailies_completed >= 5:
+            RetentionManager.on_daily_complete(self)
+            if self.achievements.dailies_completed >= 30:
                 self.try_unlock("daily_master")
             success(f"Daily complete: {self.daily.description} (+${self.daily.reward})")
 
@@ -1059,7 +1088,8 @@ class Game:
             "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
-            "achievements", "daily", "chaos", "defend", "save", "load", "exit",
+            "achievements", "daily", "chaos", "defend", "streak", "season", "operation",
+            "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
 
@@ -1080,6 +1110,7 @@ class Game:
                 return
             self.player.routes.append(Route(cidr, gw))
             success(f"Route added: {cidr} via {gw}")
+            self.player.tutorial_flags.add("daily_new_route_done")
             teach("Packets to that subnet now flow through the gateway router.")
             return
 
@@ -1134,6 +1165,11 @@ class Game:
         self.player.subnets_scanned.add(cidr)
         if len(self.player.subnets_scanned) >= 3:
             self.player.tutorial_flags.add("daily_scan3_done")
+        if cidr == "172.16.0.0/24":
+            self.player.tutorial_flags.add("daily_scan_finance_done")
+        if cidr == "203.0.113.0/24":
+            self.player.tutorial_flags.add("daily_scan_chaos_done")
+        self.missions.check_completion(self)
         info("Use connect <IP> 22")
 
     def cmd_connect(self, args: list[str]) -> None:
@@ -1173,7 +1209,8 @@ class Game:
             warn("Already localhost.")
             return
         server = self.remote_server()
-        if server and server.player_left_traces(self.player):
+        clean = not server or not server.player_left_traces(self.player)
+        if server and not clean:
             from progression import ReputationSystem
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
             if getattr(server, "chaos_only", False):
@@ -1183,6 +1220,12 @@ class Game:
         else:
             self.try_unlock("ghost_hands")
             self.player.tutorial_flags.add("daily_zero_trace_done")
+            if server and server.cracked and self.player.has_remote_shell:
+                from retention import RetentionManager
+                RetentionManager.on_ghost_complete(self, server.ip)
+        if server:
+            from retention import RetentionManager
+            RetentionManager.on_disconnect_checks(self, server.ip, clean)
         self.player.connection = "localhost"
         self.player.cwd = "/home/hacker"
         self.player.reset_session()
@@ -1195,6 +1238,8 @@ class Game:
         divider("PROBE")
         self.log_remote(s, "Service fingerprint", "Probe scan")
         s.raise_ids_alert(1)
+        from retention import RetentionManager
+        RetentionManager.on_probe(self, s.ip)
         Console.out(f"  {s.hostname} | FW L{s.security_level} | cracked={s.cracked}")
         if s.ip == "192.168.1.50":
             self.player.tutorial_flags.add("probed_training")
@@ -1228,8 +1273,13 @@ class Game:
             self.try_unlock("first_blood")
             if self.player.vpn_active:
                 self.try_unlock("vpn_shadow")
+                self.player.tutorial_flags.add("daily_vpn_crack_done")
             else:
                 self.player.tutorial_flags.add("daily_no_vpn_done")
+            from retention import RetentionManager
+            RetentionManager.on_crack(self, s.ip, s.security_level)
+            if "daily_shop_bought" not in self.player.tutorial_flags:
+                self.player.tutorial_flags.add("daily_no_shop_done")
             if self.player.phase == "career":
                 self.player.earn(50 + s.security_level * 25, "crack bounty")
                 from progression import ReputationSystem
@@ -1262,9 +1312,13 @@ class Game:
         self.player.remote_is_root = True
         self.player.remote_was_root = True
         self.player.cwd = "/root"
+        if self.remote_server():
+            self.player.privesc_hosts.add(self.remote_server().ip)
         success("You are now root. Prompt will show root@host#")
         self.try_unlock("root_queen")
         self.player.tutorial_flags.add("daily_privesc_done")
+        if self.remote_server() and self.player.remote_was_root:
+            self.player.tutorial_flags.add("daily_privesc_dl_done")
         teach("Root can read any file and persist malware — defend with least-privilege.")
 
     def cmd_download(self, args: list[str]) -> None:
@@ -1285,6 +1339,12 @@ class Game:
         success(f"Exfiltrated to {local}")
         if s.chaos_only:
             self.try_unlock("chaos_walker")
+        if "/root/" in path and self.player.remote_was_root:
+            self.player.tutorial_flags.add("daily_root_exfil_done")
+        if s.ip.startswith("10.0.0."):
+            self.player.tutorial_flags.add("daily_corp_exfil_done")
+        if "/var/log/auth.log" in args[0] or path.endswith("auth.log"):
+            pass
         self.missions.check_completion(self)
 
     def cmd_ls(self, args: list[str]) -> None:
@@ -1317,6 +1377,7 @@ class Game:
         Console.out(f.read())
         if path == "/var/log/auth.log" and not self.player.is_local():
             self.player.tutorial_flags.add("read_authlog")
+            self.player.tutorial_flags.add("daily_read_auth_done")
             teach("That IP is forensic evidence tying you to this intrusion.")
 
     def cmd_rm(self, args: list[str]) -> None:
@@ -1333,6 +1394,10 @@ class Game:
         s = self.remote_server()
         if s and s.ip == "192.168.1.50" and not s.player_left_traces(self.player):
             self.player.tutorial_flags.add("wiped_training_logs")
+        if s and not s.player_left_traces(self.player):
+            if "/var/log/syslog" not in s.files and "/var/log/auth.log" not in s.files:
+                self.player.tutorial_flags.add("daily_double_wipe_done")
+                self.player.tutorial_flags.add("daily_exfil_wipe_done")
 
     def cmd_pwd(self, _a: list[str]) -> None:
         Console.out(self.player.cwd)
@@ -1363,6 +1428,9 @@ class Game:
             return
         if Shop.buy(self.player, args[0].lower()):
             self.player.tutorial_flags.add("daily_buy_done")
+            self.player.tutorial_flags.add("daily_shop_bought")
+            if args[0].lower() in ("cpu", "firewall"):
+                self.player.tutorial_flags.add("daily_gear_up_done")
 
     def cmd_missions(self, _a: list[str]) -> None:
         if self.player.phase == "tutorial":
@@ -1387,6 +1455,8 @@ class Game:
         if p.phase == "career":
             from progression import ReputationSystem
             Console.out(f"  Rank:       {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
+            Console.out(f"  Streak:     {self.retention.streak} days (best {self.retention.longest_streak})")
+            Console.out(f"  Season:     tier {self.retention.season_tier}/30 ({self.retention.season_xp} XP)")
             Console.out(f"  IDS/FW:     L{p.firewall_level} / IDS L{self.blue.ids_level}")
             Console.out(f"  Defense:    {'ON' if self.blue.defense_mode else 'off'}")
             d = "DONE" if self.daily.completed else self.daily.description
@@ -1473,6 +1543,7 @@ class Game:
             return
         from progression import MissionGenerator
 
+        self.player.tutorial_flags.add("daily_request_done")
         m = MissionGenerator.generate(self)
         if m:
             self.missions.missions.append(m)
@@ -1481,13 +1552,61 @@ class Game:
         else:
             warn("No contracts available — complete one first or rank up.")
 
+    def cmd_streak(self, _a: list[str]) -> None:
+        from retention import STREAK_MILESTONES
+
+        r = self.retention
+        divider("LOGIN STREAK")
+        Console.out(f"  Current streak:  {r.streak} days")
+        Console.out(f"  Longest streak:  {r.longest_streak} days")
+        Console.out(f"  Last login:      {r.last_login or 'never'}")
+        Console.out("\n  Milestones:")
+        for day, (cash, xp, msg) in sorted(STREAK_MILESTONES.items()):
+            mark = "[x]" if r.streak >= day else "[ ]"
+            Console.out(f"  {mark} Day {day:2d} — ${cash} + {xp} season XP — {msg}")
+
+    def cmd_season(self, _a: list[str]) -> None:
+        from retention import SEASON_TIERS
+
+        r = self.retention
+        divider("30-DAY SEASON TRACK")
+        Console.out(f"  Tier: {r.season_tier}/{len(SEASON_TIERS)}  |  XP bank: {r.season_xp}")
+        if r.season_tier < len(SEASON_TIERS):
+            nxt = SEASON_TIERS[r.season_tier]
+            Console.out(f"  Next tier needs {nxt['xp']} XP — reward: ${nxt['cash']} + {nxt['rep']} rep")
+        Console.out("\n  Upcoming rewards:")
+        for i in range(r.season_tier, min(r.season_tier + 5, len(SEASON_TIERS))):
+            t = SEASON_TIERS[i]
+            Console.out(f"    Tier {i + 1}: {t['label']} — ${t['cash']}")
+
+    def cmd_operation(self, _a: list[str]) -> None:
+        from retention import OPERATIONS
+
+        r = self.retention
+        divider("ACTIVE OPERATION")
+        if not r.active_operation:
+            Console.out("  No active operation. Check Mail for new multi-day ops.")
+            return
+        op = next((o for o in OPERATIONS if o["id"] == r.active_operation), None)
+        if not op:
+            return
+        Console.out(f"  {op['name']} — Phase {r.operation_step}/{len(op['parts'])}")
+        if r.operation_unlock_day > date.today().isoformat():
+            Console.out(f"  Next phase unlocks: {r.operation_unlock_day}")
+        else:
+            Console.out("  Current phase is active — check missions.")
+        for m in self.missions.missions:
+            if m.operation_id == r.active_operation and not m.completed:
+                Console.out(f"  Objective: {m.briefing}")
+
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
         SaveManager.save(self)
 
     def cmd_load(self, _a: list[str]) -> None:
         from progression import SaveManager
-        SaveManager.load(self)
+        if SaveManager.load(self):
+            self.player._game_ref = self
 
     def cmd_exit(self, _a: list[str]) -> None:
         if self.gui_mode:
@@ -1524,6 +1643,7 @@ class Game:
             "status": self.cmd_status, "rank": self.cmd_rank,
             "achievements": self.cmd_achievements, "daily": self.cmd_daily,
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
+            "streak": self.cmd_streak, "season": self.cmd_season, "operation": self.cmd_operation,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

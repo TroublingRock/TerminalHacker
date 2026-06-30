@@ -17,6 +17,7 @@ from main import (
     TUTORIAL_CURRICULUM,
 )
 from progression import ACHIEVEMENTS, RANKS, ReputationSystem, SaveManager
+from retention import SEASON_TIERS
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -190,6 +191,8 @@ class DesktopApp:
         rank_txt = ""
         if p.phase == "career":
             rank_txt = f" | {ReputationSystem.rank_name(p)} ({p.reputation} rep)"
+            rank_txt += f" | Streak {self.game.retention.streak}d"
+            rank_txt += f" | S{self.game.retention.season_tier}/{len(SEASON_TIERS)}"
         self.taskbar_label.configure(
             text=(
                 f"  {phase}{lesson}{rank_txt}  |  {wallet}  |  CPU L{p.cpu_level}  |  "
@@ -451,8 +454,11 @@ class DesktopApp:
         daily_txt = f"Today's challenge: COMPLETE (+${d.reward})" if d.completed else (
             f"Today's challenge: {d.description} — ${d.reward}"
         )
+        r = self.game.retention
         tk.Label(body, text=daily_txt, fg=COLORS["teach"], bg=COLORS["window"],
                  font=("Helvetica", 10), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(8, 4))
+        tk.Label(body, text=f"Streak: {r.streak} days | Season {r.season_tier}/{len(SEASON_TIERS)} | Type 'operation' in terminal for multi-day ops",
+                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(0, 4))
 
         tk.Label(body, text="Contract details also arrive via Mail from brokers.",
                  fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(4, 0))
@@ -547,8 +553,11 @@ class DesktopApp:
 
         d = self.game.daily
         daily = "COMPLETE" if d.completed else f"{d.description} — ${d.reward}"
+        r = self.game.retention
         tk.Label(body, text=f"TODAY'S CHALLENGE: {daily}", fg=COLORS["teach"],
                  bg=COLORS["window"], font=("Helvetica", 10), wraplength=520).pack(anchor=tk.W)
+        tk.Label(body, text=f"Streak: {r.streak} days (best {r.longest_streak}) | Season tier {r.season_tier}/{len(SEASON_TIERS)}",
+                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 10)).pack(anchor=tk.W, pady=(4, 0))
 
     def open_training(self) -> None:
         win = self._window("training", "Training Center", 640, 500)
@@ -612,6 +621,8 @@ class DesktopApp:
         lines.append(f"Unread mail: {self.game.mail.unread_count()}")
         if p.phase == "career":
             lines.append(f"Rank:        {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
+            lines.append(f"Streak:      {self.game.retention.streak} days (best {self.game.retention.longest_streak})")
+            lines.append(f"Season:      tier {self.game.retention.season_tier}/{len(SEASON_TIERS)} ({self.game.retention.season_xp} XP)")
             lines.append(f"IDS level:   {self.game.blue.ids_level}")
             lines.append(f"Defense:     {'ON' if self.game.blue.defense_mode else 'off'}")
             nxt = RANKS[min(p.rank_index + 1, len(RANKS) - 1)]
