@@ -57,8 +57,10 @@ class DesktopApp:
 
         self.game = Game()
         self.game.gui_mode = True
+        self.game.player._game_ref = self.game
         Console.fast_mode = True
         self.game.mail.on_new_mail = self._on_new_mail
+        self._try_resume_save()
 
         self.open_windows: dict[str, tk.Toplevel] = {}
         self.terminal_booted = False
@@ -70,6 +72,11 @@ class DesktopApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self._schedule_autosave()
         self.refresh_taskbar()
+
+    def _try_resume_save(self) -> None:
+        from progression import SAVE_PATH, SaveManager
+        if SAVE_PATH.exists():
+            SaveManager.load(self.game, quiet=True)
 
     def _on_quit(self) -> None:
         self.game.autosave(force=True)
@@ -111,7 +118,7 @@ class DesktopApp:
             bg=COLORS["desktop"], font=title_font,
         ).pack(side=tk.LEFT)
         tk.Label(
-            header, text="  v1.1 — Cybersecurity Training Environment",
+            header, text="  v1.2 — Cybersecurity Training Environment",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 11),
         ).pack(side=tk.LEFT, padx=(8, 0))
 

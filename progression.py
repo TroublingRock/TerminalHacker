@@ -250,8 +250,8 @@ class MissionGenerator:
                 server.files[rel] = VirtualFile(rel, tpl_body.format(n=n), owner="root", mode="rw-------", requires_root=True)
         elif rel not in server.files:
             server.files[rel] = VirtualFile(rel, tpl_body.format(n=n))
-        reward = 400 + server.security_level * 120 + random.randint(0, 200)
-        rep = 40 + server.security_level * 15
+        reward = 320 + server.security_level * 100 + random.randint(0, 180)
+        rep = 35 + server.security_level * 12
         company = getattr(server, "company", "Unknown")
         if archetype == "ghost":
             briefing = f"[{company}] Ghost run on {server.hostname} ({server.ip}) — crack, leave zero traces."
@@ -306,17 +306,20 @@ class SaveManager:
         return ok
 
     @staticmethod
-    def load(game: Game) -> bool:
+    def load(game: Game, *, quiet: bool = False) -> bool:
         from main import error, success
         if not SAVE_PATH.exists():
-            error("No save file found.")
+            if not quiet:
+                error("No save file found.")
             return False
         try:
             SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()))
-            success(f"Loaded from {SAVE_PATH}")
+            if not quiet:
+                success(f"Loaded from {SAVE_PATH}")
             return True
         except (OSError, json.JSONDecodeError, KeyError) as exc:
-            error(f"Load failed: {exc}")
+            if not quiet:
+                error(f"Load failed: {exc}")
             return False
 
     @staticmethod

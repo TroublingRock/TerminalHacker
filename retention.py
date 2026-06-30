@@ -610,7 +610,7 @@ CROSS_OPERATION_REACTIONS: list[dict[str, Any]] = [
             "— NovaDyne Legal Bot [simulated]",
         ),
         "aggression": 1,
-        "fine": 150,
+        "fine": 100,
     },
 ]
 
@@ -979,8 +979,8 @@ BRIDGE_BY_NEXT_TYPE: dict[str, list[str]] = {
 }
 
 BRIDGE_FLAGS: dict[str, str] = {k: f"bridge_{k}_done" for k in BRIDGE_TASK_DEFS}
-BRIDGE_BONUS_CASH = 400
-BRIDGE_BONUS_XP = 65
+BRIDGE_BONUS_CASH = 350
+BRIDGE_BONUS_XP = 55
 
 
 @dataclass
@@ -1270,7 +1270,7 @@ class RetentionManager:
 
     @staticmethod
     def rival_threat_bonus(game: Game) -> float:
-        return game.retention.rival_aggression * 0.035
+        return min(0.12, game.retention.rival_aggression * 0.022)
 
     @staticmethod
     def pick_rival_attacker(game: Game) -> str:
@@ -1281,7 +1281,7 @@ class RetentionManager:
 
     @staticmethod
     def rival_attack_power(game: Game, base: int) -> int:
-        return min(7, base + game.retention.rival_aggression // 2)
+        return min(6, base + game.retention.rival_aggression // 3)
 
     @staticmethod
     def rival_dossier_lines(game: Game) -> list[str]:

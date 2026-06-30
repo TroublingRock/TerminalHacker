@@ -8,11 +8,13 @@ Educational cybersecurity training simulator with a desktop GUI and terminal hac
 python3 main.py
 ```
 
+Resumes from `~/.terminalhacker/save.json` automatically if present.
+
 Opens a simulated desktop with icons for:
 
 - **Terminal** — scan, connect, crack, VPN, privesc, and more
 - **Mail** — NPC messages from trainers, brokers, and rivals (unread badge)
-- **Job Board** — contracts, daily challenges, weekly bounties
+- **Job Board** — contracts, daily challenges, weekly bounties, phase prep
 - **Black Market** — buy CPU, firewall, and cracking tools
 - **Training** — step-by-step tutorial curriculum
 - **Achievements** — badges, streak, and season progress
@@ -36,25 +38,33 @@ python3 main.py --cli
 
 1. Start in **tutorial mode** with a $500 training budget (career money is protected)
 2. Complete 13 lessons teaching networking, logs, VPN, routing, privesc, and defense
-3. Graduate to **career mode** for live missions, reputation, and upgrades
+3. Graduate to **career mode** (~$750+ starting wallet) for live missions and progression
 
-### Month-long retention (career)
+### Career systems
 
-Designed for **~30 days of daily play**:
+| System | Command |
+|--------|---------|
+| Daily challenge | `daily` |
+| Login streak | `streak` |
+| 30-tier season | `season` |
+| Multi-day operations | `operation` |
+| Same-day prep (between op phases) | `bridge` |
+| Weekly story recap | `intel` |
+| Rival dossier | `rivals` |
+| Reputation / ranks | `rank` |
+| Achievements | `achievements` |
+| Procedural contracts | `contracts` |
+| Blue-team defense | `defend on` |
+| Chaos endgame | `chaos` |
+| Save / load | `save` / `load` |
 
-| System | What it does |
-|--------|----------------|
-| **Login streak** | Cash + season XP every day; big bonuses at days 7, 14, 21, 30 (`streak`) |
-| **30-tier season** | Earn XP from dailies, contracts, bounties; unlock rewards through the month (`season`) |
-| **31 daily challenges** | Unique rotating objective each day (`daily`) |
-| **Weekly bounties** | High-value contract resets each Monday |
-| **3-day operations** | Multi-part story missions; next phase unlocks tomorrow (`operation`) |
-| **Phase prep (`bridge`)** | 3 same-day side objectives after each op phase — bonus $ if all done tonight |
-| **9 operation arcs** | ~27 days of scripted multi-day content across the month |
-| **Weekly story mail** | Broker + rival narrative each Monday; recap with `intel` |
-| **Rival reactions** | Completing ops triggers unique rival/broker mail; cross-op combos; `rivals` dossier |
-| **Mission archetypes** | Exfil, ghost runs, root heists, clean sweeps — not the same job every time |
+Progress **auto-saves** every few commands, on milestones, and when you quit.
 
-Progress saves automatically to `~/.terminalhacker/save.json` every few commands, on mission/daily completion, and when you quit. Manual `save` / `load` still work.
+### Balance notes (v1.2)
 
-Type `lesson` in the terminal for your current objective.
+- Trace chance tuned for fair early career (~28% base)
+- Rival attacks eased during first career session; breach losses capped when wallet is low
+- Graduation grants at least **$750** career funds
+- Season, streak, and prep rewards paced for ~30 days of daily play
+
+Type `lesson` or `help` in the terminal anytime.

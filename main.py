@@ -398,7 +398,7 @@ class TutorialManager:
     def graduate(self) -> None:
         p = self.player
         p.phase = "career"
-        p.money = max(500, 500 + p.tutorial_credits)
+        p.money = max(750, 500 + p.tutorial_credits)
         p.tutorial_credits = 0
         p.reputation = 100
         p.rank_index = 1
@@ -411,7 +411,8 @@ class TutorialManager:
             "Career mode uses REAL money. Traces and rivals hit your wallet. "
             "Use VPN, wipe logs, upgrade CPU/firewall, and take missions."
         )
-        Console.out(f"  Starting career balance: ${p.money}\n")
+        Console.out(f"  Starting career balance: ${p.money}")
+        Console.out("  Progress auto-saves. Type 'help' for career commands.\n")
         self.game.missions.announce_login(self.game.mail)
         self.game.mail.send(
             "security@terminalhacker.local",
@@ -905,7 +906,10 @@ class ThreatSystem:
         gap = max(0, 3 - p.firewall_level)
         from retention import RetentionManager
         threat_bonus = RetentionManager.rival_threat_bonus(self.game)
-        if random.random() < 0.18 * gap + threat_bonus:
+        # Rookie grace: first ~20 commands in career, rivals probe less often
+        rookie = p.ticks < 20 and len(self.game.retention.completed_operations) == 0
+        chance = (0.12 if rookie else 0.16) * gap + threat_bonus
+        if random.random() < chance:
             self._maybe_attack(force=False)
 
     def _maybe_attack(self, force: bool) -> None:
@@ -943,6 +947,8 @@ class ThreatSystem:
             return
 
         loss = random.randint(40, 100) * max(1, power - p.firewall_level)
+        if p.phase == "career" and p.money < 1200:
+            loss = min(loss, max(35, p.money // 3))
         p.penalize(loss, f"{rival} breached your defenses")
         self.game.mail.send(
             f"{rival}@rival.net",
@@ -960,7 +966,7 @@ class ThreatSystem:
 # ---------------------------------------------------------------------------
 
 class Game:
-    BASE_TRACE_CHANCE = 0.35
+    BASE_TRACE_CHANCE = 0.28
 
     def __init__(self) -> None:
         from progression import AchievementTracker, BlueTeamState
@@ -1308,7 +1314,7 @@ class Game:
             if "daily_shop_bought" not in self.player.tutorial_flags:
                 self.player.tutorial_flags.add("daily_no_shop_done")
             if self.player.phase == "career":
-                self.player.earn(50 + s.security_level * 25, "crack bounty")
+                self.player.earn(40 + s.security_level * 20, "crack bounty")
                 from progression import ReputationSystem
                 ReputationSystem.add_rep(self, 15 + s.security_level * 5, "intrusion")
             return
