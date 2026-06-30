@@ -519,6 +519,7 @@ class Mission:
     grade: str = ""
     endless_floor: bool = False
     puzzle_id: str = ""
+    puzzle_secondary: str = ""
     social_file: str = ""
     pivot_host: str = ""
     timing_limit_ticks: int = 0
@@ -616,6 +617,8 @@ class MissionBoard:
             payout = int(payout * ModifierManager.payout_mult(mission, game))
             from faction_consumables import FactionRepManager
             payout = int(payout * FactionRepManager.payout_mult(game, mission))
+            from llm_struct import LLMStructManager
+            payout = int(payout * LLMStructManager.world_event_bounty_mult(game))
             if mission.hourly_event and mission.reward_multiplier > 1:
                 payout = int(payout * mission.reward_multiplier)
             rep = mission.rep_reward + MasteryGrader.rep_bonus(grade)
@@ -1312,7 +1315,7 @@ class Game:
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
             "phish", "tunnel", "plant", "forge",
-            "use [item]", "factions", "llm [test|on|off]",
+            "use [item]", "factions", "llm [test|on|off]", "world",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1459,6 +1462,8 @@ class Game:
                 chance = min(0.95, chance * 2)
             from depth_systems import RivalHeatManager
             chance += RivalHeatManager.trace_bonus(self, server)
+            from llm_struct import LLMStructManager
+            chance += LLMStructManager.world_event_trace_bonus(self)
             from faction_consumables import FactionRepManager
             chance = max(0.05, chance - FactionRepManager.trace_reduction(self, server))
             if self.player.phase == "endless":
@@ -2238,13 +2243,35 @@ class Game:
             return
         if action == "on":
             self.llm.user_enabled = True
-            success("LLM flavor text enabled.")
+            success("LLM flavor + structural generation enabled.")
             return
         if action == "off":
             self.llm.user_enabled = False
-            success("LLM flavor text disabled (templates only).")
+            success("LLM disabled (templates only).")
             return
         error("Usage: llm [test|on|off]")
+
+    def cmd_world(self, _args: list[str]) -> None:
+        from llm_struct import LLMStructManager
+
+        divider("WEEKLY WORLD EVENT")
+        ev = self.llm.world_event
+        if not ev:
+            ev = LLMStructManager.refresh_world_event(self)
+        if not ev:
+            Console.out("  No world event yet. Configure LLM (llm test) for dynamic weekly events.")
+            Console.out("  Template bounties and rival heat still apply from retention.py.")
+            return
+        Console.out(f"  Week: {self.llm.world_event_week}")
+        Console.out(f"  {ev.get('title', 'Unknown')}")
+        if ev.get("briefing"):
+            Console.out(f"\n  {ev['briefing']}")
+        Console.out(
+            f"\n  Heat Δ: {ev.get('heat_delta', 0)} | "
+            f"Rival aggression Δ: {ev.get('rival_aggression_delta', 0)} | "
+            f"Bounty mult: {ev.get('bounty_multiplier', 1.0)}x | "
+            f"Trace bonus: {ev.get('trace_bonus', 0)}"
+        )
 
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
@@ -2299,6 +2326,7 @@ class Game:
             "phish": self.cmd_phish, "tunnel": self.cmd_tunnel, "plant": self.cmd_plant,
             "forge": self.cmd_forge, "use": self.cmd_use, "factions": self.cmd_factions,
             "llm": self.cmd_llm,
+            "world": self.cmd_world,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

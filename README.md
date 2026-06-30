@@ -123,20 +123,31 @@ Faction rep shifts from story choices, contract targets, and board posts. Perks 
 
 ### LLM dynamic content (v1.9, optional)
 
-Use **Groq** or **OpenAI** keys for infinite flavor text — procedural briefings, host lore, board replies, rival mail.
+Use **OpenAI** (recommended) or **Groq** for flavor text **and** structured generation.
 
 ```bash
+mkdir -p ~/.terminalhacker
 cp llm.json.example ~/.terminalhacker/llm.json
-# Edit api_key, or export GROQ_API_KEY / OPENAI_API_KEY
+# Edit api_key in the file, OR export env vars:
+export OPENAI_API_KEY="sk-..."
+# optional: export LLM_PROVIDER=openai
 ```
+
+Never commit API keys to the repo — `llm.json` and `.env` are gitignored.
 
 | Command | Purpose |
 |---------|---------|
-| `llm` | Status — provider, call budget, cache |
-| `llm test` | Verify API key works |
+| `llm` | Status — provider, flavor + struct call budgets, caches |
+| `llm test` | Verify flavor + JSON struct layer |
 | `llm on` / `llm off` | Toggle without deleting config |
+| `world` | Current weekly world event (heat, bounties, trace) |
+| `board post lfg <title> \| <body>` | Spawns a real LLM-authored contract from your post |
 
-Defaults: Groq `llama-3.3-70b-versatile`, 12 calls/session, cached per save. Falls back to templates if no key.
+**Call budgets (per calendar day):** 12 flavor calls + 3 structural calls. All responses cached in your save.
+
+**Structural hooks:** AI picks mission type + dual puzzle combo + modifiers + loot path (validated against real hosts/files); LFG board posts become contracts; weekly world-event JSON tweaks heat, bounties, and rival aggression.
+
+Defaults: OpenAI `gpt-4o-mini`, 12 flavor + 3 struct calls/session. Falls back to templates if no key.
 
 ### Balance notes (v1.2)
 

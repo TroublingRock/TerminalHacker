@@ -1,8 +1,9 @@
 {
-  "provider": "groq",
-  "api_key": "YOUR_GROQ_OR_OPENAI_KEY_HERE",
-  "model": "llama-3.3-70b-versatile",
+  "provider": "openai",
+  "api_key": "YOUR_OPENAI_API_KEY_HERE",
+  "model": "gpt-4o-mini",
   "enabled": true,
   "max_calls_per_session": 12,
+  "max_struct_calls_per_session": 3,
   "timeout_sec": 20
 }

@@ -47,18 +47,24 @@ SYSTEM_PROMPT = (
 class LLMState:
     user_enabled: bool = True
     cache: dict[str, str] = field(default_factory=dict)
+    struct_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     session_calls: int = 0
+    session_struct_calls: int = 0
     total_calls: int = 0
+    total_struct_calls: int = 0
     last_error: str = ""
+    world_event: dict[str, Any] = field(default_factory=dict)
+    world_event_week: str = ""
 
 
 @dataclass
 class LLMConfig:
-    provider: str = "groq"
+    provider: str = "openai"
     api_key: str = ""
     model: str = ""
     enabled: bool = True
     max_calls_per_session: int = 12
+    max_struct_calls_per_session: int = 3
     timeout_sec: int = 20
 
     @staticmethod
@@ -72,10 +78,10 @@ class LLMConfig:
         provider = (
             os.environ.get("LLM_PROVIDER")
             or data.get("provider")
-            or ("groq" if os.environ.get("GROQ_API_KEY") else "openai")
+            or ("openai" if os.environ.get("OPENAI_API_KEY") else "groq")
         ).lower()
         if provider not in PROVIDERS:
-            provider = "groq"
+            provider = "openai"
         prof = PROVIDERS[provider]
         api_key = (
             data.get("api_key")
@@ -90,6 +96,7 @@ class LLMConfig:
             model=model,
             enabled=bool(data.get("enabled", True)),
             max_calls_per_session=int(data.get("max_calls_per_session", 12)),
+            max_struct_calls_per_session=int(data.get("max_struct_calls_per_session", 3)),
             timeout_sec=int(data.get("timeout_sec", 20)),
         )
 
@@ -101,20 +108,29 @@ class LLMClient:
         return bool(c.enabled and c.api_key and c.provider in PROVIDERS)
 
     @staticmethod
-    def chat(user_prompt: str, *, max_tokens: int = 180) -> str:
+    def chat(
+        user_prompt: str,
+        *,
+        max_tokens: int = 180,
+        system: str | None = None,
+        temperature: float = 0.85,
+        json_mode: bool = False,
+    ) -> str:
         cfg = LLMConfig.load()
         if not LLMClient.available(cfg):
-            raise RuntimeError("LLM not configured — set GROQ_API_KEY or OPENAI_API_KEY")
+            raise RuntimeError("LLM not configured — set OPENAI_API_KEY or GROQ_API_KEY")
         url = PROVIDERS[cfg.provider]["base_url"]
-        payload = {
+        payload: dict[str, Any] = {
             "model": cfg.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system or SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             "max_tokens": max_tokens,
-            "temperature": 0.85,
+            "temperature": temperature,
         }
+        if json_mode and cfg.provider == "openai":
+            payload["response_format"] = {"type": "json_object"}
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode(),
@@ -145,13 +161,52 @@ class LLMClient:
 
 class LLMContentManager:
     @staticmethod
+    def is_available() -> bool:
+        return LLMClient.available()
+
+    @staticmethod
+    def reset_session_if_new_day(game: Game) -> None:
+        from retention import RetentionManager
+
+        today = RetentionManager.today()
+        if getattr(game.llm, "_session_day", "") != today:
+            game.llm.session_calls = 0
+            game.llm.session_struct_calls = 0
+            game.llm._session_day = today  # type: ignore[attr-defined]
+
+    @staticmethod
     def can_call(game: Game) -> bool:
         cfg = LLMConfig.load()
         if not game.llm.user_enabled or not cfg.enabled:
             return False
         if not LLMClient.available(cfg):
             return False
+        LLMContentManager.reset_session_if_new_day(game)
         return game.llm.session_calls < cfg.max_calls_per_session
+
+    @staticmethod
+    def api_call(
+        game: Game,
+        system: str,
+        user: str,
+        temperature: float = 0.7,
+        *,
+        json_mode: bool = False,
+        max_tokens: int = 400,
+    ) -> str | None:
+        if not LLMClient.available():
+            return None
+        try:
+            return LLMClient.chat(
+                user,
+                system=system,
+                temperature=temperature,
+                json_mode=json_mode,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            game.llm.last_error = str(exc)[:200]
+            return None
 
     @staticmethod
     def _cache_key(kind: str, seed: str) -> str:
@@ -268,15 +323,22 @@ class LLMContentManager:
             f"  Provider:    {cfg.provider} ({cfg.model})" if cfg.api_key else "  Provider:    not configured",
             f"  API key:     {'set' if cfg.api_key else 'missing — see llm.json.example'}",
             f"  Game toggle: {'on' if game.llm.user_enabled else 'off'}",
-            f"  Calls:       {game.llm.session_calls} this session / {game.llm.total_calls} total",
-            f"  Cache:       {len(game.llm.cache)} entries",
+            f"  Flavor:      {game.llm.session_calls}/{cfg.max_calls_per_session} this session "
+            f"({game.llm.total_calls} total)",
+            f"  Structural:  {game.llm.session_struct_calls}/{cfg.max_struct_calls_per_session} this session "
+            f"({game.llm.total_struct_calls} total)",
+            f"  Text cache:  {len(game.llm.cache)} | JSON cache: {len(game.llm.struct_cache)}",
         ]
         if game.llm.last_error:
             lines.append(f"  Last error:  {game.llm.last_error}")
         if LLMClient.available(cfg):
-            lines.append("  Hooks: procedural briefings, host lore, board replies, rival mail")
+            lines.append(
+                "  Hooks: flavor text + structured missions, LFG contracts, weekly world events"
+            )
+            from llm_struct import LLMStructManager
+            lines.extend(LLMStructManager.status_lines(game))
         else:
-            lines.append("  Set GROQ_API_KEY or OPENAI_API_KEY to unlock infinite flavor text.")
+            lines.append("  Set OPENAI_API_KEY (recommended) or GROQ_API_KEY in ~/.terminalhacker/llm.json")
         return lines
 
     @staticmethod
@@ -286,6 +348,7 @@ class LLMContentManager:
         if not LLMClient.available():
             error("No API key. Copy llm.json.example → ~/.terminalhacker/llm.json")
             return False
+        ok_flavor = False
         sample = LLMContentManager.generate(
             game,
             "test",
@@ -294,7 +357,10 @@ class LLMContentManager:
             limit=200,
         )
         if sample:
-            success(f"LLM OK: {sample}")
-            return True
-        error(f"LLM failed: {game.llm.last_error or 'unknown'}")
-        return False
+            success(f"Flavor LLM OK: {sample}")
+            ok_flavor = True
+        else:
+            error(f"Flavor LLM failed: {game.llm.last_error or 'unknown'}")
+        from llm_struct import LLMStructManager
+        ok_struct = LLMStructManager.test_struct(game)
+        return ok_flavor or ok_struct

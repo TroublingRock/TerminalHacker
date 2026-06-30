@@ -346,6 +346,7 @@ class SaveManager:
                  "grade": getattr(m, "grade", ""),
                  "endless_floor": getattr(m, "endless_floor", False),
                  "puzzle_id": getattr(m, "puzzle_id", ""),
+                 "puzzle_secondary": getattr(m, "puzzle_secondary", ""),
                  "social_file": getattr(m, "social_file", ""),
                  "pivot_host": getattr(m, "pivot_host", ""),
                  "timing_limit_ticks": getattr(m, "timing_limit_ticks", 0),
@@ -474,9 +475,14 @@ class SaveManager:
             "llm": {
                 "user_enabled": game.llm.user_enabled,
                 "cache": game.llm.cache,
+                "struct_cache": game.llm.struct_cache,
                 "session_calls": game.llm.session_calls,
+                "session_struct_calls": game.llm.session_struct_calls,
                 "total_calls": game.llm.total_calls,
+                "total_struct_calls": game.llm.total_struct_calls,
                 "last_error": game.llm.last_error,
+                "world_event": game.llm.world_event,
+                "world_event_week": game.llm.world_event_week,
             },
             "meta": {
                 "specialization": game.meta.specialization,
@@ -577,6 +583,7 @@ class SaveManager:
                 grade=md.get("grade", ""),
                 endless_floor=md.get("endless_floor", False),
                 puzzle_id=md.get("puzzle_id", ""),
+                puzzle_secondary=md.get("puzzle_secondary", ""),
                 social_file=md.get("social_file", ""),
                 pivot_host=md.get("pivot_host", ""),
                 timing_limit_ticks=md.get("timing_limit_ticks", 0),
@@ -718,9 +725,14 @@ class SaveManager:
             game.llm = LLMState(
                 user_enabled=ld.get("user_enabled", True),
                 cache=ld.get("cache", {}),
+                struct_cache=ld.get("struct_cache", {}),
                 session_calls=ld.get("session_calls", 0),
+                session_struct_calls=ld.get("session_struct_calls", 0),
                 total_calls=ld.get("total_calls", 0),
+                total_struct_calls=ld.get("total_struct_calls", 0),
                 last_error=ld.get("last_error", ""),
+                world_event=ld.get("world_event", {}),
+                world_event_week=ld.get("world_event_week", ""),
             )
         md = data.get("meta", {})
         if md:

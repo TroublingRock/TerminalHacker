@@ -224,6 +224,17 @@ class SocialBoardManager:
             game, board, game.player.username, title[:80], body[:500], player_post=True,
         )
         game.board.karma += 3
+        if board == "lfg":
+            from llm_struct import LLMStructManager
+            mission = LLMStructManager.spawn_lfg_contract(game, title, body)
+            if mission:
+                game.missions.missions.insert(0, mission)
+                success(f"LFG contract live: {mission.briefing[:72]}...")
+                game.mail.send(
+                    f"{mission.broker}@darknet",
+                    f"LFG CONTRACT: {title[:40]}",
+                    f"{mission.briefing}\n\nTarget: {mission.target_ip}\nReward: ${mission.reward}",
+                )
         from faction_consumables import FactionRepManager
         FactionRepManager.on_board_post(game, board)
         success(f"Posted to /{board}/")
