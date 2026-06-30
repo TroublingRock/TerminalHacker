@@ -55,6 +55,6 @@ Designed for **~30 days of daily play**:
 | **Rival reactions** | Completing ops triggers unique rival/broker mail; cross-op combos; `rivals` dossier |
 | **Mission archetypes** | Exfil, ghost runs, root heists, clean sweeps — not the same job every time |
 
-Progress saves to `~/.terminalhacker/save.json` (`save` / `load`).
+Progress saves automatically to `~/.terminalhacker/save.json` every few commands, on mission/daily completion, and when you quit. Manual `save` / `load` still work.
 
 Type `lesson` in the terminal for your current objective.

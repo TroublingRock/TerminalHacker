@@ -67,7 +67,18 @@ class DesktopApp:
 
         self._build_desktop()
         self._build_taskbar()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
+        self._schedule_autosave()
         self.refresh_taskbar()
+
+    def _on_quit(self) -> None:
+        self.game.autosave(force=True)
+        self.root.destroy()
+
+    def _schedule_autosave(self) -> None:
+        self.game.autosave(force=True)
+        self.refresh_taskbar()
+        self.root.after(120_000, self._schedule_autosave)
 
     # ----- mail notifications -----
 
@@ -193,9 +204,12 @@ class DesktopApp:
             rank_txt = f" | {ReputationSystem.rank_name(p)} ({p.reputation} rep)"
             rank_txt += f" | Streak {self.game.retention.streak}d"
             rank_txt += f" | S{self.game.retention.season_tier}/{len(SEASON_TIERS)}"
+        save_txt = ""
+        if self.game.last_autosave:
+            save_txt = f" | Saved {self.game.last_autosave}"
         self.taskbar_label.configure(
             text=(
-                f"  {phase}{lesson}{rank_txt}  |  {wallet}  |  CPU L{p.cpu_level}  |  "
+                f"  {phase}{lesson}{rank_txt}{save_txt}  |  {wallet}  |  CPU L{p.cpu_level}  |  "
                 f"FW L{p.firewall_level}  |  {vpn}{mail_txt}"
             )
         )
@@ -635,6 +649,8 @@ class DesktopApp:
         lines.append(f"Routes:      {len(p.routes)}")
         lines.append(f"Tools:       {', '.join(sorted(p.owned_tools)) or 'none'}")
         lines.append(f"Unread mail: {self.game.mail.unread_count()}")
+        if self.game.last_autosave:
+            lines.append(f"Auto-save:   {self.game.last_autosave} (~/.terminalhacker/save.json)")
         if p.phase == "career":
             lines.append(f"Rank:        {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
             lines.append(f"Streak:      {self.game.retention.streak} days (best {self.game.retention.longest_streak})")

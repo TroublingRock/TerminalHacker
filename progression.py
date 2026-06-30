@@ -276,17 +276,34 @@ class MissionGenerator:
 
 
 class SaveManager:
+    AUTOSAVE_EVERY = 5
+
     @staticmethod
-    def save(game: Game) -> bool:
+    def save(game: Game, *, quiet: bool = False) -> bool:
         from main import error, success
         try:
             SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
             SAVE_PATH.write_text(json.dumps(SaveManager._serialize(game), indent=2))
-            success(f"Saved to {SAVE_PATH}")
+            if not quiet:
+                success(f"Saved to {SAVE_PATH}")
             return True
         except OSError as exc:
-            error(f"Save failed: {exc}")
+            if not quiet:
+                error(f"Save failed: {exc}")
             return False
+
+    @staticmethod
+    def autosave(game: Game, force: bool = False) -> bool:
+        if not force:
+            game._cmds_since_autosave = getattr(game, "_cmds_since_autosave", 0) + 1
+            if game._cmds_since_autosave < SaveManager.AUTOSAVE_EVERY:
+                return False
+        ok = SaveManager.save(game, quiet=True)
+        if ok:
+            game._cmds_since_autosave = 0
+            import time
+            game.last_autosave = time.strftime("%H:%M:%S")
+        return ok
 
     @staticmethod
     def load(game: Game) -> bool:

@@ -385,6 +385,7 @@ class TutorialManager:
         if self.player.tutorial_step >= len(TUTORIAL_CURRICULUM):
             self.graduate()
         else:
+            self.game.autosave(force=True)
             next_lesson = self.current()
             self.game.mail.send(
                 "training_officer@terminalhacker.local",
@@ -420,6 +421,7 @@ class TutorialManager:
         )
         from retention import RetentionManager
         RetentionManager.on_career_session(self.game)
+        self.game.autosave(force=True)
 
     def on_defense_tick(self) -> None:
         if not self.in_tutorial() or self.player.tutorial_step != self.DEFENSE_LESSON:
@@ -592,7 +594,7 @@ class MissionBoard:
                 f"{new_m.briefing}\n\nReward: ${new_m.reward} + {new_m.rep_reward} rep",
             )
         from progression import SaveManager
-        SaveManager.save(game)
+        SaveManager.autosave(game, force=True)
 
 
 # ---------------------------------------------------------------------------
@@ -978,7 +980,13 @@ class Game:
         self.running = True
         self.gui_mode = False
         self.close_terminal = False
+        self._cmds_since_autosave = 0
+        self.last_autosave = ""
         self._seed_mail()
+
+    def autosave(self, force: bool = False) -> None:
+        from progression import SaveManager
+        SaveManager.autosave(self, force=force)
 
     def _seed_mail(self) -> None:
         self.mail.send(
@@ -996,6 +1004,7 @@ class Game:
             "You begin in the TUTORIAL phase with a $500 training budget.\n"
             "Losses during training come from tutorial credits — NOT career money.\n"
             "Type 'lesson' for objectives. Graduate to career mode after all lessons.\n"
+            "Progress auto-saves periodically to ~/.terminalhacker/save.json\n"
         )
         self.tutorial.show_lesson()
 
@@ -1056,6 +1065,7 @@ class Game:
         self.tutorial.check_advance()
         self._check_daily(cmd)
         self._check_achievements()
+        self.autosave()
         if self.player.phase == "career":
             from retention import RetentionManager
             RetentionManager.check_bridge_triggers(self)
@@ -1079,6 +1089,7 @@ class Game:
             if self.achievements.dailies_completed >= 30:
                 self.try_unlock("daily_master")
             success(f"Daily complete: {self.daily.description} (+${self.daily.reward})")
+            self.autosave(force=True)
 
     def _check_achievements(self) -> None:
         p = self.player
@@ -1704,6 +1715,7 @@ class Game:
             Console.out("Terminal minimized to desktop.")
             return
         self.running = False
+        self.autosave(force=True)
         Console.out("Goodbye.")
 
     def dispatch(self, raw: str) -> None:
