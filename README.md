@@ -51,6 +51,7 @@ Designed for **~30 days of daily play**:
 | **3-day operations** | Multi-part story missions; next phase unlocks tomorrow (`operation`) |
 | **9 operation arcs** | ~27 days of scripted multi-day content across the month |
 | **Weekly story mail** | Broker + rival narrative each Monday; recap with `intel` |
+| **Rival reactions** | Completing ops triggers unique rival/broker mail; cross-op combos; `rivals` dossier |
 | **Mission archetypes** | Exfil, ghost runs, root heists, clean sweeps — not the same job every time |
 
 Progress saves to `~/.terminalhacker/save.json` (`save` / `load`).

@@ -901,13 +901,18 @@ class ThreatSystem:
         if p.firewall_level >= 4:
             return
         gap = max(0, 3 - p.firewall_level)
-        if random.random() < 0.18 * gap:
+        from retention import RetentionManager
+        threat_bonus = RetentionManager.rival_threat_bonus(self.game)
+        if random.random() < 0.18 * gap + threat_bonus:
             self._maybe_attack(force=False)
 
     def _maybe_attack(self, force: bool) -> None:
         p = self.game.player
-        rival = random.choice(RIVALS)
-        power = random.randint(2, 4)
+        from retention import RetentionManager
+        rival = RetentionManager.pick_rival_attacker(self.game)
+        power = RetentionManager.rival_attack_power(
+            self.game, random.randint(2, 4),
+        )
         if not force and p.firewall_level >= power:
             return
 
@@ -1090,7 +1095,7 @@ class Game:
             "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
-            "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "intel",
+            "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "intel", "rivals",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1604,7 +1609,7 @@ class Game:
                 Console.out(f"  Objective: {m.briefing}")
 
     def cmd_intel(self, _a: list[str]) -> None:
-        from retention import RetentionManager, WEEKLY_RIVAL_MAIL, WEEKLY_STORY_MAIL
+        from retention import OPERATIONS, RetentionManager, WEEKLY_RIVAL_MAIL, WEEKLY_STORY_MAIL
 
         story = RetentionManager.current_week_story()
         idx = date.today().isocalendar().week % len(WEEKLY_STORY_MAIL)
@@ -1613,13 +1618,34 @@ class Game:
         Console.out(f"  From: {story['sender']}")
         Console.out(f"  Re:   {story['subject']}\n")
         Console.out(story["body"])
+        addendum = RetentionManager._story_addendum(self)
+        if addendum:
+            Console.out(f"\n--- Rival situation (your ops) ---\n{addendum}")
         Console.out(f"\n--- Rival chatter ({rival['sender']}) ---\n")
         Console.out(rival["body"])
         r = self.retention
         Console.out(
             f"\n  Streak: {r.streak}d | Season: {r.season_tier}/30 | "
-            f"Ops done: {len(r.completed_operations)}/{len(__import__('retention').OPERATIONS)}"
+            f"Ops done: {len(r.completed_operations)}/{len(OPERATIONS)}"
         )
+        Console.out("\n  Type 'rivals' for full dossier.")
+
+    def cmd_rivals(self, _a: list[str]) -> None:
+        from retention import RetentionManager, OPERATIONS
+
+        divider("RIVAL DOSSIER")
+        r = self.retention
+        if not r.completed_operations:
+            Console.out("  No operation history yet — rivals consider you unknown.")
+            Console.out("  Complete multi-day ops to trigger rival reactions.")
+            return
+        for line in RetentionManager.rival_dossier_lines(self):
+            Console.out(f"  {line}")
+        Console.out("\n  Completed ops:")
+        for op_id in r.completed_operations:
+            Console.out(f"    [x] {op_id}")
+        Console.out(f"\n  Aggression raises rival attack frequency and power.")
+        Console.out(f"  Last angry rival: {r.last_rival or 'none'}")
 
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
@@ -1666,7 +1692,7 @@ class Game:
             "achievements": self.cmd_achievements, "daily": self.cmd_daily,
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
             "streak": self.cmd_streak, "season": self.cmd_season, "operation": self.cmd_operation,
-            "intel": self.cmd_intel,
+            "intel": self.cmd_intel, "rivals": self.cmd_rivals,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

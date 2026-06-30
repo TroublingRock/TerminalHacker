@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
@@ -346,6 +347,295 @@ WEEKLY_RIVAL_MAIL: list[dict[str, str]] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Per-operation rival + broker reactions (fire once when op completes)
+# ---------------------------------------------------------------------------
+
+OPERATION_REACTIONS: dict[str, dict[str, Any]] = {
+    "op-nova": {
+        "aggression": 1,
+        "rival": {
+            "sender": "acid_k@rival.net",
+            "subject": "RE: NovaDyne — that's MY side gig",
+            "body": (
+                "I had a retainer on NovaDyne's DMZ.\n\n"
+                "You cracked corp-dc and didn't even leave me scraps. corp-gateway logs "
+                "are being scrubbed but I saw your VPN exit. I own 10.0.0.x — remember that.\n\n"
+                "— acid_k"
+            ),
+        },
+        "broker": {
+            "sender": "ghost_broker@darknet",
+            "subject": "NovaDyne board is panicking",
+            "body": (
+                "Clean work on Glass Firewall.\n\n"
+                "NovaDyne CISO sent an emergency retainer to THREE rival crews. "
+                "Expect heavier probes on your home IP. Upgrade firewall or stay on VPN.\n\n"
+                "— ghost_broker"
+            ),
+        },
+    },
+    "op-helix": {
+        "aggression": 2,
+        "rival": {
+            "sender": "phantom_pkt@rival.net",
+            "subject": "You stole MY algo configs",
+            "body": (
+                "fin-trading was my score. bank-core wire keys too?\n\n"
+                "Helix posted a silent bounty — no logs, no courts. Rivals don't sue. "
+                "We ruin wallets. I'm first in line.\n\n"
+                "— phantom_pkt"
+            ),
+        },
+        "broker": {
+            "sender": "cipher7@darknet",
+            "subject": "Helix merger intel is gold",
+            "body": (
+                "Bull Market complete. Those wire keys change the season.\n\n"
+                "Brokers are bidding on your next slot. phantom_pkt is loud — "
+                "use that. Loud rivals make mistakes.\n\n"
+                "— cipher7"
+            ),
+        },
+    },
+    "op-shadow": {
+        "aggression": 1,
+        "rival": {
+            "sender": "nyx_root@rival.net",
+            "subject": "Ghost runs don't impress me",
+            "body": (
+                "vendor-vpn with zero traces. Fine.\n\n"
+                "I still fingerprinted your timing pattern. Chaos subnet scans don't hide "
+                "from everyone. When you touch 203.0.113.x, I'll be waiting.\n\n"
+                "— nyx_root"
+            ),
+        },
+        "broker": {
+            "sender": "nullbyte@darknet",
+            "subject": "Dark Echo — you're ready for chaos",
+            "body": (
+                "Stealth chain complete. model_weights were a nice touch.\n\n"
+                "Chaos targets pay triple. Trace chance doubles. "
+                "Only take Blackout when your gear is maxed.\n\n"
+                "— nullbyte"
+            ),
+        },
+    },
+    "op-treasury": {
+        "aggression": 2,
+        "rival": {
+            "sender": "acid_k@rival.net",
+            "subject": "Payroll?! Are you insane?",
+            "body": (
+                "vault-server payroll.csv hits EVERYONE on the board.\n\n"
+                "NovaDyne lawyers will burn the subnet down. Rivals included. "
+                "You made my retainer worthless and painted a target on all of us.\n\n"
+                "— acid_k"
+            ),
+        },
+        "broker": {
+            "sender": "cipher7@darknet",
+            "subject": "Treasury keys — leverage unlocked",
+            "body": (
+                "Quantum Ledger done. Payroll data is nuclear leverage.\n\n"
+                "Brokers can place you on premium contracts now. "
+                "Rivals will probe harder — that's the cost of relevance.\n\n"
+                "— cipher7"
+            ),
+        },
+    },
+    "op-research": {
+        "aggression": 1,
+        "rival": {
+            "sender": "zero_cool@rival.net",
+            "subject": "AI weights — who told you about research-node?",
+            "body": (
+                "model_weights.bin isn't corporate fluff. That's a buyer's market.\n\n"
+                "I had a bid in. You undercut me. I don't forget names tied to "
+                "encrypted blobs.\n\n"
+                "— zero_cool"
+            ),
+        },
+        "broker": {
+            "sender": "shade_runner@darknet",
+            "subject": "R&D exfil — buyers lining up",
+            "body": (
+                "Stolen Weights closed. Ghosting the gateway afterward was professional.\n\n"
+                "Keep that tradecraft. Buyers pay extra for operators who don't trip IDS.\n\n"
+                "— shade_runner"
+            ),
+        },
+    },
+    "op-hr": {
+        "aggression": 1,
+        "rival": {
+            "sender": "acid_k@rival.net",
+            "subject": "terminations.csv — you have dirt on ME",
+            "body": (
+                "HR portal. terminations.csv. I see my handle in that file.\n\n"
+                "Delete your copy or I burn your public IP to every SOC in the city. "
+                "This isn't corporate games anymore.\n\n"
+                "— acid_k"
+            ),
+        },
+        "broker": {
+            "sender": "ghost_broker@darknet",
+            "subject": "Paper Trail — leverage secured",
+            "body": (
+                "HR data is blackmail currency. Sit on it.\n\n"
+                "acid_k is rattled — good. Rattled rivals overextend. "
+                "Your next op should be offense OR defense, not both sloppy.\n\n"
+                "— ghost_broker"
+            ),
+        },
+    },
+    "op-counter": {
+        "aggression": 2,
+        "rival": {
+            "sender": "nyx_root@rival.net",
+            "subject": "You blocked me. Bad move.",
+            "body": (
+                "defend on. Firewall block logged. I don't fail twice.\n\n"
+                "Hardline means you're playing blue-team for money now. "
+                "I'll hit you when you're mid-crack on corp-dc. Multitask that.\n\n"
+                "— nyx_root"
+            ),
+        },
+        "broker": {
+            "sender": "ghost_broker@darknet",
+            "subject": "Hardline — brokers noticed your defense",
+            "body": (
+                "Blocking rivals while running offense is elite posture.\n\n"
+                "I'm routing premium finance ops your way. phantom_pkt won't like it.\n\n"
+                "— ghost_broker"
+            ),
+        },
+    },
+    "op-ledger": {
+        "aggression": 3,
+        "rival": {
+            "sender": "phantom_pkt@rival.net",
+            "subject": "wire_keys.env — I'm coming for your box",
+            "body": (
+                "Wire Trap complete. You own Helix now.\n\n"
+                "I'm done with warnings. Next probe isn't training — "
+                "I'm bringing power 5 against your firewall. Patch or bleed.\n\n"
+                "— phantom_pkt"
+            ),
+        },
+        "broker": {
+            "sender": "packet_queen@darknet",
+            "subject": "Finance sector cleared",
+            "body": (
+                "bank-core was the last domino. Helix is gutted.\n\n"
+                "Chaos brokers are watching. Complete Blackout and you're legend tier.\n\n"
+                "— packet_queen"
+            ),
+        },
+    },
+    "op-chaos": {
+        "aggression": 2,
+        "rival": {
+            "sender": "zero_cool@rival.net",
+            "subject": "Blackout complete — truce?",
+            "body": (
+                "chaos-c2. dark-vault. cold_wallet.dat.\n\n"
+                "You survived double trace on the vault. I lost two accounts there. "
+                "Respect. Truce is temporary — next season I want a rematch.\n\n"
+                "— zero_cool"
+            ),
+        },
+        "broker": {
+            "sender": "nullbyte@darknet",
+            "subject": "NET GOD — season legend",
+            "body": (
+                "Operation Blackout closed. Brokers are circulating your handle.\n\n"
+                "Rivals will ease off... briefly. Finish the season track. "
+                "You've earned the frame.\n\n"
+                "— nullbyte"
+            ),
+        },
+    },
+}
+
+# Cross-operation reactions when specific combos are completed
+CROSS_OPERATION_REACTIONS: list[dict[str, Any]] = [
+    {
+        "id": "cross-nova-hr",
+        "requires": frozenset({"op-nova", "op-hr"}),
+        "sender": "acid_k@rival.net",
+        "subject": "NovaDyne AND HR — you're building a dossier on me",
+        "body": (
+            "corporate_secrets AND terminations.csv.\n\n"
+            "You're not freelancing. You're compiling evidence. "
+            "I don't know who you're selling to but I'm taking you offline first.\n\n"
+            "— acid_k"
+        ),
+        "aggression": 2,
+    },
+    {
+        "id": "cross-helix-ledger",
+        "requires": frozenset({"op-helix", "op-ledger"}),
+        "sender": "phantom_pkt@rival.net",
+        "subject": "You own Helix twice over",
+        "body": (
+            "Bull Market AND Wire Trap. Entire finance vertical.\n\n"
+            "My crew is out. I'm operating solo now. Solo means reckless. "
+            "Expect me at your firewall tonight.\n\n"
+            "— phantom_pkt"
+        ),
+        "aggression": 3,
+    },
+    {
+        "id": "cross-shadow-chaos",
+        "requires": frozenset({"op-shadow", "op-chaos"}),
+        "sender": "nyx_root@rival.net",
+        "subject": "Dark Echo into Blackout — you planned this",
+        "body": (
+            "Chaos prep then full blackout. That's a month-long campaign.\n\n"
+            "You're not a script kiddie. You're competition. "
+            "I'll be in the 203.0.113.x logs when you slip.\n\n"
+            "— nyx_root"
+        ),
+        "aggression": 2,
+    },
+    {
+        "id": "cross-all-corp",
+        "requires": frozenset({"op-nova", "op-treasury", "op-research", "op-hr"}),
+        "sender": "security@novadyne.corp",
+        "subject": "LEGAL NOTICE — cease and desist",
+        "body": (
+            "This is an automated legal hold notice.\n\n"
+            "Your activities against NovaDyne Corp assets have been catalogued. "
+            "In-game fines may apply. (Career wallet penalties on next trace.)\n\n"
+            "— NovaDyne Legal Bot [simulated]",
+        ),
+        "aggression": 1,
+        "fine": 150,
+    },
+]
+
+# Rival dossier lines shown in intel/rivals based on completed ops
+RIVAL_DOSSIER: dict[str, list[tuple[frozenset[str], str]]] = {
+    "acid_k": [
+        (frozenset({"op-nova"}), "Hostile — lost NovaDyne retainer"),
+        (frozenset({"op-hr"}), "Desperate — name in terminations.csv"),
+        (frozenset({"op-treasury"}), "Furious — payroll exposure"),
+    ],
+    "phantom_pkt": [
+        (frozenset({"op-helix"}), "Hostile — stolen algo configs"),
+        (frozenset({"op-ledger"}), "Apex threat — going solo, power 5 probes"),
+    ],
+    "nyx_root": [
+        (frozenset({"op-shadow"}), "Watching — fingerprinted your ghost pattern"),
+        (frozenset({"op-counter"}), "Vengeful — you blocked a live attack"),
+    ],
+    "zero_cool": [
+        (frozenset({"op-research"}), "Competitive — undercut on model weights"),
+        (frozenset({"op-chaos"}), "Respectful truce — temporary"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
 # Multi-day operation arcs (3 parts each — next part unlocks next calendar day)
 # ---------------------------------------------------------------------------
 
@@ -675,6 +965,9 @@ class RetentionState:
     completed_operations: list[str] = field(default_factory=list)
     operation_cooldown_until: str = ""
     weekly_story_week: str = ""
+    rival_aggression: int = 0
+    last_rival: str = ""
+    reactions_sent: list[str] = field(default_factory=list)
     daily_earnings: int = 0
     daily_cracks: int = 0
     daily_rep_earned: int = 0
@@ -865,9 +1158,105 @@ class RetentionManager:
         r.weekly_story_week = wk
         idx = date.today().isocalendar().week % len(WEEKLY_STORY_MAIL)
         story = WEEKLY_STORY_MAIL[idx]
-        game.mail.send(story["sender"], story["subject"], story["body"])
         rival = WEEKLY_RIVAL_MAIL[idx % len(WEEKLY_RIVAL_MAIL)]
-        game.mail.send(rival["sender"], rival["subject"], rival["body"])
+        addendum = RetentionManager._story_addendum(game)
+        rival_body = rival["body"]
+        if addendum:
+            rival_body += f"\n\n--- Based on your ops ---\n{addendum}"
+        game.mail.send(story["sender"], story["subject"], story["body"])
+        game.mail.send(rival["sender"], rival["subject"], rival_body)
+
+    @staticmethod
+    def _story_addendum(game: Game) -> str:
+        done = set(game.retention.completed_operations)
+        if not done:
+            return ""
+        lines: list[str] = []
+        if "op-nova" in done:
+            lines.append("acid_k is still furious about NovaDyne.")
+        if "op-helix" in done or "op-ledger" in done:
+            lines.append("phantom_pkt has marked you in finance sector.")
+        if "op-counter" in done:
+            lines.append("nyx_root is probing your firewall on off-hours.")
+        if "op-chaos" in done:
+            lines.append("zero_cool issued a temporary truce — don't test it.")
+        if len(done) >= 5:
+            lines.append(f"Brokers rate you tier-{min(10, len(done))} threat. {len(done)} ops cleared.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _send_operation_reactions(game: Game, op_id: str) -> None:
+        r = game.retention
+        if op_id in r.reactions_sent:
+            return
+        r.reactions_sent.append(op_id)
+
+        reaction = OPERATION_REACTIONS.get(op_id)
+        if reaction:
+            rival = reaction.get("rival")
+            broker = reaction.get("broker")
+            if broker:
+                game.mail.send(broker["sender"], broker["subject"], broker["body"])
+            if rival:
+                game.mail.send(rival["sender"], rival["subject"], rival["body"])
+                r.last_rival = rival["sender"].split("@")[0]
+            r.rival_aggression += reaction.get("aggression", 1)
+            if r.rival_aggression >= 5:
+                game.achievements.unlock("rival_magnet")
+
+        RetentionManager._check_cross_reactions(game)
+
+    @staticmethod
+    def _check_cross_reactions(game: Game) -> None:
+        from main import warn
+
+        done = frozenset(game.retention.completed_operations)
+        r = game.retention
+        for cross in CROSS_OPERATION_REACTIONS:
+            cid = cross["id"]
+            if cid in r.reactions_sent:
+                continue
+            if not cross["requires"].issubset(done):
+                continue
+            r.reactions_sent.append(cid)
+            game.mail.send(cross["sender"], cross["subject"], cross["body"])
+            r.rival_aggression += cross.get("aggression", 1)
+            if "@" in cross["sender"]:
+                r.last_rival = cross["sender"].split("@")[0]
+            fine = cross.get("fine", 0)
+            if fine:
+                game.player.penalize(fine, "Corporate legal hold (simulated)")
+                warn(f"NovaDyne legal bot fined you ${fine} for accumulated corporate ops.")
+
+    @staticmethod
+    def rival_threat_bonus(game: Game) -> float:
+        return game.retention.rival_aggression * 0.035
+
+    @staticmethod
+    def pick_rival_attacker(game: Game) -> str:
+        r = game.retention
+        if r.last_rival and random.random() < 0.6:
+            return r.last_rival
+        return random.choice(["zero_cool", "acid_k", "phantom_pkt", "nyx_root"])
+
+    @staticmethod
+    def rival_attack_power(game: Game, base: int) -> int:
+        return min(7, base + game.retention.rival_aggression // 2)
+
+    @staticmethod
+    def rival_dossier_lines(game: Game) -> list[str]:
+        done = set(game.retention.completed_operations)
+        r = game.retention
+        lines = [f"Threat level: {r.rival_aggression}/10", f"Primary rival: {r.last_rival or 'none'}"]
+        for rival, entries in RIVAL_DOSSIER.items():
+            status = "Unknown"
+            for required, desc in entries:
+                if required.issubset(done):
+                    status = desc
+            lines.append(f"  {rival}: {status}")
+        if len(done) >= 3:
+            lines.append(f"  Corps hit: {len(done)} operations — rivals coordinating.")
+        return lines
 
     @staticmethod
     def current_week_story() -> dict[str, str]:
@@ -962,6 +1351,7 @@ class RetentionManager:
             r.active_operation = ""
             if op["id"] not in r.completed_operations:
                 r.completed_operations.append(op["id"])
+            RetentionManager._send_operation_reactions(game, op["id"])
             game.mail.send(
                 f"{mission.broker}@darknet",
                 f"OPERATION COMPLETE: {op['name']}",

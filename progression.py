@@ -106,6 +106,7 @@ ACHIEVEMENTS: dict[str, str] = {
     "streak_7": "Maintain a 7-day login streak",
     "streak_30": "Maintain a 30-day login streak",
     "season_complete": "Finish the 30-tier season track",
+    "rival_magnet": "Anger 5+ rivals through completed operations",
 }
 
 DAILY_POOL = [
@@ -368,6 +369,9 @@ class SaveManager:
                 "completed_operations": game.retention.completed_operations,
                 "operation_cooldown_until": game.retention.operation_cooldown_until,
                 "weekly_story_week": game.retention.weekly_story_week,
+                "rival_aggression": game.retention.rival_aggression,
+                "last_rival": game.retention.last_rival,
+                "reactions_sent": game.retention.reactions_sent,
                 "ghost_targets_done": list(game.retention.ghost_targets_done),
             },
         }
@@ -459,6 +463,9 @@ class SaveManager:
                 completed_operations=rd.get("completed_operations", []),
                 operation_cooldown_until=rd.get("operation_cooldown_until", ""),
                 weekly_story_week=rd.get("weekly_story_week", ""),
+                rival_aggression=rd.get("rival_aggression", 0),
+                last_rival=rd.get("last_rival", ""),
+                reactions_sent=rd.get("reactions_sent", []),
                 ghost_targets_done=set(rd.get("ghost_targets_done", [])),
             )
         if p.phase == "career":

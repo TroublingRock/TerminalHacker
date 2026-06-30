@@ -459,8 +459,12 @@ class DesktopApp:
                  font=("Helvetica", 10), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(8, 4))
         tk.Label(body, text=f"Streak: {r.streak} days | Season {r.season_tier}/{len(SEASON_TIERS)} | Ops {len(r.completed_operations)} done",
                  fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(0, 4))
-        tk.Button(body, text="Weekly Intel (terminal: intel)", command=self.open_terminal,
-                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=8, pady=2).pack(anchor=tk.W, pady=(0, 4))
+        btn_row_intel = tk.Frame(body, bg=COLORS["window"])
+        btn_row_intel.pack(fill=tk.X, pady=(0, 4))
+        tk.Button(btn_row_intel, text="Intel (intel)", command=self.open_terminal,
+                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=8, pady=2).pack(side=tk.LEFT)
+        tk.Button(btn_row_intel, text="Rival Dossier (rivals)", command=self.open_terminal,
+                  bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=8, pady=2).pack(side=tk.LEFT, padx=6)
 
         tk.Label(body, text="Contract details also arrive via Mail from brokers.",
                  fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(4, 0))
@@ -625,6 +629,7 @@ class DesktopApp:
             lines.append(f"Rank:        {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
             lines.append(f"Streak:      {self.game.retention.streak} days (best {self.game.retention.longest_streak})")
             lines.append(f"Season:      tier {self.game.retention.season_tier}/{len(SEASON_TIERS)} ({self.game.retention.season_xp} XP)")
+            lines.append(f"Rival threat: {self.game.retention.rival_aggression}/10 ({self.game.retention.last_rival or 'none'})")
             lines.append(f"IDS level:   {self.game.blue.ids_level}")
             lines.append(f"Defense:     {'ON' if self.game.blue.defense_mode else 'off'}")
             nxt = RANKS[min(p.rank_index + 1, len(RANKS) - 1)]
