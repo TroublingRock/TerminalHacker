@@ -17,35 +17,56 @@ from typing import Callable
 
 
 # ---------------------------------------------------------------------------
+# Output bridge (CLI print or GUI text widget)
+# ---------------------------------------------------------------------------
+
+class Console:
+    handler: Callable[[str, str], None] | None = None  # (text, tag)
+    fast_mode: bool = False
+
+    @staticmethod
+    def out(text: str = "", tag: str = "normal") -> None:
+        if Console.handler:
+            Console.handler(text, tag)
+        else:
+            print(text)
+
+    @staticmethod
+    def pause(seconds: float) -> None:
+        if not Console.fast_mode:
+            time.sleep(seconds)
+
+
+# ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
 
 def divider(title: str = "") -> None:
     line = "=" * 62
     if title:
-        print(f"\n{line}\n  {title}\n{line}")
+        Console.out(f"\n{line}\n  {title}\n{line}")
     else:
-        print(line)
+        Console.out(line)
 
 
 def info(message: str) -> None:
-    print(f"[*] {message}")
+    Console.out(f"[*] {message}", "info")
 
 
 def success(message: str) -> None:
-    print(f"[+] {message}")
+    Console.out(f"[+] {message}", "success")
 
 
 def warn(message: str) -> None:
-    print(f"[!] {message}")
+    Console.out(f"[!] {message}", "warn")
 
 
 def error(message: str) -> None:
-    print(f"[-] {message}")
+    Console.out(f"[-] {message}", "error")
 
 
 def teach(message: str) -> None:
-    print(f"[?] {message}")
+    Console.out(f"[?] {message}", "teach")
 
 
 def syslog_line(hostname: str, process: str, message: str, priority: int = 13) -> str:
@@ -305,10 +326,10 @@ class TutorialManager:
         lesson = self.current()
         divider(f"TUTORIAL {lesson.step + 1}/{len(TUTORIAL_CURRICULUM)} — {lesson.title}")
         teach(lesson.concept)
-        print(f"\n  Objective: {lesson.objective}")
-        print(f"  Hint:      {lesson.hint}")
+        Console.out(f"\n  Objective: {lesson.objective}")
+        Console.out(f"  Hint:      {lesson.hint}")
         if self.in_tutorial():
-            print(f"\n  Tutorial budget: ${self.player.tutorial_credits} (career funds protected)\n")
+            Console.out(f"\n  Tutorial budget: ${self.player.tutorial_credits} (career funds protected)\n")
 
     def record_command(self, cmd: str) -> None:
         self.player.command_history.add(cmd)
@@ -367,7 +388,7 @@ class TutorialManager:
             "Career mode uses REAL money. Traces and rivals hit your wallet. "
             "Use VPN, wipe logs, upgrade CPU/firewall, and take missions."
         )
-        print(f"  Starting career balance: ${p.money}\n")
+        Console.out(f"  Starting career balance: ${p.money}\n")
         self.game.missions.announce_login()
 
     def on_defense_tick(self) -> None:
@@ -419,7 +440,7 @@ class MissionBoard:
         if self._announced:
             return
         divider("INCOMING — MISSION BOARD")
-        print('  [ghost_broker] "You are cleared for live ops. Type missions."\n')
+        Console.out('  [ghost_broker] "You are cleared for live ops. Type missions."\n')
         self._announced = True
 
     def check_completion(self, player: Player, network: VirtualNetwork) -> None:
@@ -463,20 +484,20 @@ class Shop:
     def list_items(player: Player) -> None:
         divider("BLACK MARKET SHOP")
         wallet = player.wallet_label()
-        print(f"  {wallet}\n")
+        Console.out(f"  {wallet}\n")
         for item in SHOP_CATALOG:
             if item.key in ("cpu", "firewall"):
                 lvl = player.cpu_level if item.key == "cpu" else player.firewall_level
                 if lvl >= item.max_level:
-                    print(f"  {item.key:<10} {item.name:<18} MAXED (L{lvl})")
+                    Console.out(f"  {item.key:<10} {item.name:<18} MAXED (L{lvl})")
                 else:
                     cost = item.base_cost * (lvl + 1)
-                    print(f"  {item.key:<10} {item.name:<18} ${cost} → L{lvl + 1}")
+                    Console.out(f"  {item.key:<10} {item.name:<18} ${cost} → L{lvl + 1}")
             else:
                 owned = item.key in player.owned_tools
-                print(f"  {item.key:<10} {item.name:<18} {'OWNED' if owned else '$' + str(item.base_cost)}")
-            print(f"             {item.description}")
-        print("\n  buy [item]\n")
+                Console.out(f"  {item.key:<10} {item.name:<18} {'OWNED' if owned else '$' + str(item.base_cost)}")
+            Console.out(f"             {item.description}")
+        Console.out("\n  buy [item]\n")
 
     @staticmethod
     def buy(player: Player, key: str) -> bool:
@@ -792,10 +813,12 @@ class Game:
         self.tutorial = TutorialManager(self)
         self.threat = ThreatSystem(self)
         self.running = True
+        self.gui_mode = False
+        self.close_terminal = False
 
     def banner(self) -> None:
         divider("TERMINALHACKER — CYBERSECURITY TRAINING SIMULATOR")
-        print(
+        Console.out(
             "You begin in the TUTORIAL phase with a $500 training budget.\n"
             "Losses during training come from tutorial credits — NOT career money.\n"
             "Type 'lesson' for objectives. Graduate to career mode after all lessons.\n"
@@ -872,15 +895,15 @@ class Game:
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "shop", "buy [item]", "missions", "status", "exit",
         ]
-        print("  " + "\n  ".join(cmds) + "\n")
+        Console.out("  " + "\n  ".join(cmds) + "\n")
 
     def cmd_ifconfig(self, _a: list[str]) -> None:
         divider("IFCONFIG")
         p = self.player
-        print(f"  inet {p.lan_ip}  netmask 255.255.255.0  gateway {p.gateway}")
-        print(f"  NAT public IP:  {p.public_ip}")
+        Console.out(f"  inet {p.lan_ip}  netmask 255.255.255.0  gateway {p.gateway}")
+        Console.out(f"  NAT public IP:  {p.public_ip}")
         if p.vpn_active:
-            print(f"  VPN exit IP:    {p.vpn_exit_ip}  (active — victims see this)")
+            Console.out(f"  VPN exit IP:    {p.vpn_exit_ip}  (active — victims see this)")
         teach("LAN addresses (192.168.x) are private. NAT translates to your public IP.")
 
     def cmd_route(self, args: list[str]) -> None:
@@ -896,7 +919,7 @@ class Game:
 
         divider("ROUTING TABLE")
         for r in self.player.routes:
-            print(f"  {r.destination:<18} via {r.gateway:<15} dev {r.iface}")
+            Console.out(f"  {r.destination:<18} via {r.gateway:<15} dev {r.iface}")
         teach("Without a route, remote subnets (e.g. 10.0.0.0/24) are unreachable.")
 
     def cmd_vpn(self, args: list[str]) -> None:
@@ -907,7 +930,7 @@ class Game:
         p = self.player
 
         if action == "status":
-            print(f"  VPN: {'ON' if p.vpn_active else 'OFF'}  exit={p.vpn_exit_ip}")
+            Console.out(f"  VPN: {'ON' if p.vpn_active else 'OFF'}  exit={p.vpn_exit_ip}")
             return
 
         if action == "connect":
@@ -936,7 +959,7 @@ class Game:
             return
         for s in targets:
             self.player.discovered_ips.add(s.ip)
-            print(f"  {s.ip} ({s.hostname}) — open: " + ", ".join(str(svc.port) for svc in s.services))
+            Console.out(f"  {s.ip} ({s.hostname}) — open: " + ", ".join(str(svc.port) for svc in s.services))
         info("Use connect <IP> 22")
 
     def cmd_connect(self, args: list[str]) -> None:
@@ -958,7 +981,7 @@ class Game:
 
         divider(f"CONNECT {ip}:{port}")
         info("SYN → SYN-ACK → ACK")
-        time.sleep(0.2)
+        Console.pause(0.2)
         self.player.connection = ip
         self.player.connected_port = port
         self.player.has_remote_shell = False
@@ -991,7 +1014,7 @@ class Game:
         divider("PROBE")
         self.log_remote(s, "Service fingerprint", "Probe scan")
         s.raise_ids_alert(1)
-        print(f"  {s.hostname} | FW L{s.security_level} | cracked={s.cracked}")
+        Console.out(f"  {s.hostname} | FW L{s.security_level} | cracked={s.cracked}")
         if s.ip == "192.168.1.50":
             self.player.tutorial_flags.add("probed_training")
 
@@ -1011,9 +1034,9 @@ class Game:
 
         for i in range(1, attempts + 1):
             guess = words[i % len(words)]
-            time.sleep(max(0.03, 0.1 - self.player.crack_speed_bonus()))
+            Console.pause(max(0.03, 0.1 - self.player.crack_speed_bonus()))
             if guess != s.ssh_password:
-                print(f"    try {guess} FAIL")
+                Console.out(f"    try {guess} FAIL")
                 s.write_auth(f"Failed password for {s.ssh_user} from {self.egress_ip()}")
                 continue
             s.cracked = True
@@ -1032,10 +1055,10 @@ class Game:
         if args and args[0] == "-l":
             divider("SUDO -L")
             if s.privesc_available:
-                print(f"  (ALL) NOPASSWD: /usr/bin/cat /root/*")
+                Console.out(f"  (ALL) NOPASSWD: /usr/bin/cat /root/*")
                 teach("Misconfigured sudo is a common real-world privesc vector.")
             else:
-                print("  User may not run sudo.")
+                Console.out("  User may not run sudo.")
             return
         error("Usage: sudo -l")
 
@@ -1046,7 +1069,7 @@ class Game:
             return
         divider("PRIVILEGE ESCALATION")
         info("Exploiting NOPASSWD sudo misconfiguration...")
-        time.sleep(0.3)
+        Console.pause(0.3)
         self.player.remote_is_root = True
         self.player.remote_was_root = True
         self.player.cwd = "/root"
@@ -1081,7 +1104,7 @@ class Game:
                 rel = p[len(d):]
                 if "/" not in rel:
                     tag = " [root-only]" if files[p].requires_root else ""
-                    print(f"  {p}{tag}")
+                    Console.out(f"  {p}{tag}")
 
     def cmd_cat(self, args: list[str]) -> None:
         if not args:
@@ -1097,7 +1120,7 @@ class Game:
         if not self.can_access_file(f):
             return
         divider(f"CAT {path}")
-        print(f.read())
+        Console.out(f.read())
         if path == "/var/log/auth.log" and not self.player.is_local():
             self.player.tutorial_flags.add("read_authlog")
             teach("That IP is forensic evidence tying you to this intrusion.")
@@ -1118,21 +1141,21 @@ class Game:
             self.player.tutorial_flags.add("wiped_training_logs")
 
     def cmd_pwd(self, _a: list[str]) -> None:
-        print(self.player.cwd)
+        Console.out(self.player.cwd)
 
     def cmd_whoami(self, _a: list[str]) -> None:
         if self.player.is_local():
-            print(self.player.username)
+            Console.out(self.player.username)
         elif self.player.remote_is_root:
-            print("root")
+            Console.out("root")
         elif self.remote_server():
-            print(self.remote_server().ssh_user)
+            Console.out(self.remote_server().ssh_user)
 
     def cmd_uname(self, _a: list[str]) -> None:
         if self.player.is_local():
-            print("Linux training-box 6.5.0 #1 x86_64")
+            Console.out("Linux training-box 6.5.0 #1 x86_64")
         elif self.remote_server():
-            print(self.remote_server().os_name)
+            Console.out(self.remote_server().os_name)
 
     def cmd_shop(self, _a: list[str]) -> None:
         if not self.player.is_local():
@@ -1152,24 +1175,28 @@ class Game:
             return
         divider("MISSIONS")
         for m in self.missions.missions:
-            print(f"  {m.status_line()}")
+            Console.out(f"  {m.status_line()}")
 
     def cmd_status(self, _a: list[str]) -> None:
         p = self.player
         divider("STATUS")
         if p.phase == "career":
-            print("  Phase:      career (training complete)")
+            Console.out("  Phase:      career (training complete)")
         else:
-            print(f"  Phase:      tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
-        print(f"  {p.wallet_label()}")
-        print(f"  CPU/FW:     L{p.cpu_level} / L{p.firewall_level}")
-        print(f"  VPN:        {'on' if p.vpn_active else 'off'} → {p.effective_egress_ip}")
-        print(f"  Routes:     {len(p.routes)}")
-        print(f"  Tools:      {', '.join(sorted(p.owned_tools)) or 'none'}")
+            Console.out(f"  Phase:      tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
+        Console.out(f"  {p.wallet_label()}")
+        Console.out(f"  CPU/FW:     L{p.cpu_level} / L{p.firewall_level}")
+        Console.out(f"  VPN:        {'on' if p.vpn_active else 'off'} → {p.effective_egress_ip}")
+        Console.out(f"  Routes:     {len(p.routes)}")
+        Console.out(f"  Tools:      {', '.join(sorted(p.owned_tools)) or 'none'}")
 
     def cmd_exit(self, _a: list[str]) -> None:
+        if self.gui_mode:
+            self.close_terminal = True
+            Console.out("Terminal minimized to desktop.")
+            return
         self.running = False
-        print("Goodbye.")
+        Console.out("Goodbye.")
 
     def dispatch(self, raw: str) -> None:
         parts = raw.strip().split()
@@ -1214,7 +1241,16 @@ class Game:
 
 
 def main() -> None:
-    Game().run()
+    import sys
+    if "--cli" in sys.argv:
+        Game().run()
+        return
+    try:
+        from gui import run_gui
+        run_gui()
+    except ImportError as exc:
+        Console.out(f"GUI unavailable ({exc}). Falling back to CLI.")
+        Game().run()
 
 
 if __name__ == "__main__":
