@@ -97,6 +97,17 @@ Progress **auto-saves** every few commands, on milestones, and when you quit.
 
 Modifiers: air-gapped, honey-net, split-tunnel, deadline, no-shop, rival-race.
 
+### Consumables & factions (v1.7)
+
+| System | Command |
+|--------|---------|
+| Consumables | `buy burner_ip\|zero_day\|decoy_log` then `use <item>` |
+| Faction rep | `factions` — brokers / rivals / corps meters with perks at 20/50/100 |
+
+Consumables: **Burner IP Kit** (mask egress for 8 commands), **Zero-day Exploit** (instant SSH crack), **Decoy Log Pack** (6 commands trace immunity).
+
+Faction rep shifts from story choices, contract targets, and board posts. Perks include shop discounts, payout bonuses, trace reduction, and broker freebies.
+
 ### Balance notes (v1.2)
 
 - Trace chance tuned for fair early career (~28% base)

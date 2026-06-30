@@ -220,6 +220,8 @@ class SocialBoardManager:
             game, board, game.player.username, title[:80], body[:500], player_post=True,
         )
         game.board.karma += 3
+        from faction_consumables import FactionRepManager
+        FactionRepManager.on_board_post(game, board)
         success(f"Posted to /{board}/")
         if game.board.karma >= 100:
             game.achievements.unlock("board_karma_100")

@@ -608,6 +608,8 @@ class MissionBoard:
             payout = int(mission.reward * mult)
             from depth_systems import ModifierManager
             payout = int(payout * ModifierManager.payout_mult(mission, game))
+            from faction_consumables import FactionRepManager
+            payout = int(payout * FactionRepManager.payout_mult(game, mission))
             if mission.hourly_event and mission.reward_multiplier > 1:
                 payout = int(payout * mission.reward_multiplier)
             rep = mission.rep_reward + MasteryGrader.rep_bonus(grade)
@@ -657,6 +659,8 @@ class MissionBoard:
                 WeeklyHeistManager.on_step_complete(game, mission)
             from social_board import SocialBoardManager
             SocialBoardManager.on_contract_complete(game, mission)
+            from faction_consumables import FactionRepManager
+            FactionRepManager.on_contract_complete(game, mission)
         new_m = MissionGenerator.generate(game)
         if new_m:
             self.missions.append(new_m)
@@ -680,6 +684,7 @@ class ShopItem:
     description: str
     base_cost: int
     max_level: int = 6
+    consumable: bool = False
 
 
 SHOP_CATALOG = [
@@ -688,6 +693,9 @@ SHOP_CATALOG = [
     ShopItem("vpn_pro", "VPN Pro License", "Permanent VPN access in career mode.", 300, 1),
     ShopItem("hydra", "Hydra Lite", "Smarter password wordlist ordering.", 350, 1),
     ShopItem("hashcat", "Hashcat Pro", "Cuts failed crack attempts ~40%.", 800, 1),
+    ShopItem("burner_ip", "Burner IP Kit", "Mask egress IP for 8 commands.", 120, 1, consumable=True),
+    ShopItem("zero_day", "Zero-day Exploit", "Auto-crack current SSH target once.", 450, 1, consumable=True),
+    ShopItem("decoy_log", "Decoy Log Pack", "6 commands of full trace immunity.", 200, 1, consumable=True),
 ]
 
 
@@ -697,8 +705,14 @@ class Shop:
         divider("BLACK MARKET SHOP")
         wallet = player.wallet_label()
         Console.out(f"  {wallet}\n")
+        game = player._game_ref
         for item in SHOP_CATALOG:
-            if item.key in ("cpu", "firewall"):
+            if item.consumable:
+                from faction_consumables import ConsumableManager, FactionRepManager
+                owned = ConsumableManager.inventory_count(game, item.key) if game else 0
+                cost = int(item.base_cost * FactionRepManager.consumable_discount(game)) if game else item.base_cost
+                Console.out(f"  {item.key:<10} {item.name:<18} ${cost} (own {owned})")
+            elif item.key in ("cpu", "firewall"):
                 lvl = player.cpu_level if item.key == "cpu" else player.firewall_level
                 if lvl >= item.max_level:
                     Console.out(f"  {item.key:<10} {item.name:<18} MAXED (L{lvl})")
@@ -709,7 +723,7 @@ class Shop:
                 owned = item.key in player.owned_tools
                 Console.out(f"  {item.key:<10} {item.name:<18} {'OWNED' if owned else '$' + str(item.base_cost)}")
             Console.out(f"             {item.description}")
-        Console.out("\n  buy [item]\n")
+        Console.out("\n  buy [item]  |  use [consumable]\n")
 
     @staticmethod
     def buy(player: Player, key: str) -> bool:
@@ -717,6 +731,12 @@ class Shop:
         if not item:
             error(f"Unknown item '{key}'.")
             return False
+        if item.consumable:
+            if not player._game_ref:
+                error("Cannot buy consumables right now.")
+                return False
+            from faction_consumables import ConsumableManager
+            return ConsumableManager.buy(player._game_ref, key)
         if item.key == "cpu":
             if player.cpu_level >= item.max_level:
                 warn("CPU maxed.")
@@ -822,6 +842,8 @@ class Player:
 
     @property
     def effective_egress_ip(self) -> str:
+        if self._game_ref and self._game_ref.meta.burner_commands_left > 0 and self._game_ref.meta.burner_mask_ip:
+            return self._game_ref.meta.burner_mask_ip
         return self.vpn_exit_ip if self.vpn_active else self.public_ip
 
     def traceable_ips(self) -> list[str]:
@@ -1057,7 +1079,12 @@ class ThreatSystem:
                 self.game.blue.attacks_blocked += 1
                 if self.game.blue.defense_mode:
                     from depth_systems import SpecializationManager
-                    rep = int((25 + self.game.blue.block_bonus()) * SpecializationManager.defense_rep_mult(self.game))
+                    from faction_consumables import FactionRepManager
+                    rep = int(
+                        (25 + self.game.blue.block_bonus())
+                        * SpecializationManager.defense_rep_mult(self.game)
+                        * FactionRepManager.defense_rep_mult(self.game)
+                    )
                     ReputationSystem.add_rep(self.game, rep, "defense block")
                 if self.game.achievements.blocks_this_session >= 3:
                     self.game.achievements.unlock("fortress")
@@ -1224,6 +1251,8 @@ class Game:
             RetentionManager.check_bridge_triggers(self)
             from depth_systems import ModifierManager
             ModifierManager.on_post_command(self)
+            from faction_consumables import ConsumableManager
+            ConsumableManager.on_post_command(self)
 
     def try_unlock(self, key: str) -> None:
         from progression import ACHIEVEMENTS
@@ -1268,6 +1297,7 @@ class Game:
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
             "phish", "tunnel", "plant", "forge",
+            "use [item]", "factions",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1402,7 +1432,11 @@ class Game:
             warn("Already localhost.")
             return
         server = self.remote_server()
-        clean = not server or not server.player_left_traces(self.player)
+        from faction_consumables import ConsumableManager
+        if ConsumableManager.has_trace_immunity(self):
+            clean = True
+        else:
+            clean = not server or not server.player_left_traces(self.player)
         if server and not clean:
             from progression import ReputationSystem
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
@@ -1410,6 +1444,8 @@ class Game:
                 chance = min(0.95, chance * 2)
             from depth_systems import RivalHeatManager
             chance += RivalHeatManager.trace_bonus(self, server)
+            from faction_consumables import FactionRepManager
+            chance = max(0.05, chance - FactionRepManager.trace_reduction(self, server))
             if self.player.phase == "endless":
                 from endless_mode import EndlessManager
                 chance = max(0.05, chance + EndlessManager.trace_modifier(self))
@@ -1760,6 +1796,9 @@ class Game:
             Console.out(f"  Defense:    {'ON' if self.blue.defense_mode else 'off'}")
             d = "DONE" if self.daily.completed else self.daily.description
             Console.out(f"  Daily:      {d}")
+            from faction_consumables import ConsumableManager
+            for line in ConsumableManager.inventory_lines(self):
+                Console.out(line)
 
     def cmd_rank(self, _a: list[str]) -> None:
         from progression import RANKS, ReputationSystem
@@ -1795,8 +1834,10 @@ class Game:
         from progression import CHAOS_CPU, CHAOS_FW, CHAOS_REP, ReputationSystem
 
         divider("CHAOS MODE — HIGH RISK TARGETS")
-        if not ReputationSystem.chaos_available(self.player):
-            warn(f"Requires {CHAOS_REP} rep, CPU L{CHAOS_CPU}, FW L{CHAOS_FW}")
+        if not ReputationSystem.chaos_available(self.player, self):
+            from faction_consumables import FactionRepManager
+            need = max(0, CHAOS_REP - FactionRepManager.chaos_rep_reduction(self))
+            warn(f"Requires {need} rep, CPU L{CHAOS_CPU}, FW L{CHAOS_FW}")
             return
         self.player.chaos_unlocked = True
         self.network.deploy_company_hosts_with_puzzles(self, self.player.reputation, True)
@@ -2150,6 +2191,23 @@ class Game:
         from depth_systems import ToolManager
         ToolManager.cmd_forge(self)
 
+    def cmd_use(self, args: list[str]) -> None:
+        if not args:
+            error("Usage: use <burner_ip|zero_day|decoy_log>")
+            return
+        from faction_consumables import ConsumableManager
+        ConsumableManager.use(self, args[0].lower())
+
+    def cmd_factions(self, _a: list[str]) -> None:
+        if self.player.phase not in ("career", "endless"):
+            warn("Factions unlock in career mode.")
+            return
+        from faction_consumables import FactionRepManager
+        divider("FACTION STANDING")
+        for line in FactionRepManager.status_lines(self):
+            Console.out(line)
+        Console.out("\n  Shift rep via story choices, contracts, and board posts.")
+
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
         SaveManager.save(self)
@@ -2201,7 +2259,7 @@ class Game:
             "endless": self.cmd_endless, "story": self.cmd_story, "board": self.cmd_board,
             "spec": self.cmd_spec, "heist": self.cmd_heist, "heat": self.cmd_heat,
             "phish": self.cmd_phish, "tunnel": self.cmd_tunnel, "plant": self.cmd_plant,
-            "forge": self.cmd_forge,
+            "forge": self.cmd_forge, "use": self.cmd_use, "factions": self.cmd_factions,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

@@ -205,6 +205,16 @@ class MetaState:
     heist_branch: str = ""
     heist_score: int = 0
     heists_cleared: int = 0
+    inventory: dict[str, int] = field(default_factory=dict)
+    burner_commands_left: int = 0
+    burner_mask_ip: str = ""
+    decoy_trace_immunity: int = 0
+    faction_rep: dict[str, int] = field(
+        default_factory=lambda: {"brokers": 0, "rivals": 0, "corps": 0},
+    )
+    faction_perks_unlocked: set[str] = field(default_factory=set)
+    contracts_since_free_consumable: int = 0
+    consumables_used: int = 0
 
 
 class ModifierManager:
@@ -268,7 +278,10 @@ class ModifierManager:
             if m.completed or "rival_race" not in getattr(m, "modifiers", []):
                 continue
             rid = m.mission_id
-            game.meta.rival_race_prog[rid] = game.meta.rival_race_prog.get(rid, 0) + random.randint(1, 3)
+            from faction_consumables import FactionRepManager
+            step = random.randint(1, 3)
+            step = max(1, int(step * FactionRepManager.rival_race_slow_mult(game)))
+            game.meta.rival_race_prog[rid] = game.meta.rival_race_prog.get(rid, 0) + step
             if game.meta.rival_race_prog[rid] >= 28:
                 m.completed = True
                 warn(f"RIVAL WON RACE: {m.broker} contract sniped before you finished.")
@@ -281,6 +294,11 @@ class ModifierManager:
                 if m.completed or m.target_ip != server.ip:
                     continue
                 if "honey_net" in getattr(m, "modifiers", []):
+                    from faction_consumables import FactionRepManager
+                    if FactionRepManager.honey_net_immunity(game):
+                        from main import teach
+                        teach("Corp faction perk: honey-net decoy ignored.")
+                        return
                     RivalHeatManager.spike(game, server.subnet, 4)
                     game.threat._maybe_attack(force=True)
                     from main import warn
@@ -370,6 +388,9 @@ class ToolManager:
 
     @staticmethod
     def logs_clean_enough(game: Game, server: Server, player: Player) -> bool:
+        from faction_consumables import ConsumableManager
+        if ConsumableManager.logs_clean_enough(game):
+            return True
         if server.ip in game.meta.forged_servers:
             return True
         return not server.player_left_traces(player)

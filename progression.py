@@ -119,6 +119,10 @@ ACHIEVEMENTS: dict[str, str] = {
     "social_engineer": "Complete 3 social engineering contracts",
     "pivot_pro": "Complete 3 multi-host pivot contracts",
     "heist_master": "Complete 4 weekly heist arcs",
+    "faction_broker": "Reach 50 rep with Darknet Brokers",
+    "faction_rival": "Reach 50 rep with Rival Syndicate",
+    "faction_corp": "Reach 50 rep with Corporate Security",
+    "consumable_user": "Use 10 consumables",
 }
 
 DAILY_POOL = [
@@ -217,9 +221,15 @@ class ReputationSystem:
             SpecializationManager.on_rank_up(game, p.rank_index)
 
     @staticmethod
-    def chaos_available(player: Player) -> bool:
-        return player.chaos_unlocked or (
-            player.reputation >= CHAOS_REP
+    def chaos_available(player: Player, game: "Game | None" = None) -> bool:
+        if player.chaos_unlocked:
+            return True
+        rep_need = CHAOS_REP
+        if game:
+            from faction_consumables import FactionRepManager
+            rep_need = max(0, CHAOS_REP - FactionRepManager.chaos_rep_reduction(game))
+        return (
+            player.reputation >= rep_need
             and player.cpu_level >= CHAOS_CPU
             and player.firewall_level >= CHAOS_FW
         )
@@ -465,6 +475,14 @@ class SaveManager:
                 "heist_branch": game.meta.heist_branch,
                 "heist_score": game.meta.heist_score,
                 "heists_cleared": game.meta.heists_cleared,
+                "inventory": game.meta.inventory,
+                "burner_commands_left": game.meta.burner_commands_left,
+                "burner_mask_ip": game.meta.burner_mask_ip,
+                "decoy_trace_immunity": game.meta.decoy_trace_immunity,
+                "faction_rep": game.meta.faction_rep,
+                "faction_perks_unlocked": list(game.meta.faction_perks_unlocked),
+                "contracts_since_free_consumable": game.meta.contracts_since_free_consumable,
+                "consumables_used": game.meta.consumables_used,
             },
         }
 
@@ -680,6 +698,14 @@ class SaveManager:
                 heist_branch=md.get("heist_branch", ""),
                 heist_score=md.get("heist_score", 0),
                 heists_cleared=md.get("heists_cleared", 0),
+                inventory=md.get("inventory", {}),
+                burner_commands_left=md.get("burner_commands_left", 0),
+                burner_mask_ip=md.get("burner_mask_ip", ""),
+                decoy_trace_immunity=md.get("decoy_trace_immunity", 0),
+                faction_rep=md.get("faction_rep", {"brokers": 0, "rivals": 0, "corps": 0}),
+                faction_perks_unlocked=set(md.get("faction_perks_unlocked", [])),
+                contracts_since_free_consumable=md.get("contracts_since_free_consumable", 0),
+                consumables_used=md.get("consumables_used", 0),
             )
         if p.phase == "endless" and game.endless.active:
             for ip in game.endless.floor_hosts:

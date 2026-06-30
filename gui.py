@@ -600,6 +600,12 @@ class DesktopApp:
                 else:
                     price_text = f"${item.base_cost * (lvl + 1)}"
                     state = tk.NORMAL
+            elif item.consumable:
+                from faction_consumables import ConsumableManager, FactionRepManager
+                owned = ConsumableManager.inventory_count(self.game, item.key)
+                cost = int(item.base_cost * FactionRepManager.consumable_discount(self.game))
+                price_text = f"${cost} (x{owned})"
+                state = tk.NORMAL
             else:
                 owned = item.key in p.owned_tools
                 price_text = "OWNED" if owned else f"${item.base_cost}"
