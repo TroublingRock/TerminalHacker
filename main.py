@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""TerminalHacker — a text-based hacking simulator played in the terminal."""
+"""
+TerminalHacker — a single-player, text-based hacking simulator.
+
+Inspired by retro games like Slavehack, this CLI game teaches basic networking
+and OS concepts: IP addressing, remote connections, firewalls, log files, and
+covering your tracks after an intrusion.
+"""
 
 from __future__ import annotations
 
@@ -7,298 +13,450 @@ import random
 import sys
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
+
+# ---------------------------------------------------------------------------
+# Terminal output helpers
+# ---------------------------------------------------------------------------
+
+def divider(title: str = "") -> None:
+    """Print a scannable section divider for terminal output."""
+    line = "=" * 58
+    if title:
+        print(f"\n{line}\n  {title}\n{line}")
+    else:
+        print(line)
+
+
+def info(message: str) -> None:
+    print(f"[*] {message}")
+
+
+def success(message: str) -> None:
+    print(f"[+] {message}")
+
+
+def warn(message: str) -> None:
+    print(f"[!] {message}")
+
+
+def error(message: str) -> None:
+    print(f"[-] {message}")
+
+
+# ---------------------------------------------------------------------------
+# Virtual filesystem primitives
+# ---------------------------------------------------------------------------
 
 @dataclass
-class Host:
+class VirtualFile:
+    """A named file stored on a virtual host (local or remote)."""
+
     name: str
-    ip: str
-    firewall: int
-    password: str
-    logs: int = 3
+    content: str = ""
 
+    def append(self, line: str) -> None:
+        """Append a line to the file — mirrors how real syslog entries are written."""
+        if self.content and not self.content.endswith("\n"):
+            self.content += "\n"
+        self.content += line
+
+    def read(self) -> str:
+        return self.content or "(empty file)"
+
+
+# ---------------------------------------------------------------------------
+# Remote server model
+# ---------------------------------------------------------------------------
 
 @dataclass
-class PlayerState:
-    credits: int = 0
-    reputation: int = 0
-    connected: str | None = None
-    cracked: set[str] = field(default_factory=set)
-    logs_wiped: set[str] = field(default_factory=set)
-
-
-HOSTS = [
-    Host("corp-gateway", "10.0.0.1", firewall=2, password="admin123"),
-    Host("research-node", "192.168.4.22", firewall=3, password="shadow"),
-    Host("vault-server", "172.16.8.99", firewall=4, password="qu4ntum"),
-]
-
-MISSIONS = [
-    {
-        "id": "probe-network",
-        "title": "Probe the Network",
-        "description": "Scan all hosts on the subnet.",
-        "check": lambda state, scanned: len(scanned) >= len(HOSTS),
-        "reward": (50, 10),
-    },
-    {
-        "id": "crack-gateway",
-        "title": "Crack the Gateway",
-        "description": "Crack corp-gateway and connect to it.",
-        "check": lambda state, scanned: "corp-gateway" in state.cracked,
-        "reward": (75, 15),
-    },
-    {
-        "id": "bypass-firewall",
-        "title": "Bypass the Firewall",
-        "description": "Bypass research-node's firewall.",
-        "check": lambda state, scanned: state.connected == "research-node",
-        "reward": (100, 20),
-    },
-    {
-        "id": "wipe-logs",
-        "title": "Cover Your Tracks",
-        "description": "Wipe syslogs on any compromised host.",
-        "check": lambda state, scanned: len(state.logs_wiped) >= 1,
-        "reward": (125, 25),
-    },
-]
-
-
-def slow_print(text: str, delay: float = 0.02) -> None:
-    for char in text:
-        sys.stdout.write(char)
-        sys.stdout.flush()
-        time.sleep(delay)
-    sys.stdout.write("\n")
-
-
-def banner() -> None:
-    art = r"""
- _____                   _             _   _            _
-|_   _|__ _ __ _ __ ___ | |_ _ __ __ _| |_| | __ _  ___| | __
-  | |/ _ \ '__| '_ ` _ \| __| '__/ _` | __| |/ _` |/ __| |/ /
-  | |  __/ |  | | | | | | |_| | | (_| | |_| | (_| | (__|   <
-  |_|\___|_|  |_| |_| |_|\__|_|  \__,_|\__|_|\__,_|\___|_|\_\
+class Server:
     """
-    print(art)
-    print("Text-based hacking simulator. Type 'help' for commands.\n")
+    A machine on the virtual network.
+
+    security_level acts like a firewall rating: higher values slow brute-force
+    attacks and represent stronger perimeter defenses.
+    """
+
+    ip: str
+    hostname: str
+    security_level: int
+    cracked: bool = False
+    files: dict[str, VirtualFile] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Every remote host keeps a syslog — a realistic artifact left behind
+        # when someone connects, probes, or cracks the system.
+        if "syslog" not in self.files:
+            self.files["syslog"] = VirtualFile("syslog", "SYSTEM BOOT COMPLETE\n")
+
+    @property
+    def syslog(self) -> VirtualFile:
+        return self.files["syslog"]
+
+    def log_action(self, action: str, source_ip: str) -> None:
+        """Record player activity in this server's syslog."""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.syslog.append(f"[{timestamp}] {action} FROM {source_ip}")
 
 
-def find_host(target: str) -> Host | None:
-    for host in HOSTS:
-        if target in (host.name, host.ip):
-            return host
-    return None
+# ---------------------------------------------------------------------------
+# Player state
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Player:
+    """
+  Local player machine and credentials.
+
+  Hardware stats influence crack speed. Money can be lost if a trace succeeds.
+  connection holds the IP of the currently attached host ("localhost" = home).
+    """
+
+    local_ip: str = "127.0.0.1"
+    cpu_level: int = 2
+    ram: int = 4
+    hdd_space: int = 120
+    money: int = 500
+    connection: str = "localhost"
+    files: dict[str, VirtualFile] = field(default_factory=dict)
+    discovered_ips: set[str] = field(default_factory=set)
+    # Tracks whether this session wrote traceable entries to the remote syslog.
+    left_footprint: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.files:
+            self.files = {
+                "notes.txt": VirtualFile(
+                    "notes.txt",
+                    "Welcome to TerminalHacker.\n"
+                    "Tip: scan the network, connect to targets, and always rm syslog.\n",
+                ),
+                "tools.sh": VirtualFile("tools.sh", "#!/bin/bash\necho 'script toolkit'\n"),
+            }
+
+    @property
+    def prompt_host(self) -> str:
+        """Return the host segment shown in the shell prompt."""
+        return "localhost" if self.connection == "localhost" else self.connection
+
+    def is_local(self) -> bool:
+        return self.connection == "localhost"
+
+    def current_files(self, network: VirtualNetwork) -> dict[str, VirtualFile]:
+        """Files visible on whichever system the player is connected to."""
+        if self.is_local():
+            return self.files
+        server = network.get_server(self.connection)
+        return server.files if server else {}
+
+    def apply_trace_penalty(self) -> None:
+        """Penalty when law enforcement traces activity via uncleared logs."""
+        penalty_type = random.choice(["money", "cpu"])
+        if penalty_type == "money":
+            loss = random.randint(50, 150)
+            self.money = max(0, self.money - loss)
+            warn(f"TRACE SUCCESSFUL — fined ${loss}. Balance: ${self.money}")
+        else:
+            damage = 1
+            self.cpu_level = max(1, self.cpu_level - damage)
+            warn(
+                f"TRACE SUCCESSFUL — CPU damaged by {damage} level. "
+                f"CPU now level {self.cpu_level}."
+            )
 
 
-def cmd_help() -> None:
-    print(
-        """
-Commands:
-  help                 Show this help menu
-  scan                 Probe the local network for hosts
-  hosts                List discovered hosts
-  crack <host>         Attempt password crack on a host
-  bypass <host>        Bypass firewall on a cracked host
-  connect <host>       Connect to a host after bypass
-  wipe <host>          Wipe syslogs to cover tracks
-  status               Show player stats
-  missions             Show mission objectives
-  quit                 Exit TerminalHacker
-"""
-    )
+# ---------------------------------------------------------------------------
+# Virtual network
+# ---------------------------------------------------------------------------
+
+class VirtualNetwork:
+    """Registry of all remote servers reachable from the player's subnet."""
+
+    def __init__(self) -> None:
+        self.servers: dict[str, Server] = {}
+        self._seed_network()
+
+    def _seed_network(self) -> None:
+        """Populate the world with a few educational target machines."""
+        seed_data = [
+            ("192.168.1.10", "corp-gateway", 2, {"config.ini": "gateway_mode=strict\n"}),
+            ("192.168.1.25", "research-node", 3, {"data.db": "encrypted_records\n"}),
+            ("10.0.0.55", "vault-server", 4, {"vault.key": "REDACTED\n", "payroll.csv": "...\n"}),
+        ]
+        for ip, hostname, security, extra_files in seed_data:
+            files = {name: VirtualFile(name, body) for name, body in extra_files.items()}
+            self.servers[ip] = Server(ip=ip, hostname=hostname, security_level=security, files=files)
+
+    def get_server(self, ip: str) -> Server | None:
+        return self.servers.get(ip)
+
+    def list_targets(self) -> list[Server]:
+        return list(self.servers.values())
 
 
-def cmd_scan(scanned: set[str]) -> None:
-    slow_print("[*] Initiating network probe...")
-    for host in HOSTS:
+# ---------------------------------------------------------------------------
+# Game engine / command dispatcher
+# ---------------------------------------------------------------------------
+
+class Game:
+    """Main loop, command parsing, and educational mechanics."""
+
+    TRACE_CHANCE = 0.65  # Probability of getting caught if logs remain.
+
+    def __init__(self) -> None:
+        self.player = Player()
+        self.network = VirtualNetwork()
+        self.running = True
+
+    # ----- prompt & banner -------------------------------------------------
+
+    def banner(self) -> None:
+        divider("TERMINALHACKER")
+        print(
+            "A text-based hacking simulator. Learn networking by doing.\n"
+            "Scan hosts, connect over IP, crack firewalls, and wipe your logs.\n"
+            "Type 'help' to begin.\n"
+        )
+
+    def prompt(self) -> str:
+        return f"user@{self.player.prompt_host}:~# "
+
+    # ----- logging side-effects --------------------------------------------
+
+    def _log_remote(self, server: Server, action: str) -> None:
+        """Append a traceable syslog entry and flag the session."""
+        server.log_action(action, self.player.local_ip)
+        self.player.left_footprint = True
+
+    # ----- commands --------------------------------------------------------
+
+    def cmd_help(self, _args: list[str]) -> None:
+        divider("AVAILABLE COMMANDS")
+        commands = [
+            ("help", "Show this help menu."),
+            ("scan", "Probe the subnet and reveal target IP addresses."),
+            ("connect [IP]", "Open a remote session to the given IP address."),
+            ("disconnect", "Close the remote session and return to localhost."),
+            ("probe", "Inspect firewall level and crack status (remote only)."),
+            ("crack", "Brute-force the remote firewall (remote only)."),
+            ("ls", "List files on the current system (local or remote)."),
+            ("rm [filename]", "Delete a file — use this to wipe syslog traces."),
+            ("status", "Show local hardware, money, and connection info."),
+            ("exit", "Quit the game."),
+        ]
+        for name, desc in commands:
+            print(f"  {name:<22} {desc}")
+        print()
+
+    def cmd_scan(self, _args: list[str]) -> None:
+        divider("NETWORK SCAN")
+        info("Broadcasting ARP probe on 192.168.1.0/24 and 10.0.0.0/24...")
         time.sleep(0.4)
-        scanned.add(host.name)
-        slow_print(f"[+] Found host {host.name} ({host.ip}) firewall={host.firewall}")
-    slow_print("[*] Scan complete.")
+        for server in self.network.list_targets():
+            self.player.discovered_ips.add(server.ip)
+            success(f"Host found: {server.ip} ({server.hostname})")
+        info(f"{len(self.player.discovered_ips)} host(s) discovered. Use 'connect <IP>'.")
 
+    def cmd_connect(self, args: list[str]) -> None:
+        if not args:
+            error("Usage: connect [IP]")
+            return
+        if not self.player.is_local():
+            error("Disconnect from the current host before opening a new connection.")
+            return
 
-def cmd_hosts(scanned: set[str]) -> None:
-    if not scanned:
-        print("No hosts discovered. Run 'scan' first.")
-        return
-    print("\nDiscovered hosts:")
-    for host in HOSTS:
-        if host.name in scanned:
-            print(f"  {host.name:16} {host.ip:15} firewall={host.firewall}")
-    print()
+        target_ip = args[0]
+        if target_ip not in self.player.discovered_ips:
+            error("Unknown host. Run 'scan' to discover addresses on the network.")
+            return
 
+        server = self.network.get_server(target_ip)
+        if server is None:
+            error(f"No route to host {target_ip}.")
+            return
 
-def cmd_crack(target: str, state: PlayerState, scanned: set[str]) -> None:
-    host = find_host(target)
-    if host is None:
-        print(f"Unknown host: {target}")
-        return
-    if host.name not in scanned:
-        print("Host not discovered. Run 'scan' first.")
-        return
-    if host.name in state.cracked:
-        print(f"{host.name} is already cracked.")
-        return
-
-    guesses = ["password", "letmein", host.password, "123456", "shadow"]
-    random.shuffle(guesses)
-    slow_print(f"[*] Running dictionary attack on {host.name}...")
-    for guess in guesses[:4]:
+        divider("CONNECT")
+        info(f"Initiating TCP handshake to {target_ip}...")
         time.sleep(0.5)
-        slow_print(f"    trying '{guess}'... denied")
-    time.sleep(0.6)
-    slow_print(f"[+] Password found: {host.password}")
-    state.cracked.add(host.name)
-    state.reputation += 5
-    print(f"Reputation +5 (now {state.reputation})")
+        self.player.connection = target_ip
+        self.player.left_footprint = False
+        self._log_remote(server, "CONNECTION")
+        success(f"Connected to {server.hostname} ({server.ip}).")
+        info("Remote syslog updated — your local IP may now be recorded.")
 
+    def cmd_disconnect(self, _args: list[str]) -> None:
+        if self.player.is_local():
+            warn("Already on localhost.")
+            return
 
-def cmd_bypass(target: str, state: PlayerState) -> None:
-    host = find_host(target)
-    if host is None:
-        print(f"Unknown host: {target}")
-        return
-    if host.name not in state.cracked:
-        print("Crack the host before bypassing its firewall.")
-        return
+        remote_ip = self.player.connection
+        server = self.network.get_server(remote_ip)
 
-    slow_print(f"[*] Mapping firewall rules on {host.name}...")
-    for level in range(1, host.firewall + 1):
-        time.sleep(0.5)
-        slow_print(f"    bypassing layer {level}/{host.firewall}...")
-    slow_print(f"[+] Firewall bypassed on {host.name}")
-    state.connected = host.name
-    state.reputation += 10
-    print(f"Reputation +10 (now {state.reputation})")
+        divider("DISCONNECT")
+        info(f"Closing session to {remote_ip}...")
 
+        # Educational mechanic: uncleared logs can lead to a trace.
+        if server and self.player.left_footprint and "syslog" in server.files:
+            if random.random() < self.TRACE_CHANCE:
+                warn("Remote syslog still contains your activity!")
+                self.player.apply_trace_penalty()
+            else:
+                info("You got lucky — no trace this time. Wipe logs next time.")
 
-def cmd_connect(target: str, state: PlayerState) -> None:
-    host = find_host(target)
-    if host is None:
-        print(f"Unknown host: {target}")
-        return
-    if host.name not in state.cracked:
-        print("You must crack this host before connecting.")
-        return
-    state.connected = host.name
-    slow_print(f"[+] Connected to {host.name} ({host.ip})")
-    state.credits += 25
-    print(f"Credits +25 (now {state.credits})")
+        self.player.connection = "localhost"
+        self.player.left_footprint = False
+        success("Back on localhost.")
 
+    def cmd_probe(self, _args: list[str]) -> None:
+        if self.player.is_local():
+            error("Probe requires an active remote connection.")
+            return
 
-def cmd_wipe(target: str, state: PlayerState) -> None:
-    host = find_host(target)
-    if host is None:
-        print(f"Unknown host: {target}")
-        return
-    if host.name not in state.cracked:
-        print("You can only wipe logs on compromised hosts.")
-        return
-    if host.name in state.logs_wiped:
-        print(f"Logs on {host.name} are already wiped.")
-        return
+        server = self.network.get_server(self.player.connection)
+        if server is None:
+            error("Connection lost — host unreachable.")
+            return
 
-    slow_print(f"[*] Wiping syslog entries on {host.name}...")
-    for remaining in range(host.logs, 0, -1):
+        divider("PROBE")
+        info(f"Fingerprinting {server.hostname} ({server.ip})...")
         time.sleep(0.4)
-        slow_print(f"    shredding entry {remaining}/{host.logs}")
-    state.logs_wiped.add(host.name)
-    slow_print("[+] Tracks covered.")
-    state.credits += 40
-    state.reputation += 15
-    print(f"Credits +40 (now {state.credits}), Reputation +15 (now {state.reputation})")
+        self._log_remote(server, "PROBE")
+        print(f"  Hostname:       {server.hostname}")
+        print(f"  Firewall level: {server.security_level}")
+        print(f"  Cracked:        {'yes' if server.cracked else 'no'}")
+        info("Probe logged to remote syslog.")
 
+    def cmd_crack(self, _args: list[str]) -> None:
+        if self.player.is_local():
+            error("Crack requires an active remote connection.")
+            return
 
-def cmd_status(state: PlayerState) -> None:
-    print("\n--- Player Status ---")
-    print(f"Credits:     {state.credits}")
-    print(f"Reputation:  {state.reputation}")
-    print(f"Connected:   {state.connected or 'none'}")
-    print(f"Compromised: {', '.join(sorted(state.cracked)) or 'none'}")
-    print(f"Logs wiped:  {', '.join(sorted(state.logs_wiped)) or 'none'}")
-    print()
+        server = self.network.get_server(self.player.connection)
+        if server is None:
+            error("Connection lost — host unreachable.")
+            return
+        if server.cracked:
+            warn(f"{server.hostname} is already cracked.")
+            return
 
+        divider("BRUTE-FORCE ATTACK")
+        # CPU level reduces delay; firewall level increases required work.
+        difficulty = max(1, server.security_level - self.player.cpu_level + 1)
+        attempts = difficulty * 3
+        info(
+            f"CPU level {self.player.cpu_level} vs firewall {server.security_level} "
+            f"— running {attempts} attempts..."
+        )
 
-def cmd_missions(state: PlayerState, scanned: set[str], completed: set[str]) -> None:
-    print("\n--- Missions ---")
-    for mission in MISSIONS:
-        done = mission["id"] in completed
-        marker = "[x]" if done else "[ ]"
-        print(f"{marker} {mission['title']}")
-        print(f"    {mission['description']}")
-    print()
+        charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+        for i in range(1, attempts + 1):
+            guess = "".join(random.choice(charset) for _ in range(6))
+            delay = 0.15 + (server.security_level * 0.1) - (self.player.cpu_level * 0.05)
+            time.sleep(max(0.05, delay))
+            print(f"    attempt {i:02d}/{attempts}: {guess} ... denied")
 
+        server.cracked = True
+        self._log_remote(server, "CRACK SUCCESS")
+        success(f"Firewall breached on {server.hostname}.")
+        info("Crack attempt recorded in syslog — cover your tracks!")
 
-def check_missions(state: PlayerState, scanned: set[str], completed: set[str]) -> None:
-    for mission in MISSIONS:
-        if mission["id"] in completed:
-            continue
-        if mission["check"](state, scanned):
-            credits, rep = mission["reward"]
-            completed.add(mission["id"])
-            print(f"\n*** Mission complete: {mission['title']} ***")
-            state.credits += credits
-            state.reputation += rep
-            print(f"Reward: +{credits} credits, +{rep} reputation\n")
+    def cmd_ls(self, _args: list[str]) -> None:
+        files = self.player.current_files(self.network)
+        location = self.player.prompt_host
+        divider(f"FILE LISTING — {location}")
+        if not files:
+            info("No files found.")
+            return
+        for name in sorted(files):
+            marker = " (log)" if name == "syslog" else ""
+            print(f"  {name}{marker}")
+        print()
 
+    def cmd_rm(self, args: list[str]) -> None:
+        if not args:
+            error("Usage: rm [filename]")
+            return
 
-def game_loop() -> None:
-    state = PlayerState()
-    scanned: set[str] = set()
-    completed: set[str] = set()
+        filename = args[0]
+        files = self.player.current_files(self.network)
+        location = self.player.prompt_host
 
-    banner()
+        divider("REMOVE FILE")
+        if filename not in files:
+            error(f"'{filename}' not found on {location}.")
+            return
 
-    while True:
-        try:
-            raw = input("terminalhacker> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nConnection terminated.")
-            break
+        del files[filename]
+        success(f"Deleted '{filename}' on {location}.")
+        if filename == "syslog" and not self.player.is_local():
+            self.player.left_footprint = False
+            info("Footprint cleared — safe to disconnect.")
 
-        if not raw:
-            continue
+    def cmd_status(self, _args: list[str]) -> None:
+        divider("LOCAL STATUS")
+        print(f"  Money:      ${self.player.money}")
+        print(f"  CPU level:  {self.player.cpu_level}")
+        print(f"  RAM:        {self.player.ram} GB")
+        print(f"  HDD space:  {self.player.hdd_space} GB")
+        print(f"  Local IP:   {self.player.local_ip}")
+        print(f"  Connected:  {self.player.prompt_host}")
+        print()
 
-        parts = raw.split()
+    def cmd_exit(self, _args: list[str]) -> None:
+        divider("SHUTDOWN")
+        print("Connection terminated. Stay stealthy.\n")
+        self.running = False
+
+    # ----- dispatcher ------------------------------------------------------
+
+    def dispatch(self, raw: str) -> None:
+        parts = raw.strip().split()
+        if not parts:
+            return
+
         command = parts[0].lower()
         args = parts[1:]
 
-        if command == "help":
-            cmd_help()
-        elif command == "scan":
-            cmd_scan(scanned)
-        elif command == "hosts":
-            cmd_hosts(scanned)
-        elif command == "crack" and args:
-            cmd_crack(args[0], state, scanned)
-        elif command == "bypass" and args:
-            cmd_bypass(args[0], state)
-        elif command == "connect" and args:
-            cmd_connect(args[0], state)
-        elif command == "wipe" and args:
-            cmd_wipe(args[0], state)
-        elif command == "status":
-            cmd_status(state)
-        elif command == "missions":
-            cmd_missions(state, scanned, completed)
-        elif command in {"quit", "exit"}:
-            print("Shutting down TerminalHacker. Stay stealthy.")
-            break
+        handlers: dict[str, Callable[[list[str]], None]] = {
+            "help": self.cmd_help,
+            "scan": self.cmd_scan,
+            "connect": self.cmd_connect,
+            "disconnect": self.cmd_disconnect,
+            "probe": self.cmd_probe,
+            "crack": self.cmd_crack,
+            "ls": self.cmd_ls,
+            "rm": self.cmd_rm,
+            "status": self.cmd_status,
+            "exit": self.cmd_exit,
+            "quit": self.cmd_exit,
+        }
+
+        handler = handlers.get(command)
+        if handler:
+            handler(args)
         else:
-            print(f"Unknown command: {command}. Type 'help' for available commands.")
+            error(f"Unknown command '{command}'. Type 'help' for options.")
 
-        check_missions(state, scanned, completed)
+    def run(self) -> None:
+        self.banner()
+        while self.running:
+            try:
+                raw = input(self.prompt())
+            except (EOFError, KeyboardInterrupt):
+                print("\n")
+                self.cmd_exit([])
+                break
+            self.dispatch(raw)
 
-        if len(completed) == len(MISSIONS):
-            print("\n*** All missions complete. You are a terminal legend. ***")
-            print(f"Final score — Credits: {state.credits}, Reputation: {state.reputation}")
-            break
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def main() -> None:
-    game_loop()
+    Game().run()
 
 
 if __name__ == "__main__":
