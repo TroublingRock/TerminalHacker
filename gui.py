@@ -17,7 +17,7 @@ from main import (
     TUTORIAL_CURRICULUM,
 )
 from progression import ACHIEVEMENTS, RANKS, ReputationSystem, SaveManager
-from retention import SEASON_TIERS
+from retention import SEASON_TIERS, RetentionManager
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -442,6 +442,16 @@ class DesktopApp:
             tk.Button(body, text="Open Training", command=self.open_training,
                       bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4).pack(anchor=tk.W, pady=12)
             return
+
+        if p.phase == "career":
+            from retention import RetentionManager
+            if RetentionManager.bridge_active(self.game):
+                tk.Label(body, text="PREP TONIGHT (type 'bridge' in terminal):",
+                         fg=COLORS["warn"], bg=COLORS["window"], font=("Helvetica", 9, "bold")).pack(anchor=tk.W, pady=(4, 0))
+                prep = tk.Label(body, text=RetentionManager.bridge_summary(self.game).replace("  ", ""),
+                                fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9),
+                                justify=tk.LEFT, wraplength=560)
+                prep.pack(anchor=tk.W, pady=(2, 4))
 
         scroll = scrolledtext.ScrolledText(body, height=16, bg=COLORS["terminal_bg"],
                                            fg=COLORS["text"], font=("Helvetica", 11), relief=tk.FLAT)

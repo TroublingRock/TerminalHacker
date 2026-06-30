@@ -1056,6 +1056,9 @@ class Game:
         self.tutorial.check_advance()
         self._check_daily(cmd)
         self._check_achievements()
+        if self.player.phase == "career":
+            from retention import RetentionManager
+            RetentionManager.check_bridge_triggers(self)
 
     def try_unlock(self, key: str) -> None:
         from progression import ACHIEVEMENTS
@@ -1095,7 +1098,8 @@ class Game:
             "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
-            "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "intel", "rivals",
+            "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
+            "intel", "rivals",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1178,6 +1182,7 @@ class Game:
             self.player.tutorial_flags.add("daily_scan_chaos_done")
         from retention import RetentionManager
         RetentionManager.on_scan_subnet(self, cidr)
+        RetentionManager.on_bridge_event(self, "scan")
         self.missions.check_completion(self)
         info("Use connect <IP> 22")
 
@@ -1283,6 +1288,8 @@ class Game:
             if self.player.vpn_active:
                 self.try_unlock("vpn_shadow")
                 self.player.tutorial_flags.add("daily_vpn_crack_done")
+                from retention import RetentionManager
+                RetentionManager.on_bridge_event(self, "vpn_crack")
             else:
                 self.player.tutorial_flags.add("daily_no_vpn_done")
             from retention import RetentionManager
@@ -1326,6 +1333,8 @@ class Game:
         success("You are now root. Prompt will show root@host#")
         self.try_unlock("root_queen")
         self.player.tutorial_flags.add("daily_privesc_done")
+        from retention import RetentionManager
+        RetentionManager.on_bridge_event(self, "privesc")
         if self.remote_server() and self.player.remote_was_root:
             self.player.tutorial_flags.add("daily_privesc_dl_done")
         teach("Root can read any file and persist malware — defend with least-privilege.")
@@ -1440,6 +1449,8 @@ class Game:
             self.player.tutorial_flags.add("daily_shop_bought")
             if args[0].lower() in ("cpu", "firewall"):
                 self.player.tutorial_flags.add("daily_gear_up_done")
+                from retention import RetentionManager
+                RetentionManager.on_bridge_event(self, "gear")
 
     def cmd_missions(self, _a: list[str]) -> None:
         if self.player.phase == "tutorial":
@@ -1527,6 +1538,8 @@ class Game:
         if action == "on":
             self.blue.defense_mode = True
             success("Defense mode ON — rivals attack more often; blocks earn rep.")
+            from retention import RetentionManager
+            RetentionManager.on_bridge_event(self, "defend_on")
             return
         if action == "off":
             self.blue.defense_mode = False
@@ -1553,6 +1566,8 @@ class Game:
         from progression import MissionGenerator
 
         self.player.tutorial_flags.add("daily_request_done")
+        from retention import RetentionManager
+        RetentionManager.on_bridge_event(self, "request")
         m = MissionGenerator.generate(self)
         if m:
             self.missions.missions.append(m)
@@ -1607,6 +1622,33 @@ class Game:
         for m in self.missions.missions:
             if m.operation_id == r.active_operation and not m.completed:
                 Console.out(f"  Objective: {m.briefing}")
+        from retention import RetentionManager
+        if RetentionManager.bridge_active(self):
+            divider("TONIGHT'S PREP (same-day)")
+            Console.out(RetentionManager.bridge_summary(self))
+            Console.out("  Parallel tracks: daily challenge, weekly bounty, procedural contracts.")
+
+    def cmd_bridge(self, _a: list[str]) -> None:
+        from retention import BRIDGE_BONUS_CASH, BRIDGE_BONUS_XP, RetentionManager
+
+        divider("PHASE PREP — SAME-DAY OBJECTIVES")
+        r = self.retention
+        if not RetentionManager.bridge_active(self):
+            if r.bridge_claimed:
+                Console.out("  Prep complete for tonight — next op phase unlocks tomorrow.")
+            elif r.bridge_unlock_day and r.bridge_unlock_day <= date.today().isoformat():
+                Console.out("  New op phase may be available. Type 'operation'.")
+            else:
+                Console.out("  No prep window active.")
+                Console.out("  Finish an operation phase to unlock tonight's side objectives.")
+            Console.out("\n  Always available: daily, contracts, weekly bounty, shop, defend.")
+            return
+        Console.out(f"  Unlocks: {r.bridge_unlock_day} (tomorrow's op phase)")
+        Console.out(RetentionManager.bridge_summary(self))
+        Console.out(
+            f"\n  Complete all 3 for +${BRIDGE_BONUS_CASH} + {BRIDGE_BONUS_XP} season XP."
+        )
+        Console.out("  These stack with your daily challenge and weekly bounty.")
 
     def cmd_intel(self, _a: list[str]) -> None:
         from retention import OPERATIONS, RetentionManager, WEEKLY_RIVAL_MAIL, WEEKLY_STORY_MAIL
@@ -1692,7 +1734,7 @@ class Game:
             "achievements": self.cmd_achievements, "daily": self.cmd_daily,
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
             "streak": self.cmd_streak, "season": self.cmd_season, "operation": self.cmd_operation,
-            "intel": self.cmd_intel, "rivals": self.cmd_rivals,
+            "intel": self.cmd_intel, "rivals": self.cmd_rivals, "bridge": self.cmd_bridge,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

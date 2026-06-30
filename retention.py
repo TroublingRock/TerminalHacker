@@ -947,6 +947,41 @@ OPERATIONS: list[dict[str, Any]] = [
 
 MISSION_ARCHETYPES = ("exfil", "ghost", "root_heist", "recon", "scan_chaos", "scan_subnet", "clean_sweep", "defense")
 
+# ---------------------------------------------------------------------------
+# Phase bridge — same-day side objectives while waiting for next op phase
+# ---------------------------------------------------------------------------
+
+BRIDGE_TASK_DEFS: dict[str, dict[str, Any]] = {
+    "contract": {"desc": "Complete any contract (not the locked op phase)", "cash": 225, "xp": 40},
+    "daily": {"desc": "Finish today's daily challenge", "cash": 175, "xp": 35},
+    "earn300": {"desc": "Earn $300+ today from hacks or contracts", "cash": 200, "xp": 30},
+    "block": {"desc": "Block a rival attack on your box", "cash": 250, "xp": 45},
+    "defend_on": {"desc": "Run 'defend on' and survive a session", "cash": 150, "xp": 30},
+    "privesc": {"desc": "Privilege escalate on any target", "cash": 275, "xp": 50},
+    "ghost": {"desc": "Ghost run — crack and disconnect with zero traces", "cash": 300, "xp": 50},
+    "scan": {"desc": "Scan any subnet you haven't scanned today", "cash": 175, "xp": 30},
+    "gear": {"desc": "Buy a CPU or firewall upgrade", "cash": 200, "xp": 35},
+    "probe": {"desc": "Probe any remote host", "cash": 125, "xp": 25},
+    "request": {"desc": "Request a new procedural contract", "cash": 150, "xp": 25},
+    "vpn_crack": {"desc": "Crack a host while VPN is active", "cash": 200, "xp": 35},
+    "weekly": {"desc": "Make progress on the weekly bounty", "cash": 350, "xp": 55},
+}
+
+BRIDGE_BY_NEXT_TYPE: dict[str, list[str]] = {
+    "exfil": ["contract", "earn300", "gear"],
+    "ghost": ["ghost", "vpn_crack", "probe"],
+    "root_heist": ["privesc", "gear", "contract"],
+    "recon": ["scan", "probe", "request"],
+    "defense": ["defend_on", "block", "gear"],
+    "scan_subnet": ["scan", "request", "earn300"],
+    "scan_chaos": ["scan", "gear", "earn300"],
+    "clean_sweep": ["ghost", "contract", "earn300"],
+}
+
+BRIDGE_FLAGS: dict[str, str] = {k: f"bridge_{k}_done" for k in BRIDGE_TASK_DEFS}
+BRIDGE_BONUS_CASH = 400
+BRIDGE_BONUS_XP = 65
+
 
 @dataclass
 class RetentionState:
@@ -968,6 +1003,11 @@ class RetentionState:
     rival_aggression: int = 0
     last_rival: str = ""
     reactions_sent: list[str] = field(default_factory=list)
+    bridge_id: str = ""
+    bridge_tasks: list[str] = field(default_factory=list)
+    bridge_done: list[str] = field(default_factory=list)
+    bridge_claimed: bool = False
+    bridge_unlock_day: str = ""
     daily_earnings: int = 0
     daily_cracks: int = 0
     daily_rep_earned: int = 0
@@ -1364,12 +1404,123 @@ class RetentionManager:
         r.operation_step = mission.operation_step + 1
         tomorrow = (date.today() + timedelta(days=1)).isoformat()
         r.operation_unlock_day = tomorrow
+        RetentionManager.activate_phase_bridge(game, op, mission.operation_step)
+        bridge_txt = RetentionManager.bridge_summary(game)
         game.mail.send(
             f"{mission.broker}@darknet",
             f"OPERATION: {op['name']} — Phase {r.operation_step} locked",
-            f"Next phase unlocks tomorrow ({tomorrow}).\n"
-            "Come back for the continuation.\n\n— broker",
+            f"Next phase unlocks tomorrow ({tomorrow}).\n\n"
+            f"TONIGHT — optional prep objectives (bonus rewards):\n{bridge_txt}\n"
+            "Type 'bridge' in terminal. Dailies, weekly bounty, and contracts still active.\n\n"
+            "— broker",
         )
+
+    @staticmethod
+    def activate_phase_bridge(game: Game, op: dict, completed_step: int) -> None:
+        from main import teach
+
+        if completed_step >= len(op["parts"]):
+            return
+        next_part = op["parts"][completed_step]
+        mtype = next_part.get("mission_type", "exfil")
+        tasks = BRIDGE_BY_NEXT_TYPE.get(mtype, ["contract", "earn300", "probe"])[:3]
+        r = game.retention
+        r.bridge_id = f"{op['id']}:{completed_step}"
+        r.bridge_tasks = tasks
+        r.bridge_done = []
+        r.bridge_claimed = False
+        r.bridge_unlock_day = r.operation_unlock_day
+        for tid in tasks:
+            game.player.tutorial_flags.discard(BRIDGE_FLAGS[tid])
+        teach(
+            f"Op phase complete — prep objectives active until tomorrow. "
+            f"Type 'bridge' for same-day side missions (+${BRIDGE_BONUS_CASH} bonus if all 3 done)."
+        )
+
+    @staticmethod
+    def bridge_active(game: Game) -> bool:
+        r = game.retention
+        if not r.bridge_id or r.bridge_claimed:
+            return False
+        if r.bridge_unlock_day and r.bridge_unlock_day <= RetentionManager.today():
+            return False
+        return True
+
+    @staticmethod
+    def bridge_summary(game: Game) -> str:
+        r = game.retention
+        if not RetentionManager.bridge_active(game):
+            return "  (no active prep objectives)"
+        lines = []
+        for tid in r.bridge_tasks:
+            mark = "[x]" if tid in r.bridge_done else "[ ]"
+            desc = BRIDGE_TASK_DEFS[tid]["desc"]
+            cash = BRIDGE_TASK_DEFS[tid]["cash"]
+            lines.append(f"  {mark} {desc} (+${cash})")
+        done = len(r.bridge_done)
+        total = len(r.bridge_tasks)
+        lines.append(f"  Bonus if all done: +${BRIDGE_BONUS_CASH} + {BRIDGE_BONUS_XP} season XP ({done}/{total})")
+        return "\n".join(lines)
+
+    @staticmethod
+    def bridge_mark(game: Game, task_id: str) -> None:
+        if not RetentionManager.bridge_active(game):
+            return
+        r = game.retention
+        if task_id not in r.bridge_tasks or task_id in r.bridge_done:
+            return
+        r.bridge_done.append(task_id)
+        spec = BRIDGE_TASK_DEFS[task_id]
+        game.player.earn(spec["cash"], f"prep: {task_id}")
+        RetentionManager.add_season_xp(game, spec["xp"], f"prep {task_id}")
+        from main import success
+        success(f"Prep objective done: {spec['desc']}")
+        RetentionManager._try_bridge_bonus(game)
+
+    @staticmethod
+    def _try_bridge_bonus(game: Game) -> None:
+        from main import success
+
+        r = game.retention
+        if not RetentionManager.bridge_active(game) or r.bridge_claimed:
+            return
+        if len(r.bridge_done) < len(r.bridge_tasks):
+            return
+        r.bridge_claimed = True
+        game.player.earn(BRIDGE_BONUS_CASH, "phase prep complete")
+        RetentionManager.add_season_xp(game, BRIDGE_BONUS_XP, "phase prep bonus")
+        success(f"ALL PREP OBJECTIVES DONE — +${BRIDGE_BONUS_CASH} bonus!")
+        game.achievements.bridge_completions = getattr(game.achievements, "bridge_completions", 0) + 1
+        if game.achievements.bridge_completions >= 5:
+            game.achievements.unlock("prep_master")
+        game.mail.send(
+            "ghost_broker@darknet",
+            "Prep work on point",
+            "You cleared tonight's side objectives before the next op phase. "
+            "That's how operators stay ahead of rivals.\n\n— ghost_broker",
+        )
+
+    @staticmethod
+    def check_bridge_triggers(game: Game) -> None:
+        if not RetentionManager.bridge_active(game):
+            return
+        p = game.player
+        r = game.retention
+        if "earn300" in r.bridge_tasks and r.daily_earnings >= 300:
+            RetentionManager.bridge_mark(game, "earn300")
+        if "daily" in r.bridge_tasks and game.daily.completed:
+            RetentionManager.bridge_mark(game, "daily")
+        if "defend_on" in r.bridge_tasks and game.blue.defense_mode:
+            RetentionManager.bridge_mark(game, "defend_on")
+        if "weekly" in r.bridge_tasks and r.weekly_completed:
+            RetentionManager.bridge_mark(game, "weekly")
+
+    @staticmethod
+    def on_bridge_event(game: Game, task_id: str) -> None:
+        if task_id in BRIDGE_TASK_DEFS:
+            p = game.player
+            p.tutorial_flags.add(BRIDGE_FLAGS[task_id])
+            RetentionManager.bridge_mark(game, task_id)
 
     @staticmethod
     def on_contract_complete(game: Game, mission: Mission) -> None:
@@ -1380,10 +1531,14 @@ class RetentionManager:
             r.weekly_completed = True
             game.player.tutorial_flags.add("daily_weekly_bounty_done")
             RetentionManager.add_season_xp(game, SEASON_XP_WEEKLY, "weekly bounty")
+            RetentionManager.on_bridge_event(game, "weekly")
+        if not mission.operation_id:
+            RetentionManager.on_bridge_event(game, "contract")
 
     @staticmethod
     def on_daily_complete(game: Game) -> None:
         RetentionManager.add_season_xp(game, SEASON_XP_DAILY, "daily challenge")
+        RetentionManager.on_bridge_event(game, "daily")
         if game.achievements.dailies_completed >= 30:
             game.achievements.unlock("daily_master")
 
@@ -1395,6 +1550,7 @@ class RetentionManager:
             game.player.tutorial_flags.add("daily_earn500_done")
         if r.daily_earnings >= 1000:
             game.player.tutorial_flags.add("daily_big_payday_done")
+        RetentionManager.check_bridge_triggers(game)
 
     @staticmethod
     def on_rep_gain(game: Game, amount: int) -> None:
@@ -1419,6 +1575,7 @@ class RetentionManager:
     def on_defense_block(game: Game) -> None:
         game.player.tutorial_flags.add("op_defense_done")
         RetentionManager._check_defense_missions(game)
+        RetentionManager.on_bridge_event(game, "block")
 
     @staticmethod
     def _check_defense_missions(game: Game) -> None:
@@ -1442,12 +1599,14 @@ class RetentionManager:
     @staticmethod
     def on_probe(game: Game, server_ip: str) -> None:
         game.retention.session_probed.add(server_ip)
+        RetentionManager.on_bridge_event(game, "probe")
         RetentionManager._check_recon_missions(game, server_ip)
 
     @staticmethod
     def on_ghost_complete(game: Game, server_ip: str) -> None:
         game.retention.ghost_targets_done.add(server_ip)
         game.player.tutorial_flags.add("daily_ghost_contract_done")
+        RetentionManager.on_bridge_event(game, "ghost")
         RetentionManager._check_ghost_missions(game, server_ip)
 
     @staticmethod

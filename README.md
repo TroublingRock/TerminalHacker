@@ -49,6 +49,7 @@ Designed for **~30 days of daily play**:
 | **31 daily challenges** | Unique rotating objective each day (`daily`) |
 | **Weekly bounties** | High-value contract resets each Monday |
 | **3-day operations** | Multi-part story missions; next phase unlocks tomorrow (`operation`) |
+| **Phase prep (`bridge`)** | 3 same-day side objectives after each op phase — bonus $ if all done tonight |
 | **9 operation arcs** | ~27 days of scripted multi-day content across the month |
 | **Weekly story mail** | Broker + rival narrative each Monday; recap with `intel` |
 | **Rival reactions** | Completing ops triggers unique rival/broker mail; cross-op combos; `rivals` dossier |

@@ -107,6 +107,7 @@ ACHIEVEMENTS: dict[str, str] = {
     "streak_30": "Maintain a 30-day login streak",
     "season_complete": "Finish the 30-tier season track",
     "rival_magnet": "Anger 5+ rivals through completed operations",
+    "prep_master": "Complete 5 phase-prep objective sets",
 }
 
 DAILY_POOL = [
@@ -134,6 +135,7 @@ class AchievementTracker:
     blocks_this_session: int = 0
     contracts_completed: int = 0
     dailies_completed: int = 0
+    bridge_completions: int = 0
 
     def unlock(self, key: str) -> bool:
         if key in self.unlocked:
@@ -348,7 +350,8 @@ class SaveManager:
                         for ip, s in game.network.servers.items()},
             "achievements": list(game.achievements.unlocked),
             "ach_stats": {"contracts": game.achievements.contracts_completed,
-                          "dailies": game.achievements.dailies_completed},
+                          "dailies": game.achievements.dailies_completed,
+                          "bridges": game.achievements.bridge_completions},
             "blue": {"ids_level": game.blue.ids_level,
                      "attacks_blocked": game.blue.attacks_blocked,
                      "defense_mode": game.blue.defense_mode},
@@ -372,6 +375,11 @@ class SaveManager:
                 "rival_aggression": game.retention.rival_aggression,
                 "last_rival": game.retention.last_rival,
                 "reactions_sent": game.retention.reactions_sent,
+                "bridge_id": game.retention.bridge_id,
+                "bridge_tasks": game.retention.bridge_tasks,
+                "bridge_done": game.retention.bridge_done,
+                "bridge_claimed": game.retention.bridge_claimed,
+                "bridge_unlock_day": game.retention.bridge_unlock_day,
                 "ghost_targets_done": list(game.retention.ghost_targets_done),
             },
         }
@@ -441,6 +449,7 @@ class SaveManager:
         ast = data.get("ach_stats", {})
         game.achievements.contracts_completed = ast.get("contracts", 0)
         game.achievements.dailies_completed = ast.get("dailies", 0)
+        game.achievements.bridge_completions = ast.get("bridges", 0)
         bd = data.get("blue", {})
         game.blue.ids_level = bd.get("ids_level", 1)
         game.blue.attacks_blocked = bd.get("attacks_blocked", 0)
@@ -466,6 +475,11 @@ class SaveManager:
                 rival_aggression=rd.get("rival_aggression", 0),
                 last_rival=rd.get("last_rival", ""),
                 reactions_sent=rd.get("reactions_sent", []),
+                bridge_id=rd.get("bridge_id", ""),
+                bridge_tasks=rd.get("bridge_tasks", []),
+                bridge_done=rd.get("bridge_done", []),
+                bridge_claimed=rd.get("bridge_claimed", False),
+                bridge_unlock_day=rd.get("bridge_unlock_day", ""),
                 ghost_targets_done=set(rd.get("ghost_targets_done", [])),
             )
         if p.phase == "career":
