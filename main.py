@@ -511,17 +511,26 @@ class Mission:
     weekly_bounty: bool = False
     operation_id: str = ""
     operation_step: int = 0
+    lateral_chain_id: str = ""
+    hourly_event: bool = False
+    reward_multiplier: float = 1.0
+    grade: str = ""
 
     def status_line(self) -> str:
         mark = "[DONE]" if self.completed else "[OPEN]"
         tag = ""
-        if self.weekly_bounty:
+        if self.hourly_event:
+            tag = f" [HOURLY {self.reward_multiplier}x]"
+        elif self.lateral_chain_id:
+            tag = " [LATERAL]"
+        elif self.weekly_bounty:
             tag = " [WEEKLY]"
         elif self.operation_id:
             tag = f" [OP {self.operation_step}]"
         elif self.mission_type != "exfil":
             tag = f" [{self.mission_type.upper()}]"
-        return f"{mark}{tag} {self.broker}: {self.briefing} (reward ${self.reward})"
+        grade_tag = f" Grade:{self.grade}" if self.grade else ""
+        return f"{mark}{tag} {self.broker}: {self.briefing} (reward ${self.reward}){grade_tag}"
 
 
 class MissionBoard:
@@ -559,33 +568,44 @@ class MissionBoard:
 
     def check_completion(self, game: "Game") -> None:
         from retention import RetentionManager
+        from session_content import HourlyManager, MasteryGrader
 
         for mission in self.missions:
             if mission.completed:
                 continue
             if not RetentionManager.mission_is_satisfied(game, mission):
                 continue
+            grade, mult, summary = MasteryGrader.grade(game, mission)
+            mission.grade = grade
+            payout = int(mission.reward * mult)
+            if mission.hourly_event and mission.reward_multiplier > 1:
+                payout = int(payout * mission.reward_multiplier)
+            rep = mission.rep_reward + MasteryGrader.rep_bonus(grade)
             mission.completed = True
-            game.player.earn(mission.reward, f"contract {mission.broker}")
-            self.complete_mission_hooks(game, mission)
+            game.player.earn(payout, f"contract {mission.broker}")
+            success(summary)
+            self.complete_mission_hooks(game, mission, payout, rep)
             if game.mail:
                 game.mail.send(
                     f"{mission.broker}@darknet",
-                    f"Payment confirmed — ${mission.reward}",
-                    f"Contract fulfilled.\n\n{mission.briefing}\n\nFunds transferred.",
+                    f"Payment confirmed — ${payout}",
+                    f"Contract fulfilled.\n\n{mission.briefing}\n\n{summary}\n\nFunds transferred.",
                 )
 
-    def complete_mission_hooks(self, game: "Game", mission: Mission) -> None:
+    def complete_mission_hooks(self, game: "Game", mission: Mission,
+                               payout: int | None = None, rep: int | None = None) -> None:
         from progression import MissionGenerator, ReputationSystem
         from retention import RetentionManager
+        from session_content import HourlyManager
 
         game.player.tutorial_flags.add("daily_contract_done")
         game.achievements.contracts_completed += 1
         if game.achievements.contracts_completed >= 10:
             game.achievements.unlock("contract_10")
-        ReputationSystem.add_rep(game, mission.rep_reward, mission.mission_id)
+        ReputationSystem.add_rep(game, rep if rep is not None else mission.rep_reward, mission.mission_id)
         RetentionManager.on_contract_complete(game, mission)
         RetentionManager.on_operation_step_complete(game, mission)
+        HourlyManager.on_complete(game, mission)
         new_m = MissionGenerator.generate(game)
         if new_m:
             self.missions.append(new_m)
@@ -653,6 +673,9 @@ class Shop:
             cost = item.base_cost * (player.cpu_level + 1)
             if not player.spend(cost, f"CPU upgrade"):
                 return False
+            if player._game_ref:
+                from session_content import MasteryGrader
+                MasteryGrader.on_shop_spend(player._game_ref, cost)
             player.cpu_level += 1
             success(f"CPU level {player.cpu_level}")
             return True
@@ -663,6 +686,9 @@ class Shop:
             cost = item.base_cost * (player.firewall_level + 1)
             if not player.spend(cost, f"firewall upgrade"):
                 return False
+            if player._game_ref:
+                from session_content import MasteryGrader
+                MasteryGrader.on_shop_spend(player._game_ref, cost)
             player.firewall_level += 1
             success(f"Firewall level {player.firewall_level}")
             return True
@@ -674,6 +700,9 @@ class Shop:
             return False
         if not player.spend(item.base_cost, item.name):
             return False
+        if player._game_ref:
+            from session_content import MasteryGrader
+            MasteryGrader.on_shop_spend(player._game_ref, item.base_cost)
         player.owned_tools.add(item.key)
         if item.key == "hydra":
             player.cracker_tier = max(player.cracker_tier, 1)
@@ -971,6 +1000,7 @@ class Game:
     def __init__(self) -> None:
         from progression import AchievementTracker, BlueTeamState
         from retention import RetentionManager, RetentionState
+        from session_content import SessionState
 
         self.player = Player()
         self.player._game_ref = self
@@ -981,6 +1011,7 @@ class Game:
         self.threat = ThreatSystem(self)
         self.achievements = AchievementTracker()
         self.retention = RetentionState()
+        self.session = SessionState()
         self.daily = RetentionManager.make_daily_challenge()
         self.blue = BlueTeamState()
         self.running = True
@@ -1064,9 +1095,13 @@ class Game:
         return True
 
     def post_command(self, cmd: str) -> None:
+        from session_content import HourlyManager, MasteryGrader
+
         self.tutorial.record_command(cmd)
+        MasteryGrader.on_command(self)
         self.threat.on_tick()
         if self.player.phase == "career":
+            HourlyManager.refresh(self)
             self.missions.check_completion(self)
         self.tutorial.check_advance()
         self._check_daily(cmd)
@@ -1116,7 +1151,7 @@ class Game:
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
-            "intel", "rivals",
+            "intel", "rivals", "chains", "hourly", "grades",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1200,6 +1235,8 @@ class Game:
         from retention import RetentionManager
         RetentionManager.on_scan_subnet(self, cidr)
         RetentionManager.on_bridge_event(self, "scan")
+        from session_content import LateralManager
+        LateralManager.on_scan(self, cidr)
         self.missions.check_completion(self)
         info("Use connect <IP> 22")
 
@@ -1235,6 +1272,13 @@ class Game:
 
         success(f"Connected to {server.hostname}. Run crack for shell.")
 
+        if self.player.phase == "career":
+            from session_content import MasteryGrader
+            for m in self.missions.missions:
+                if not m.completed and m.target_ip == ip:
+                    MasteryGrader.begin(self, m.mission_id)
+                    break
+
     def cmd_disconnect(self, _a: list[str]) -> None:
         if self.player.is_local():
             warn("Already localhost.")
@@ -1254,6 +1298,8 @@ class Game:
             if server and server.cracked and self.player.has_remote_shell:
                 from retention import RetentionManager
                 RetentionManager.on_ghost_complete(self, server.ip)
+                from session_content import LateralManager
+                LateralManager.on_ghost(self, server.ip)
         if server:
             from retention import RetentionManager
             RetentionManager.on_disconnect_checks(self, server.ip, clean)
@@ -1281,6 +1327,12 @@ class Game:
             return
         if s.cracked:
             self.player.has_remote_shell = True
+            return
+
+        from session_content import LateralManager
+        block_msg = LateralManager.pivot_blocked(self, s.ip)
+        if block_msg:
+            error(block_msg)
             return
 
         divider("SSH BRUTE-FORCE")
@@ -1311,6 +1363,8 @@ class Game:
                 self.player.tutorial_flags.add("daily_no_vpn_done")
             from retention import RetentionManager
             RetentionManager.on_crack(self, s.ip, s.security_level)
+            from session_content import LateralManager
+            LateralManager.on_crack(self, s.ip)
             if "daily_shop_bought" not in self.player.tutorial_flags:
                 self.player.tutorial_flags.add("daily_no_shop_done")
             if self.player.phase == "career":
@@ -1352,6 +1406,9 @@ class Game:
         self.player.tutorial_flags.add("daily_privesc_done")
         from retention import RetentionManager
         RetentionManager.on_bridge_event(self, "privesc")
+        from session_content import LateralManager
+        if self.remote_server():
+            LateralManager.on_privesc(self, self.remote_server().ip)
         if self.remote_server() and self.player.remote_was_root:
             self.player.tutorial_flags.add("daily_privesc_dl_done")
         teach("Root can read any file and persist malware — defend with least-privilege.")
@@ -1372,6 +1429,8 @@ class Game:
         local = f"/home/hacker/downloads/{name}"
         self.player.files[local] = VirtualFile(local, f.read(), owner=self.player.username)
         success(f"Exfiltrated to {local}")
+        from session_content import LateralManager
+        LateralManager.on_exfil_step(self, s.ip, path)
         if s.chaos_only:
             self.try_unlock("chaos_walker")
         if "/root/" in path and self.player.remote_was_root:
@@ -1410,6 +1469,9 @@ class Game:
             return
         divider(f"CAT {path}")
         Console.out(f.read())
+        if not self.player.is_local():
+            from session_content import LateralManager
+            LateralManager.on_read_intel(self, path)
         if path == "/var/log/auth.log" and not self.player.is_local():
             self.player.tutorial_flags.add("read_authlog")
             self.player.tutorial_flags.add("daily_read_auth_done")
@@ -1706,6 +1768,63 @@ class Game:
         Console.out(f"\n  Aggression raises rival attack frequency and power.")
         Console.out(f"  Last angry rival: {r.last_rival or 'none'}")
 
+    def cmd_chains(self, args: list[str]) -> None:
+        from session_content import LateralManager
+
+        divider("LATERAL MOVEMENT CHAINS")
+        s = self.session
+        if s.active_chain_id:
+            chain = LateralManager.chain_by_id(s.active_chain_id)
+            if chain:
+                step = LateralManager.active_step(self)
+                n = s.chain_step + 1
+                total = len(chain["steps"])
+                label = step["label"] if step else "complete"
+                Console.out(f"  ACTIVE: {chain['name']} — step {n}/{total}: {label}")
+        else:
+            Console.out("  No active chain. Start one with: chains start <id>")
+        Console.out("\n  Available chains:")
+        for c in LateralManager.available_chains(self):
+            mark = "[x]" if c["id"] in s.completed_chains else "[ ]"
+            Console.out(
+                f"  {mark} {c['id']}: {c['name']} — ${c['reward']} + {c['rep_reward']} rep "
+                f"(min {c.get('min_rep', 0)} rep)"
+            )
+        if args and args[0] == "start" and len(args) > 1:
+            LateralManager.start_chain(self, args[1])
+
+    def cmd_hourly(self, _a: list[str]) -> None:
+        from session_content import HourlyManager
+
+        divider("HOURLY FLASH EVENT")
+        if self.player.phase != "career":
+            warn("Career mode only.")
+            return
+        HourlyManager.refresh(self)
+        s = self.session
+        remaining = HourlyManager.time_remaining()
+        status = "COMPLETED this hour" if s.hourly_completed else "OPEN"
+        Console.out(f"  Time left: {remaining}")
+        for m in self.missions.missions:
+            if m.hourly_event and not m.completed:
+                Console.out(f"  [{status}] {m.briefing} (${m.reward} base, {m.reward_multiplier}x)")
+                return
+        Console.out("  No flash event this hour (rank too low or already cleared).")
+
+    def cmd_grades(self, _a: list[str]) -> None:
+        from session_content import GRADE_MULTIPLIERS
+
+        divider("MASTERY GRADES")
+        Console.out("  S=1.5x pay +40 rep | A=1.25x +20 | B=1.0x | C=0.85x")
+        Console.out("  Graded on: log traces, command count, shop buys, VPN use.\n")
+        if not self.session.best_grades:
+            Console.out("  No graded contracts yet.")
+            return
+        for mid, grade in sorted(self.session.best_grades.items()):
+            mult = GRADE_MULTIPLIERS.get(grade, 1.0)
+            Console.out(f"  {mid}: {grade} ({mult}x)")
+        Console.out(f"\n  S-ranks earned: {self.session.s_rank_total}")
+
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
         SaveManager.save(self)
@@ -1753,6 +1872,7 @@ class Game:
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
             "streak": self.cmd_streak, "season": self.cmd_season, "operation": self.cmd_operation,
             "intel": self.cmd_intel, "rivals": self.cmd_rivals, "bridge": self.cmd_bridge,
+            "chains": self.cmd_chains, "hourly": self.cmd_hourly, "grades": self.cmd_grades,
             "save": self.cmd_save, "load": self.cmd_load,
             "exit": self.cmd_exit, "quit": self.cmd_exit,
         }

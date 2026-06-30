@@ -118,7 +118,7 @@ class DesktopApp:
             bg=COLORS["desktop"], font=title_font,
         ).pack(side=tk.LEFT)
         tk.Label(
-            header, text="  v1.2 — Cybersecurity Training Environment",
+            header, text="  v1.3 — Cybersecurity Training Environment",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 11),
         ).pack(side=tk.LEFT, padx=(8, 0))
 
@@ -466,6 +466,23 @@ class DesktopApp:
 
         if p.phase == "career":
             from retention import RetentionManager
+            from session_content import HourlyManager, LateralManager
+
+            HourlyManager.refresh(self.game)
+            s = self.game.session
+            hourly_m = next((m for m in self.game.missions.missions if m.hourly_event and not m.completed), None)
+            if hourly_m:
+                rem = HourlyManager.time_remaining()
+                tk.Label(body, text=f"⚡ HOURLY FLASH ({rem} left): {hourly_m.briefing}",
+                         fg=COLORS["warn"], bg=COLORS["window"], font=("Helvetica", 9, "bold"),
+                         wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
+            if s.active_chain_id:
+                chain = LateralManager.chain_by_id(s.active_chain_id)
+                step = LateralManager.active_step(self.game)
+                if chain and step:
+                    tk.Label(body, text=f"LATERAL: {chain['name']} — step {s.chain_step + 1}/{len(chain['steps'])}: {step['label']}",
+                             fg=COLORS["accent"], bg=COLORS["window"], font=("Helvetica", 9, "bold"),
+                             wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
             if RetentionManager.bridge_active(self.game):
                 tk.Label(body, text="PREP TONIGHT (type 'bridge' in terminal):",
                          fg=COLORS["warn"], bg=COLORS["window"], font=("Helvetica", 9, "bold")).pack(anchor=tk.W, pady=(4, 0))

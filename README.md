@@ -54,11 +54,20 @@ python3 main.py --cli
 | Reputation / ranks | `rank` |
 | Achievements | `achievements` |
 | Procedural contracts | `contracts` |
+| Lateral movement chains | `chains` / `chains start <id>` |
+| Hourly flash bounties | `hourly` |
+| Mastery grades (S/A/B/C) | `grades` |
 | Blue-team defense | `defend on` |
 | Chaos endgame | `chaos` |
 | Save / load | `save` / `load` |
 
 Progress **auto-saves** every few commands, on milestones, and when you quit.
+
+### Session depth (v1.3)
+
+- **Lateral chains** — multi-hop pivot missions (`chains`) with intel files unlocking next targets
+- **Mastery grades** — S/A/B/C ratings on contract completion affect payout and rep
+- **Hourly flash events** — rotating 2–3x bounty contracts that expire each real-world hour
 
 ### Balance notes (v1.2)
 

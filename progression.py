@@ -108,6 +108,9 @@ ACHIEVEMENTS: dict[str, str] = {
     "season_complete": "Finish the 30-tier season track",
     "rival_magnet": "Anger 5+ rivals through completed operations",
     "prep_master": "Complete 5 phase-prep objective sets",
+    "chain_master": "Complete all 5 lateral movement chains",
+    "grade_s_master": "Earn 10 S-rank contract grades",
+    "hourly_hunter": "Complete 10 hourly flash events",
 }
 
 DAILY_POOL = [
@@ -360,7 +363,11 @@ class SaveManager:
                  "require_log_wipe": getattr(m, "require_log_wipe", True),
                  "weekly_bounty": getattr(m, "weekly_bounty", False),
                  "operation_id": getattr(m, "operation_id", ""),
-                 "operation_step": getattr(m, "operation_step", 0)}
+                 "operation_step": getattr(m, "operation_step", 0),
+                 "lateral_chain_id": getattr(m, "lateral_chain_id", ""),
+                 "hourly_event": getattr(m, "hourly_event", False),
+                 "reward_multiplier": getattr(m, "reward_multiplier", 1.0),
+                 "grade": getattr(m, "grade", "")}
                 for m in game.missions.missions
             ],
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
@@ -402,12 +409,32 @@ class SaveManager:
                 "bridge_unlock_day": game.retention.bridge_unlock_day,
                 "ghost_targets_done": list(game.retention.ghost_targets_done),
             },
+            "session": {
+                "active_chain_id": game.session.active_chain_id,
+                "chain_step": game.session.chain_step,
+                "chain_steps_done": game.session.chain_steps_done,
+                "completed_chains": game.session.completed_chains,
+                "unlocked_pivots": list(game.session.unlocked_pivots),
+                "mastery_mission_id": game.session.mastery_mission_id,
+                "mastery_commands": game.session.mastery_commands,
+                "mastery_start_money": game.session.mastery_start_money,
+                "mastery_shop_spent": game.session.mastery_shop_spent,
+                "mastery_vpn_used": game.session.mastery_vpn_used,
+                "best_grades": game.session.best_grades,
+                "s_rank_total": game.session.s_rank_total,
+                "hourly_slot": game.session.hourly_slot,
+                "hourly_event_id": game.session.hourly_event_id,
+                "hourly_mission_id": game.session.hourly_mission_id,
+                "hourly_completed": game.session.hourly_completed,
+                "hourly_completions": game.session.hourly_completions,
+            },
         }
 
     @staticmethod
     def _deserialize(game: Game, data: dict) -> None:
         from main import MailMessage, Mission, Route, VirtualFile
         from retention import RetentionManager, RetentionState
+        from session_content import LateralManager, SessionState
 
         pd = data["player"]
         daily_data = pd.pop("daily", None)
@@ -457,6 +484,10 @@ class SaveManager:
                 weekly_bounty=md.get("weekly_bounty", False),
                 operation_id=md.get("operation_id", ""),
                 operation_step=md.get("operation_step", 0),
+                lateral_chain_id=md.get("lateral_chain_id", ""),
+                hourly_event=md.get("hourly_event", False),
+                reward_multiplier=md.get("reward_multiplier", 1.0),
+                grade=md.get("grade", ""),
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
@@ -502,9 +533,36 @@ class SaveManager:
                 bridge_unlock_day=rd.get("bridge_unlock_day", ""),
                 ghost_targets_done=set(rd.get("ghost_targets_done", [])),
             )
+        sd = data.get("session", {})
+        if sd:
+            game.session = SessionState(
+                active_chain_id=sd.get("active_chain_id", ""),
+                chain_step=sd.get("chain_step", 0),
+                chain_steps_done=sd.get("chain_steps_done", []),
+                completed_chains=sd.get("completed_chains", []),
+                unlocked_pivots=set(sd.get("unlocked_pivots", [])),
+                mastery_mission_id=sd.get("mastery_mission_id", ""),
+                mastery_commands=sd.get("mastery_commands", 0),
+                mastery_start_money=sd.get("mastery_start_money", 0),
+                mastery_shop_spent=sd.get("mastery_shop_spent", 0),
+                mastery_vpn_used=sd.get("mastery_vpn_used", False),
+                best_grades=sd.get("best_grades", {}),
+                s_rank_total=sd.get("s_rank_total", 0),
+                hourly_slot=sd.get("hourly_slot", 0),
+                hourly_event_id=sd.get("hourly_event_id", ""),
+                hourly_mission_id=sd.get("hourly_mission_id", ""),
+                hourly_completed=sd.get("hourly_completed", False),
+                hourly_completions=sd.get("hourly_completions", 0),
+            )
+        if game.session.active_chain_id:
+            chain = LateralManager.chain_by_id(game.session.active_chain_id)
+            if chain:
+                LateralManager._inject_intel_files(game, chain)
         if p.phase == "career":
             game.network.deploy_company_hosts(p.reputation, p.chaos_unlocked)
             RetentionManager.on_career_session(game)
+            from session_content import HourlyManager
+            HourlyManager.refresh(game)
 
 
 def build_company_server(spec: dict) -> Server:

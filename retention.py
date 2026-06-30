@@ -1056,6 +1056,9 @@ class RetentionManager:
         if game.daily.challenge_id != DAILY_ROTATION[RetentionManager.daily_slot()][0]:
             game.daily = RetentionManager.make_daily_challenge()
 
+        from session_content import HourlyManager
+        HourlyManager.refresh(game)
+
         if r.last_login == today and r.streak > 0:
             teach(
                 f"Streak day {r.streak} | Season tier {r.season_tier}/{len(SEASON_TIERS)} | "
@@ -1661,6 +1664,9 @@ class RetentionManager:
 
         if mtype == "ghost":
             return mission.target_ip in game.retention.ghost_targets_done
+        if mtype == "lateral":
+            from session_content import LateralManager
+            return LateralManager.is_chain_satisfied(game, mission)
         if mtype == "recon":
             return (
                 mission.target_ip in p.discovered_ips
