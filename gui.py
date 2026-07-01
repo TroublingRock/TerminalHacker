@@ -190,6 +190,7 @@ class DesktopApp:
         self._tick_clock()
         self._run_onboarding()
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
+        self.root.bind_all("<Escape>", self._unmaximize_active, add="+")
         self._schedule_autosave()
         self.refresh_taskbar()
         if self.game.defer_career_session:
@@ -420,7 +421,7 @@ class DesktopApp:
             if not shell.winfo_ismapped():
                 continue
             if getattr(panel, "_maximized", False):
-                shell.place(x=0, y=0, relwidth=1, relheight=1)
+                self._place_maximized(shell)
             else:
                 geom = getattr(panel, "_geom", self._default_window_geom(key))
                 self._apply_window_geom(key, shell, geom)
@@ -592,14 +593,26 @@ class DesktopApp:
         h = min(h, ch - 8)
         x = max(0, min(x, cw - w))
         y = max(0, min(y, ch - h))
-        shell.place(x=x, y=y, width=w, height=h)
+        shell.place(x=x, y=y, width=w, height=h, relwidth=0, relheight=0)
         shell.lift()
+
+    def _place_maximized(self, shell: tk.Frame) -> None:
+        shell.place(x=0, y=0, relwidth=1, relheight=1)
+        shell.lift()
+
+    def _sync_window_layout(self, key: str) -> None:
+        panel = self.open_windows.get(key)
+        if not panel:
+            return
+        shell = panel._shell  # type: ignore[attr-defined]
+        body: tk.Frame = panel._body  # type: ignore[attr-defined]
+        shell.update_idletasks()
+        body.update_idletasks()
 
     def _place_window(self, key: str, shell: tk.Frame, width: int = 0, height: int = 0) -> None:
         panel = self.open_windows.get(key)
         if panel and getattr(panel, "_maximized", False):
-            shell.place(x=0, y=0, relwidth=1, relheight=1)
-            shell.lift()
+            self._place_maximized(shell)
             return
         if panel and getattr(panel, "_geom", None):
             self._apply_window_geom(key, shell, panel._geom)  # type: ignore[attr-defined]
@@ -638,7 +651,12 @@ class DesktopApp:
             font=F(10, bold=True), width=3, cursor="hand2",
         )
         btn.pack(side=side, padx=1, pady=4)
-        btn.bind("<Button-1>", lambda _e: command())
+
+        def on_click(_event=None) -> str:
+            command()
+            return "break"
+
+        btn.bind("<Button-1>", on_click)
         return btn
 
     def _bind_window_drag(self, key: str, titlebar: tk.Frame, title_lbl: tk.Label, shell: tk.Frame) -> None:
@@ -667,11 +685,15 @@ class DesktopApp:
             ny = shell.winfo_y() + dy
             geom = getattr(panel, "_geom", self._default_window_geom(key))
             panel._geom = (nx, ny, geom[2], geom[3])  # type: ignore[attr-defined]
-            shell.place(x=nx, y=ny, width=geom[2], height=geom[3])
+            self._apply_window_geom(key, shell, panel._geom)  # type: ignore[attr-defined]
 
-        for widget in (titlebar, title_lbl):
-            widget.bind("<ButtonPress-1>", start, add="+")
-            widget.bind("<B1-Motion>", move, add="+")
+        def dbl_toggle(_event=None) -> str:
+            self._toggle_maximize(key)
+            return "break"
+
+        title_lbl.bind("<ButtonPress-1>", start, add="+")
+        title_lbl.bind("<B1-Motion>", move, add="+")
+        title_lbl.bind("<Double-Button-1>", dbl_toggle, add="+")
 
     def _run_onboarding(self) -> None:
         """Guide new tutorial players — auto-open Training on first launch."""
@@ -846,7 +868,13 @@ class DesktopApp:
     def _minimize_window(self, key: str) -> None:
         if key not in self.open_windows:
             return
-        self.open_windows[key]._shell.place_forget()  # type: ignore[attr-defined]
+        panel = self.open_windows[key]
+        if getattr(panel, "_maximized", False):
+            panel._maximized = False  # type: ignore[attr-defined]
+            max_btn = getattr(panel, "_max_btn", None)
+            if max_btn and max_btn.winfo_exists():
+                max_btn.configure(text="□")
+        panel._shell.place_forget()  # type: ignore[attr-defined]
         if key == "terminal":
             self._uninstall_terminal_key_catcher()
             self._cancel_terminal_focus()
@@ -964,14 +992,23 @@ class DesktopApp:
             if shell.winfo_ismapped():
                 panel._geom = (  # type: ignore[attr-defined]
                     shell.winfo_x(), shell.winfo_y(),
-                    shell.winfo_width(), shell.winfo_height(),
+                    max(shell.winfo_width(), 200), max(shell.winfo_height(), 160),
                 )
             panel._maximized = True  # type: ignore[attr-defined]
-            shell.place(x=0, y=0, relwidth=1, relheight=1)
+            self._place_maximized(shell)
             if max_btn and max_btn.winfo_exists():
-                max_btn.configure(text="❐")
+                max_btn.configure(text="=")
+        self._sync_window_layout(key)
         self._focus_window(key)
         sounds.play("click")
+
+    def _unmaximize_active(self, _event=None) -> str | None:
+        if self._active_app and self._active_app in self.open_windows:
+            panel = self.open_windows[self._active_app]
+            if getattr(panel, "_maximized", False):
+                self._toggle_maximize(self._active_app)
+                return "break"
+        return None
 
     def _uninstall_terminal_key_catcher(self) -> None:
         self._terminal_key_catcher_active = False
@@ -2404,8 +2441,13 @@ class DesktopApp:
         elif p.phase == "endless":
             lines.append(f"Best floor:  {self.game.endless.best_floor} (meta)")
 
-        tk.Label(body, text="\n".join(lines), fg=COLORS["text"], bg=COLORS["window"],
-                 font=MONO(14), justify=tk.LEFT, anchor=tk.NW).pack(fill=tk.BOTH, expand=True)
+        viewer = scrolledtext.ScrolledText(
+            body, bg=COLORS["window"], fg=COLORS["text"],
+            font=MONO(12), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        viewer.pack(fill=tk.BOTH, expand=True)
+        viewer.insert("1.0", "\n".join(lines))
+        viewer.configure(state=tk.DISABLED)
 
         btn_row = tk.Frame(body, bg=COLORS["window"])
         btn_row.pack(fill=tk.X, pady=(8, 0))
