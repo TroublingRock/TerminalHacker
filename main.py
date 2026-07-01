@@ -21,6 +21,9 @@ from typing import Callable
 # Output bridge (CLI print or GUI text widget)
 # ---------------------------------------------------------------------------
 
+NOTES_PATH = "/home/hacker/notes.txt"
+
+
 class Console:
     handler: Callable[[str, str], None] | None = None  # (text, tag)
     fast_mode: bool = False
@@ -491,6 +494,23 @@ class MailBox:
         for m in self.messages:
             m.read = True
 
+    def delete(self, mail_id: str) -> bool:
+        for i, m in enumerate(self.messages):
+            if m.mail_id == mail_id:
+                self.messages.pop(i)
+                return True
+        return False
+
+    def delete_all_read(self) -> int:
+        before = len(self.messages)
+        self.messages = [m for m in self.messages if not m.read]
+        return before - len(self.messages)
+
+    def clear_inbox(self) -> int:
+        count = len(self.messages)
+        self.messages.clear()
+        return count
+
 
 # ---------------------------------------------------------------------------
 # Missions (career only)
@@ -845,7 +865,10 @@ class Player:
             self.files = {
                 "/home/hacker/notes.txt": VirtualFile(
                     "/home/hacker/notes.txt",
-                    "Type 'lesson' at any time for your current training objective.\n",
+                    "Your personal scratchpad — IPs, passwords, targets.\n"
+                    "  note add <text>   append a line\n"
+                    "  note              show all notes\n"
+                    "Or edit in Files app and click Save.\n",
                     owner=self.username,
                 ),
                 "/var/log/syslog": VirtualFile("/var/log/syslog", syslog_line("localhost", "systemd", "boot") + "\n", mode="rw-r-----"),
@@ -1314,6 +1337,7 @@ class Game:
             "vpn [connect|disconnect|status]", "scan/nmap [CIDR]", "connect [IP] [port]",
             "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
+            "note [add|clear|set] [text]",
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
@@ -1728,6 +1752,43 @@ class Game:
             self.player.tutorial_flags.add("read_authlog")
             self.player.tutorial_flags.add("daily_read_auth_done")
             teach("That IP is forensic evidence tying you to this intrusion.")
+
+    def _local_notes_file(self) -> VirtualFile:
+        if NOTES_PATH not in self.player.files:
+            self.player.files[NOTES_PATH] = VirtualFile(NOTES_PATH, "", owner=self.player.username)
+        return self.player.files[NOTES_PATH]
+
+    def cmd_note(self, args: list[str]) -> None:
+        if not self.player.is_local():
+            error("Notes only editable on localhost — type disconnect first.")
+            return
+        notes = self._local_notes_file()
+        if not args:
+            divider("NOTES")
+            body = notes.read().strip()
+            Console.out(body if body else "(empty — use: note add 192.168.1.10 gateway)")
+            Console.out("\n  note add <text>  |  note clear")
+            return
+        sub = args[0].lower()
+        if sub == "add":
+            line = " ".join(args[1:]).strip()
+            if not line:
+                error("Usage: note add <text>")
+                return
+            notes.append(line)
+            success(f"Saved: {line}")
+            return
+        if sub == "clear":
+            notes.content = ""
+            success("Notes cleared.")
+            return
+        if sub == "set":
+            text = " ".join(args[1:])
+            notes.content = text + ("\n" if text and not text.endswith("\n") else "")
+            success("Notes replaced.")
+            return
+        notes.append(" ".join(args))
+        success("Saved.")
 
     def cmd_rm(self, args: list[str]) -> None:
         if not args:
@@ -2327,6 +2388,7 @@ class Game:
             "connect": self.cmd_connect, "disconnect": self.cmd_disconnect,
             "probe": self.cmd_probe, "crack": self.cmd_crack, "curl": self.cmd_curl, "privesc": self.cmd_privesc,
             "download": self.cmd_download, "ls": self.cmd_ls, "cat": self.cmd_cat,
+            "note": self.cmd_note, "notes": self.cmd_note,
             "rm": self.cmd_rm, "pwd": self.cmd_pwd, "whoami": self.cmd_whoami,
             "uname": self.cmd_uname, "shop": self.cmd_shop, "buy": self.cmd_buy,
             "missions": self.cmd_missions, "contracts": self.cmd_contracts,

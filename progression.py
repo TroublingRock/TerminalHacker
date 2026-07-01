@@ -307,6 +307,7 @@ class SaveManager:
 
     @staticmethod
     def _serialize(game: Game) -> dict:
+        from main import NOTES_PATH
         p = game.player
         return {
             "player": {
@@ -325,6 +326,7 @@ class SaveManager:
                 "subnets_scanned": list(p.subnets_scanned),
                 "privesc_hosts": list(p.privesc_hosts),
                 "downloads": [k for k in p.files if "/downloads/" in k],
+                "notes_content": p.files[NOTES_PATH].content if NOTES_PATH in p.files else "",
                 "daily": {
                     "challenge_id": game.daily.challenge_id,
                     "description": game.daily.description,
@@ -524,7 +526,7 @@ class SaveManager:
 
     @staticmethod
     def _deserialize(game: Game, data: dict) -> None:
-        from main import MailMessage, Mission, Route, VirtualFile
+        from main import MailMessage, Mission, Route, VirtualFile, NOTES_PATH
         from retention import RetentionManager, RetentionState
         from session_content import LateralManager, SessionState
         from endless_mode import EndlessManager, EndlessState
@@ -551,6 +553,11 @@ class SaveManager:
                 for path in v:
                     if path not in p.files:
                         p.files[path] = VirtualFile(path, "restored\n")
+            elif k == "notes_content":
+                if NOTES_PATH in p.files:
+                    p.files[NOTES_PATH].content = v
+                else:
+                    p.files[NOTES_PATH] = VirtualFile(NOTES_PATH, v, owner=p.username)
             elif k == "subnets_scanned":
                 p.subnets_scanned = set(v)
             elif k == "privesc_hosts":

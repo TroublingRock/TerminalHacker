@@ -10,6 +10,7 @@ from tkinter import scrolledtext
 
 import sounds
 from main import (
+    NOTES_PATH,
     SHOP_CATALOG,
     Console,
     Game,
@@ -84,6 +85,8 @@ class DesktopApp:
         self.terminal_booted = False
         self.mail_badge: tk.Label | None = None
         self._mail_listbox: tk.Listbox | None = None
+        self._mail_viewer: scrolledtext.ScrolledText | None = None
+        self._mail_meta: tk.Label | None = None
         self.taskbar_label: tk.Label | None = None
         self.desktop_view: tk.Frame | None = None
         self.app_shell: tk.Frame | None = None
@@ -91,6 +94,9 @@ class DesktopApp:
         self.hint_label: tk.Label | None = None
         self.onboarding_banner: tk.Frame | None = None
         self._terminal_entry: tk.Entry | None = None
+        self._terminal_input: tk.Text | None = None
+        self._terminal_input_frame: tk.Frame | None = None
+        self._terminal_focus_job: str | None = None
         self._terminal_run_cmd: object | None = None
         self._terminal_prompt_lbl: tk.Label | None = None
         self._files_list_frame: tk.Frame | None = None
@@ -429,14 +435,60 @@ class DesktopApp:
                 shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
             else:
                 shell.pack_forget()
-        if key == "terminal" and self._terminal_entry:
-            self.root.after(80, self._focus_terminal_input)
+        if key == "terminal" and self._terminal_input:
+            self._arm_terminal_focus()
         if key == "files" and "files" in self._built_panels:
             self._refresh_files()
 
+    def _cancel_terminal_focus(self) -> None:
+        if self._terminal_focus_job:
+            try:
+                self.root.after_cancel(self._terminal_focus_job)
+            except tk.TclError:
+                pass
+            self._terminal_focus_job = None
+
+    def _arm_terminal_focus(self) -> None:
+        """Repeatedly reclaim keyboard focus — needed in some remote desktop hosts."""
+        self._cancel_terminal_focus()
+
+        def pump(remaining: int = 12) -> None:
+            if "terminal" not in self.open_windows or not self._terminal_input:
+                return
+            self._activate_terminal_input()
+            if remaining > 0:
+                self._terminal_focus_job = self.root.after(250, lambda: pump(remaining - 1))
+
+        pump()
+
+    def _activate_terminal_input(self) -> None:
+        if not self._terminal_input or not self._terminal_input.winfo_exists():
+            return
+        try:
+            self._terminal_input.configure(state="normal")
+            self._terminal_input.focus_force()
+            self._terminal_input.mark_set(tk.INSERT, tk.END)
+            self._terminal_input.see(tk.END)
+            if self._terminal_input_frame:
+                self._terminal_input_frame.configure(highlightbackground=COLORS["accent"])
+        except tk.TclError:
+            pass
+
     def _focus_terminal_input(self) -> None:
+        self._activate_terminal_input()
+
+    def _get_terminal_command(self) -> str:
+        if self._terminal_input and self._terminal_input.winfo_exists():
+            return self._terminal_input.get("1.0", "end-1c").strip()
         if self._terminal_entry and self._terminal_entry.winfo_exists():
-            self._terminal_entry.focus_force()
+            return self._terminal_entry.get().strip()
+        return ""
+
+    def _clear_terminal_command(self) -> None:
+        if self._terminal_input and self._terminal_input.winfo_exists():
+            self._terminal_input.delete("1.0", tk.END)
+        elif self._terminal_entry and self._terminal_entry.winfo_exists():
+            self._terminal_entry.delete(0, tk.END)
 
     def _close_window(self, key: str) -> None:
         if key in self.open_windows:
@@ -447,8 +499,13 @@ class DesktopApp:
         if key == "terminal":
             self.game.close_terminal = False
             self._terminal_entry = None
+            self._terminal_input = None
+            self._terminal_input_frame = None
+            self._cancel_terminal_focus()
         if key == "mail":
             self._mail_listbox = None
+            self._mail_viewer = None
+            self._mail_meta = None
         if key == "files":
             self._files_list_frame = None
             self._files_preview_frame = None
@@ -503,6 +560,8 @@ class DesktopApp:
         )
         viewer.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
         viewer.configure(state=tk.DISABLED)
+        self._mail_viewer = viewer
+        self._mail_meta = meta
 
         def show_message(_event=None) -> None:
             sel = listbox.curselection()
@@ -525,8 +584,12 @@ class DesktopApp:
 
         btn_row = tk.Frame(body, bg=COLORS["window"])
         btn_row.pack(fill=tk.X, pady=(8, 0))
+        tk.Button(btn_row, text="Delete", command=self._delete_selected_mail,
+                  bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+        tk.Button(btn_row, text="Delete All Read", command=self._delete_read_mail,
+                  bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
         tk.Button(btn_row, text="Mark All Read", command=self._mark_all_mail_read,
-                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
         tk.Button(btn_row, text="Open Job Board", command=self.open_job_board,
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
 
@@ -549,18 +612,63 @@ class DesktopApp:
         if self._mail_listbox:
             self._populate_mail_list(self._mail_listbox)
 
+    def _delete_selected_mail(self) -> None:
+        if not self._mail_listbox:
+            return
+        sel = self._mail_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx >= len(self.game.mail.messages):
+            return
+        msg = self.game.mail.messages[idx]
+        self.game.mail.delete(msg.mail_id)
+        self.game.autosave(force=True)
+        self._populate_mail_list(self._mail_listbox)
+        if self._mail_meta:
+            self._mail_meta.configure(text="Message deleted.", fg=COLORS["muted"])
+        if self._mail_viewer:
+            self._mail_viewer.configure(state=tk.NORMAL)
+            self._mail_viewer.delete("1.0", tk.END)
+            self._mail_viewer.configure(state=tk.DISABLED)
+        self._refresh_mail_badge()
+        self.refresh_taskbar()
+        if self.game.mail.messages:
+            self._mail_listbox.selection_set(0)
+            self._mail_listbox.event_generate("<<ListboxSelect>>")
+
+    def _delete_read_mail(self) -> None:
+        removed = self.game.mail.delete_all_read()
+        if removed:
+            self.game.autosave(force=True)
+        self._populate_mail_list(self._mail_listbox) if self._mail_listbox else None
+        if self._mail_meta:
+            self._mail_meta.configure(
+                text=f"Deleted {removed} read message(s)." if removed else "No read messages to delete.",
+                fg=COLORS["muted"],
+            )
+        if self._mail_viewer:
+            self._mail_viewer.configure(state=tk.NORMAL)
+            self._mail_viewer.delete("1.0", tk.END)
+            self._mail_viewer.configure(state=tk.DISABLED)
+        self._refresh_mail_badge()
+        self.refresh_taskbar()
+        if self._mail_listbox and self.game.mail.messages:
+            self._mail_listbox.selection_set(0)
+            self._mail_listbox.event_generate("<<ListboxSelect>>")
+
     def open_terminal(self) -> None:
         if "terminal" in self._built_panels:
             self._show_app("terminal")
-            self.root.after(80, self._focus_terminal_input)
+            self._arm_terminal_focus()
             return
         win = self._window("terminal", "Terminal — hacker@localhost", 780, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
         tk.Label(
             body,
-            text="Click the command line below, or use Quick buttons. Enter runs commands. ↑↓ for history.",
-            fg=COLORS["muted"], bg=COLORS["window"], font=F(10),
+            text="▶ Click the green command box below to type. Enter runs commands. Ctrl+V to paste. ↑↓ history.",
+            fg=COLORS["accent"], bg=COLORS["window"], font=F(10, bold=True),
         ).pack(anchor=tk.W, pady=(0, 4))
 
         toolbar = tk.Frame(body, bg=COLORS["window"])
@@ -597,30 +705,48 @@ class DesktopApp:
         ):
             output.tag_configure(tag, foreground=color)
 
-        input_frame = tk.Frame(body, bg=COLORS["window"])
+        input_frame = tk.Frame(
+            body, bg=COLORS["window"], highlightthickness=2,
+            highlightbackground=COLORS["accent"], highlightcolor=COLORS["accent"],
+        )
         input_frame.pack(fill=tk.X, pady=(6, 0))
+        self._terminal_input_frame = input_frame
         prompt_lbl = tk.Label(input_frame, text="", fg=COLORS["accent"],
                               bg=COLORS["window"], font=MONO(14))
-        prompt_lbl.pack(side=tk.LEFT)
-        entry = tk.Entry(
-            input_frame, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+        prompt_lbl.pack(side=tk.LEFT, padx=(4, 0))
+        cmd_input = tk.Text(
+            input_frame, height=2, bg=COLORS["terminal_bg"], fg=COLORS["text"],
             insertbackground=COLORS["accent"], font=MONO(14),
-            relief=tk.SOLID, bd=2,
-            highlightthickness=2, highlightcolor=COLORS["accent"],
-            highlightbackground=COLORS["border"],
-            takefocus=True,
+            relief=tk.FLAT, wrap=tk.NONE, undo=True,
+            highlightthickness=0, padx=6, pady=6,
         )
-        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
-        self._terminal_entry = entry
+        cmd_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4), pady=4)
+        self._terminal_input = cmd_input
+        self._terminal_entry = None
         self._terminal_prompt_lbl = prompt_lbl
 
-        def focus_input(_event=None) -> None:
-            entry.focus_force()
+        def focus_input(_event=None) -> str:
+            self._activate_terminal_input()
             return "break"
 
-        output.bind("<Button-1>", focus_input)
-        body.bind("<Button-1>", lambda e: entry.focus_force() if e.widget == body else None)
-        input_frame.bind("<Button-1>", focus_input)
+        def paste_clip(_event=None) -> str:
+            try:
+                text = self.root.clipboard_get()
+                if text:
+                    cmd_input.insert(tk.INSERT, text.replace("\n", " ").replace("\r", ""))
+            except tk.TclError:
+                pass
+            return "break"
+
+        for widget in (output, input_frame, prompt_lbl):
+            widget.bind("<Button-1>", focus_input, add="+")
+        body.bind("<Button-1>", lambda e: self._activate_terminal_input() if e.widget == body else None)
+        cmd_input.bind("<Button-1>", lambda _e: self._activate_terminal_input())
+        cmd_input.bind("<Control-v>", paste_clip)
+        cmd_input.bind("<Control-V>", paste_clip)
+        cmd_input.bind("<<Paste>>", paste_clip)
+        cmd_input.bind("<FocusIn>", lambda _e: input_frame.configure(highlightbackground=COLORS["accent"]))
+        cmd_input.bind("<FocusOut>", lambda _e: input_frame.configure(highlightbackground=COLORS["border"]))
 
         def append_line(text: str, tag: str = "normal") -> None:
             output.configure(state=tk.NORMAL)
@@ -650,8 +776,8 @@ class DesktopApp:
                 return "break"
             if self._terminal_history_pos > 0:
                 self._terminal_history_pos -= 1
-            entry.delete(0, tk.END)
-            entry.insert(0, self._terminal_history[self._terminal_history_pos])
+            cmd_input.delete("1.0", tk.END)
+            cmd_input.insert("1.0", self._terminal_history[self._terminal_history_pos])
             return "break"
 
         def history_down(_event=None) -> str:
@@ -659,11 +785,14 @@ class DesktopApp:
                 return "break"
             if self._terminal_history_pos < len(self._terminal_history) - 1:
                 self._terminal_history_pos += 1
-                entry.delete(0, tk.END)
-                entry.insert(0, self._terminal_history[self._terminal_history_pos])
+                cmd_input.delete("1.0", tk.END)
+                cmd_input.insert("1.0", self._terminal_history[self._terminal_history_pos])
             else:
                 self._terminal_history_pos = len(self._terminal_history)
-                entry.delete(0, tk.END)
+                cmd_input.delete("1.0", tk.END)
+            return "break"
+
+        def block_newline(_event=None) -> str:
             return "break"
 
         def execute_command(cmd: str) -> None:
@@ -687,24 +816,27 @@ class DesktopApp:
                 return
             if self._terminal_prompt_lbl:
                 self._terminal_prompt_lbl.configure(text=self.game.prompt())
-            entry.focus_set()
+            self._activate_terminal_input()
 
-        def run_command(_event=None) -> None:
-            cmd = entry.get().strip()
-            entry.delete(0, tk.END)
+        def run_command(_event=None) -> str:
+            cmd = cmd_input.get("1.0", "end-1c").strip()
+            cmd_input.delete("1.0", tk.END)
             execute_command(cmd)
+            return "break"
 
         self._terminal_run_cmd = execute_command
 
-        entry.bind("<Return>", run_command)
-        entry.bind("<Up>", history_up)
-        entry.bind("<Down>", history_down)
-        entry.bind("<Button-1>", lambda _e: entry.focus_force())
+        cmd_input.bind("<Return>", run_command)
+        cmd_input.bind("<KP_Enter>", run_command)
+        cmd_input.bind("<Up>", history_up)
+        cmd_input.bind("<Down>", history_down)
+        cmd_input.bind("<Shift-Return>", block_newline)
         prompt_lbl.configure(text=self.game.prompt())
-        self.root.after(200, self._focus_terminal_input)
+        self._arm_terminal_focus()
         if not self.terminal_booted:
             self.terminal_booted = True
             self.game.banner()
+            self.root.after(100, self._activate_terminal_input)
 
         self._built_panels.add("terminal")
 
@@ -857,13 +989,50 @@ class DesktopApp:
             tk.Label(self._files_preview_frame, text="File not found.", fg=COLORS["error"],
                      bg=COLORS["terminal_bg"]).pack(padx=12, pady=12)
             return
-        content = vf.read()
-        preview = content[:12000] + ("\n\n… (truncated — open in Terminal with cat)" if len(content) > 12000 else "")
+
+        editable = path == NOTES_PATH and files is self.game.player.files and self.game.player.is_local()
         tk.Label(
             self._files_preview_frame,
-            text=f"📄 {path}",
+            text=f"📄 {path}" + (" — editable scratchpad" if editable else ""),
             fg=COLORS["accent"], bg=COLORS["terminal_bg"], font=F(10, bold=True),
         ).pack(anchor=tk.NW, padx=12, pady=(12, 4))
+
+        if editable:
+            tk.Label(
+                self._files_preview_frame,
+                text="Save IPs, targets, passwords — persists across saves.",
+                fg=COLORS["muted"], bg=COLORS["terminal_bg"], font=F(9),
+            ).pack(anchor=tk.NW, padx=12, pady=(0, 4))
+            editor = scrolledtext.ScrolledText(
+                self._files_preview_frame, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+                font=MONO(11), relief=tk.FLAT, wrap=tk.WORD, height=18,
+                insertbackground=COLORS["accent"],
+            )
+            editor.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+            editor.insert("1.0", vf.read())
+            editor.focus_set()
+
+            def save_notes() -> None:
+                vf.content = editor.get("1.0", "end-1c")
+                if vf.content and not vf.content.endswith("\n"):
+                    vf.content += "\n"
+                self.game.autosave(force=True)
+                sounds.play("success")
+
+            btn_row = tk.Frame(self._files_preview_frame, bg=COLORS["terminal_bg"])
+            btn_row.pack(fill=tk.X, padx=12, pady=(0, 12))
+            tk.Button(
+                btn_row, text="Save Notes", command=save_notes,
+                bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4,
+            ).pack(side=tk.LEFT)
+            tk.Button(
+                btn_row, text="Show in Terminal (note)", command=lambda: self._gui_run_command("note"),
+                bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12, pady=4,
+            ).pack(side=tk.LEFT, padx=8)
+            return
+
+        content = vf.read()
+        preview = content[:12000] + ("\n\n… (truncated — open in Terminal with cat)" if len(content) > 12000 else "")
         viewer = scrolledtext.ScrolledText(
             self._files_preview_frame, bg=COLORS["terminal_bg"], fg=COLORS["text"],
             font=MONO(10), relief=tk.FLAT, wrap=tk.WORD,
