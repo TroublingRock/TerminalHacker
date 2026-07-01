@@ -388,8 +388,7 @@ class DesktopApp:
         for key, panel in self.open_windows.items():
             shell = panel._shell  # type: ignore[attr-defined]
             if shell.winfo_ismapped():
-                geom = getattr(panel, "_geom", WINDOW_SIZES.get(key, (720, 520)))
-                self._place_window(key, shell, geom[0], geom[1])
+                self._place_window(key, shell)
 
     def _build_desktop(self) -> None:
         self.content = tk.Frame(self.root, bg=COLORS["desktop"])
@@ -475,8 +474,7 @@ class DesktopApp:
             self._refresh_mail_badge()
 
         def launch(_e=None) -> None:
-            sounds.play("click")
-            command()
+            self._toggle_dock_app(key, command)
 
         for widget in (wrap, indicator, icon):
             widget.bind("<Button-1>", launch)
@@ -507,23 +505,25 @@ class DesktopApp:
             else:
                 dot.pack_forget()
 
-    def _place_window(self, key: str, shell: tk.Frame, width: int, height: int) -> None:
+    def _place_window(self, key: str, shell: tk.Frame, width: int = 0, height: int = 0) -> None:
         canvas = self.desktop_canvas
         if not canvas:
             return
         canvas.update_idletasks()
-        cw = max(canvas.winfo_width(), width + 40)
-        ch = max(canvas.winfo_height(), height + 40)
-        keys = list(self.open_windows.keys())
-        try:
-            idx = keys.index(key)
-        except ValueError:
-            idx = 0
-        offset = idx * 26
-        x = max(16, (cw - width) // 2 + offset)
-        y = max(16, (ch - height) // 2 + offset)
-        shell.place(x=x, y=y, width=width, height=height)
+        shell.place(x=0, y=0, relwidth=1, relheight=1)
         shell.lift()
+
+    def _toggle_dock_app(self, key: str, opener) -> None:
+        """Dock click: minimize if this app is already showing, otherwise open/focus it."""
+        if key in self.open_windows:
+            shell = self.open_windows[key]._shell  # type: ignore[attr-defined]
+            try:
+                if shell.winfo_ismapped():
+                    self._minimize_window(key)
+                    return
+            except tk.TclError:
+                pass
+        opener()
 
     def _tick_clock(self) -> None:
         if self.clock_label and self.clock_label.winfo_exists():
@@ -769,8 +769,7 @@ class DesktopApp:
             shell = panel._shell  # type: ignore[attr-defined]
             if k == key:
                 if not shell.winfo_ismapped():
-                    geom = getattr(panel, "_geom", WINDOW_SIZES.get(k, (720, 520)))
-                    self._place_window(k, shell, geom[0], geom[1])
+                    self._place_window(k, shell)
                 else:
                     shell.lift()
             else:
