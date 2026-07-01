@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import scrolledtext
@@ -52,6 +53,19 @@ COLORS = {
 
 # Text scale — set TERMINALHACKER_UI_SCALE=2.0 in env for even larger UI
 UI_SCALE = float(os.environ.get("TERMINALHACKER_UI_SCALE", "1.55"))
+DOCK_WIDTH = 58
+
+WINDOW_SIZES: dict[str, tuple[int, int]] = {
+    "training": (680, 520),
+    "terminal": (920, 640),
+    "files": (800, 540),
+    "mail": (800, 560),
+    "jobs": (660, 500),
+    "board": (720, 540),
+    "shop": (680, 540),
+    "achieve": (600, 460),
+    "status": (520, 400),
+}
 
 
 def _fs(size: int) -> int:
@@ -78,10 +92,15 @@ class DesktopApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("TerminalHacker — Ubuntu 24.04 LTS")
-        self.root.geometry("1280x860")
         self.root.minsize(1024, 720)
         self.root.tk.call("tk", "scaling", UI_SCALE)
         self.root.configure(bg=COLORS["desktop"])
+        try:
+            self.root.state("zoomed")
+        except tk.TclError:
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+            self.root.geometry(f"{sw}x{sh}+0+0")
 
         self.game = Game()
         self.game.gui_mode = True
@@ -103,11 +122,18 @@ class DesktopApp:
         self._mail_inbox_btn: tk.Button | None = None
         self._mail_trash_btn: tk.Button | None = None
         self.taskbar_label: tk.Label | None = None
-        self.desktop_view: tk.Frame | None = None
-        self.app_shell: tk.Frame | None = None
+        self.clock_label: tk.Label | None = None
+        self.desktop_canvas: tk.Canvas | None = None
+        self.dock_frame: tk.Frame | None = None
+        self._dock_icons: dict[str, tk.Label] = {}
+        self._dock_dots: dict[str, tk.Label] = {}
+        self._dock_indicators: dict[str, tk.Frame] = {}
+        self._active_app: str | None = None
+        self.desktop_view: tk.Canvas | None = None
         self._built_panels: set[str] = set()
         self.hint_label: tk.Label | None = None
         self.onboarding_banner: tk.Frame | None = None
+        self._banner_place_id: int | None = None
         self._terminal_entry: tk.Entry | None = None
         self._terminal_input: tk.Text | None = None
         self._terminal_input_frame: tk.Frame | None = None
@@ -131,6 +157,7 @@ class DesktopApp:
         self._try_resume_save()
         self._build_top_panel()
         self._build_desktop()
+        self._tick_clock()
         self._run_onboarding()
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self._schedule_autosave()
@@ -327,69 +354,198 @@ class DesktopApp:
 
     # ----- layout -----
 
+    def _draw_wallpaper(self) -> None:
+        canvas = self.desktop_canvas
+        if not canvas or not canvas.winfo_exists():
+            return
+        w = max(canvas.winfo_width(), 1)
+        h = max(canvas.winfo_height(), 1)
+        canvas.delete("wallpaper")
+        steps = 48
+        top = (0x77, 0x21, 0x6F)
+        bottom = (0x2C, 0x00, 0x1E)
+        for i in range(steps):
+            t = i / max(steps - 1, 1)
+            r = int(top[0] + (bottom[0] - top[0]) * t)
+            g = int(top[1] + (bottom[1] - top[1]) * t)
+            b = int(top[2] + (bottom[2] - top[2]) * t)
+            color = f"#{r:02x}{g:02x}{b:02x}"
+            y0 = int(h * i / steps)
+            y1 = int(h * (i + 1) / steps) + 1
+            canvas.create_rectangle(0, y0, w, y1, fill=color, outline=color, tags="wallpaper")
+        canvas.tag_lower("wallpaper")
+
+    def _on_desktop_resize(self, _event: object = None) -> None:
+        self._draw_wallpaper()
+        canvas = self.desktop_canvas
+        if canvas and self._banner_place_id and self.onboarding_banner:
+            try:
+                bw = min(int(760 * UI_SCALE), max(canvas.winfo_width() - 80, 420))
+                canvas.itemconfigure(self._banner_place_id, width=bw)
+                canvas.coords(self._banner_place_id, canvas.winfo_width() // 2, 48)
+            except tk.TclError:
+                pass
+        for key, panel in self.open_windows.items():
+            shell = panel._shell  # type: ignore[attr-defined]
+            if shell.winfo_ismapped():
+                geom = getattr(panel, "_geom", WINDOW_SIZES.get(key, (720, 520)))
+                self._place_window(key, shell, geom[0], geom[1])
+
     def _build_desktop(self) -> None:
         self.content = tk.Frame(self.root, bg=COLORS["desktop"])
         self.content.pack(fill=tk.BOTH, expand=True)
 
-        self.desktop_view = tk.Frame(self.content, bg=COLORS["desktop"])
-        self.desktop_view.pack(fill=tk.BOTH, expand=True)
+        self._build_dock()
 
-        welcome = tk.Frame(self.desktop_view, bg=COLORS["desktop"])
-        welcome.pack(fill=tk.X, padx=32, pady=(16, 8))
-        tk.Label(
-            welcome, text="Ubuntu Desktop",
-            fg=COLORS["text"], bg=COLORS["desktop"], font=F(20, bold=True),
-        ).pack(anchor=tk.W)
-        tk.Label(
-            welcome,
-            text="TerminalHacker training environment — 24.04 LTS",
-            fg=COLORS["muted"], bg=COLORS["desktop"], font=F(11),
-        ).pack(anchor=tk.W, pady=(2, 0))
+        self.desktop_canvas = tk.Canvas(
+            self.content, bg=COLORS["desktop"], highlightthickness=0, bd=0,
+        )
+        self.desktop_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.desktop_view = self.desktop_canvas
+        self.desktop_canvas.bind("<Configure>", self._on_desktop_resize)
+        self.root.after_idle(self._draw_wallpaper)
 
-        icons = tk.Frame(self.desktop_view, bg=COLORS["desktop"])
-        icons.pack(fill=tk.BOTH, expand=True, padx=32, pady=8)
+    def _build_dock(self) -> None:
+        dock = tk.Frame(self.content, bg=COLORS["taskbar"], width=DOCK_WIDTH)
+        dock.pack(side=tk.LEFT, fill=tk.Y)
+        dock.pack_propagate(False)
+        self.dock_frame = dock
 
-        self.app_shell = tk.Frame(self.content, bg=COLORS["window"])
+        tk.Frame(dock, bg=COLORS["taskbar"], height=8).pack(fill=tk.X)
 
         apps = [
-            ("training", "?", "Training", "Tutorial lessons", self.open_training),
-            ("terminal", ">_", "Terminal", "Bash shell & commands", self.open_terminal),
-            ("files", "{}", "Files", "Downloads & loot", self.open_files),
-            ("mail", "@", "Mail", "Messages & contracts", self.open_mail),
-            ("jobs", "[]", "Job Board", "Paid missions", self.open_job_board),
-            ("board", "//", "Darknet Board", "Intel & LFG posts", self.open_social_board),
-            ("shop", "$", "Software", "Upgrades & tools", self.open_shop),
-            ("achieve", "*", "Achievements", "Badges & dailies", self.open_achievements),
-            ("status", "#", "Settings", "System status & saves", self.open_status),
+            ("training", "?", "Training", self.open_training),
+            ("terminal", ">_", "Terminal", self.open_terminal),
+            ("files", "{}", "Files", self.open_files),
+            ("mail", "@", "Mail", self.open_mail),
+            ("jobs", "[]", "Jobs", self.open_job_board),
+            ("board", "//", "Board", self.open_social_board),
+            ("shop", "$", "Shop", self.open_shop),
+            ("achieve", "*", "Awards", self.open_achievements),
+            ("status", "#", "Settings", self.open_status),
         ]
+        for key, glyph, _name, command in apps:
+            self._dock_icon(dock, key, glyph, command)
 
-        for i, app in enumerate(apps):
-            row, col = divmod(i, 4)
-            self._desktop_icon(icons, *app, row=row, col=col)
+        tk.Frame(dock, bg=COLORS["taskbar"]).pack(fill=tk.BOTH, expand=True)
 
-        hint = tk.Label(
-            self.desktop_view,
-            text="Activities — click an app to launch. Use ← Desktop to return.",
-            fg=COLORS["muted"], bg=COLORS["desktop"], font=F(11),
+        show_btn = tk.Label(
+            dock, text="▦", fg=COLORS["muted"], bg=COLORS["taskbar"],
+            font=F(14), cursor="hand2", pady=10,
         )
-        hint.pack(pady=(0, 12))
-        self.hint_label = hint
+        show_btn.pack(side=tk.BOTTOM, pady=(0, 10))
+        show_btn.bind("<Button-1>", lambda _e: self._show_desktop())
+
+    def _dock_icon(
+        self, parent: tk.Frame, key: str, glyph: str, command,
+    ) -> None:
+        wrap = tk.Frame(parent, bg=COLORS["taskbar"], cursor="hand2")
+        wrap.pack(fill=tk.X, pady=3)
+
+        indicator = tk.Frame(wrap, bg=COLORS["taskbar"], width=3)
+        indicator.pack(side=tk.LEFT, fill=tk.Y)
+
+        if key == "terminal":
+            box_bg, box_fg = COLORS["terminal_bg"], COLORS["prompt_user"]
+        elif key == "training" and self.game.player.phase == "tutorial":
+            box_bg, box_fg = COLORS["accent"], "white"
+        else:
+            box_bg, box_fg = COLORS["aubergine"], COLORS["text"]
+
+        icon = tk.Label(
+            wrap, text=glyph, fg=box_fg, bg=box_bg,
+            font=MONO(18, bold=True), width=3, height=1,
+            relief=tk.FLAT, bd=0, cursor="hand2",
+        )
+        icon.pack(side=tk.LEFT, padx=(4, 6), pady=2)
+
+        dot = tk.Label(
+            wrap, text="●", fg=COLORS["accent"], bg=COLORS["taskbar"],
+            font=F(7),
+        )
+        self._dock_icons[key] = icon
+        self._dock_dots[key] = dot
+        self._dock_indicators[key] = indicator
+
+        if key == "mail":
+            self.mail_badge = tk.Label(
+                icon, text="", fg="white", bg=COLORS["error"],
+                font=F(7, bold=True),
+            )
+            self._refresh_mail_badge()
+
+        def launch(_e=None) -> None:
+            sounds.play("click")
+            command()
+
+        for widget in (wrap, indicator, icon):
+            widget.bind("<Button-1>", launch)
+            widget.configure(cursor="hand2")
+
+        def on_enter(_e: object, b: tk.Label = icon, bg: str = box_bg) -> None:
+            b.configure(bg=COLORS["accent_dim"])
+
+        def on_leave(_e: object, b: tk.Label = icon, bg: str = box_bg) -> None:
+            b.configure(bg=bg)
+
+        icon.bind("<Enter>", on_enter)
+        icon.bind("<Leave>", on_leave)
+
+    def _update_dock_highlight(self) -> None:
+        for key, indicator in self._dock_indicators.items():
+            if not indicator.winfo_exists():
+                continue
+            if key == self._active_app:
+                indicator.configure(bg=COLORS["accent"])
+            else:
+                indicator.configure(bg=COLORS["taskbar"])
+        for key, dot in self._dock_dots.items():
+            if not dot.winfo_exists():
+                continue
+            if key in self.open_windows:
+                dot.pack(side=tk.RIGHT, padx=(0, 4))
+            else:
+                dot.pack_forget()
+
+    def _place_window(self, key: str, shell: tk.Frame, width: int, height: int) -> None:
+        canvas = self.desktop_canvas
+        if not canvas:
+            return
+        canvas.update_idletasks()
+        cw = max(canvas.winfo_width(), width + 40)
+        ch = max(canvas.winfo_height(), height + 40)
+        keys = list(self.open_windows.keys())
+        try:
+            idx = keys.index(key)
+        except ValueError:
+            idx = 0
+        offset = idx * 26
+        x = max(16, (cw - width) // 2 + offset)
+        y = max(16, (ch - height) // 2 + offset)
+        shell.place(x=x, y=y, width=width, height=height)
+        shell.lift()
+
+    def _tick_clock(self) -> None:
+        if self.clock_label and self.clock_label.winfo_exists():
+            now = datetime.now()
+            self.clock_label.configure(text=now.strftime(f"%a %b {now.day}  %H:%M"))
+        self.root.after(30_000, self._tick_clock)
+
+    def _titlebar_button(
+        self, parent: tk.Frame, text: str, bg: str, command,
+    ) -> tk.Label:
+        btn = tk.Label(
+            parent, text=text, fg=COLORS["text"], bg=bg,
+            font=F(10, bold=True), width=3, cursor="hand2",
+        )
+        btn.pack(side=tk.RIGHT, padx=1, pady=4)
+        btn.bind("<Button-1>", lambda _e: command())
+        return btn
 
     def _run_onboarding(self) -> None:
         """Guide new tutorial players — auto-open Training on first launch."""
-        if self._save_restore_notice and self.hint_label:
-            self.hint_label.configure(text=self._save_restore_notice, fg=COLORS["success"])
-
         p = self.game.player
         if p.phase != "tutorial":
-            if self.hint_label:
-                if self._save_restore_notice:
-                    self.hint_label.configure(text=self._save_restore_notice, fg=COLORS["success"])
-                else:
-                    self.hint_label.configure(
-                        text="Career: Terminal to hack · Files for loot · Shop for upgrades · Job Board for contracts.",
-                        fg=COLORS["muted"],
-                    )
             if p.phase == "career":
                 self.root.after(500, self.open_files)
             return
@@ -397,25 +553,27 @@ class DesktopApp:
         lesson = self.game.tutorial.current()
         if self.onboarding_banner:
             self.onboarding_banner.destroy()
+            self.onboarding_banner = None
 
-        banner = tk.Frame(self.desktop_view, bg=COLORS["window"], padx=16, pady=12)
-        banner.pack(fill=tk.X, padx=24, pady=(0, 4), before=self.hint_label)
+        canvas = self.desktop_canvas
+        if not canvas:
+            return
+
+        banner = tk.Frame(canvas, bg=COLORS["window"], padx=16, pady=12,
+                          highlightthickness=1, highlightbackground=COLORS["border"])
         self.onboarding_banner = banner
 
         if p.tutorial_step == 0:
             headline = "TRAINING MODE — START HERE"
             steps = (
-                "1. Open Training for the full curriculum\n"
+                "1. Open Training from the dock for the full curriculum\n"
                 "2. Open Terminal and type: lesson\n"
                 "3. Read Mail from your training officer"
             )
             auto_open = True
         else:
             headline = f"RESUME TRAINING — Lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)}"
-            steps = (
-                "Pick up where you left off.\n"
-                "Open Terminal and type: lesson"
-            )
+            steps = "Pick up where you left off.\nOpen Terminal and type: lesson"
             auto_open = False
 
         tk.Label(
@@ -423,15 +581,26 @@ class DesktopApp:
             fg=COLORS["accent"], bg=COLORS["window"],
             font=F(14, bold=True),
         ).pack(anchor=tk.W)
+        save_note = ""
+        if self._save_restore_notice:
+            save_note = f"\n\n{self._save_restore_notice}"
+        elif self._save_loaded:
+            save_note = (
+                f"\n\nTutorial lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)} "
+                "— progress auto-saves after each command."
+            )
+        else:
+            save_note = "\n\nNew game — progress saves after each command. Type save anytime in Terminal."
+
         tk.Label(
             banner,
             text=(
                 f"{lesson.title}\n"
                 f"{lesson.objective}\n\n"
-                f"{steps}"
+                f"{steps}{save_note}"
             ),
             fg=COLORS["text"], bg=COLORS["window"],
-            font=F(12), justify=tk.LEFT, wraplength=int(900 * UI_SCALE),
+            font=F(12), justify=tk.LEFT, wraplength=int(720 * UI_SCALE),
         ).pack(anchor=tk.W, pady=(6, 8))
 
         btn_row = tk.Frame(banner, bg=COLORS["window"])
@@ -449,94 +618,50 @@ class DesktopApp:
             bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=14, pady=4,
         ).pack(side=tk.LEFT)
 
-        if self.hint_label:
-            if self._save_loaded:
-                self.hint_label.configure(
-                    text=f"Tutorial lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)} — progress auto-saves after each command."
-                )
-            else:
-                self.hint_label.configure(
-                    text="New game — progress saves after each command. Type save anytime in Terminal."
-                )
+        canvas.update_idletasks()
+        bw = min(int(760 * UI_SCALE), max(canvas.winfo_width() - 80, 420))
+        self._banner_place_id = canvas.create_window(
+            canvas.winfo_width() // 2, 48, window=banner, anchor=tk.N, width=bw,
+        )
         if auto_open:
             self.root.after(400, self.open_training)
         else:
             self.root.after(400, self.open_terminal)
 
-    def _desktop_icon(
-        self, parent: tk.Frame, key: str, glyph: str, name: str, desc: str,
-        command, row: int, col: int,
-    ) -> None:
-        frame = tk.Frame(parent, bg=COLORS["desktop"], cursor="hand2")
-        frame.grid(row=row, column=col, padx=24, pady=16, sticky="n")
-
-        icon_wrap = tk.Frame(frame, bg=COLORS["desktop"])
-        icon_wrap.pack()
-
-        if key == "terminal":
-            box_bg, box_fg = COLORS["terminal_bg"], COLORS["prompt_user"]
-        elif key == "training" and self.game.player.phase == "tutorial":
-            box_bg, box_fg = COLORS["accent"], "white"
-        else:
-            box_bg, box_fg = COLORS["aubergine"], COLORS["text"]
-        box = tk.Label(
-            icon_wrap, text=glyph, fg=box_fg, bg=box_bg,
-            font=MONO(26, bold=True), width=4, height=2,
-            relief=tk.FLAT, bd=0,
-        )
-        box.pack()
-
-        if key == "mail":
-            self.mail_badge = tk.Label(
-                icon_wrap, text="", fg="white", bg=COLORS["error"],
-                font=F(8, bold=True),
-            )
-            self._refresh_mail_badge()
-
-        tk.Label(frame, text=name, fg=COLORS["text"], bg=COLORS["desktop"],
-                 font=F(11, bold=True)).pack(pady=(6, 0))
-        tk.Label(frame, text=desc, fg=COLORS["muted"], bg=COLORS["desktop"],
-                 font=F(9), wraplength=150, justify=tk.CENTER).pack()
-
-        def launch(_e=None) -> None:
-            sounds.play("click")
-            command()
-
-        widgets: list[tk.Widget] = []
-
-        def collect(w: tk.Widget) -> None:
-            widgets.append(w)
-            for child in w.winfo_children():
-                collect(child)
-
-        collect(frame)
-        for widget in widgets:
-            widget.bind("<Button-1>", launch)
-            widget.configure(cursor="hand2")
-        def on_enter(_e: object, b: tk.Label = box, bg: str = box_bg) -> None:
-            b.configure(bg=COLORS["accent_dim"])
-
-        def on_leave(_e: object, b: tk.Label = box, bg: str = box_bg) -> None:
-            b.configure(bg=bg)
-
-        box.bind("<Enter>", on_enter)
-        box.bind("<Leave>", on_leave)
-
     def _build_top_panel(self) -> None:
-        bar = tk.Frame(self.root, bg=COLORS["taskbar"], height=34)
+        bar = tk.Frame(self.root, bg=COLORS["taskbar"], height=30)
         bar.pack(fill=tk.X, side=tk.TOP)
+
+        left = tk.Frame(bar, bg=COLORS["taskbar"])
+        left.pack(side=tk.LEFT, padx=(6, 0))
+        activities = tk.Label(
+            left, text="  Activities", fg=COLORS["text"], bg=COLORS["taskbar"],
+            font=F(11, bold=True), cursor="hand2", padx=6, pady=6,
+        )
+        activities.pack(side=tk.LEFT)
+        activities.bind("<Button-1>", lambda _e: self._show_desktop())
         tk.Label(
-            bar, text="  ◉", fg=COLORS["accent"], bg=COLORS["taskbar"], font=F(11, bold=True),
-        ).pack(side=tk.LEFT)
-        tk.Label(
-            bar, text="TerminalHacker", fg=COLORS["text"], bg=COLORS["taskbar"],
-            font=F(11, bold=True),
-        ).pack(side=tk.LEFT, padx=(0, 12))
+            left, text="TerminalHacker", fg=COLORS["muted"], bg=COLORS["taskbar"],
+            font=F(10),
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
         self.taskbar_label = tk.Label(
             bar, text="", fg=COLORS["muted"], bg=COLORS["taskbar"],
             font=F(10), anchor=tk.W,
         )
-        self.taskbar_label.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=4)
+        self.taskbar_label.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=8)
+
+        right = tk.Frame(bar, bg=COLORS["taskbar"])
+        right.pack(side=tk.RIGHT, padx=8)
+        self.clock_label = tk.Label(
+            right, text="", fg=COLORS["text"], bg=COLORS["taskbar"],
+            font=F(10), padx=8,
+        )
+        self.clock_label.pack(side=tk.RIGHT)
+        tk.Label(
+            right, text="  ⏻  🔊  ", fg=COLORS["muted"], bg=COLORS["taskbar"],
+            font=F(10),
+        ).pack(side=tk.RIGHT)
 
     def refresh_taskbar(self) -> None:
         if self.taskbar_label is None:
@@ -569,10 +694,23 @@ class DesktopApp:
         )
 
     def _show_desktop(self) -> None:
-        if self.app_shell:
-            self.app_shell.pack_forget()
-        if self.desktop_view:
-            self.desktop_view.pack(fill=tk.BOTH, expand=True)
+        for key in list(self.open_windows.keys()):
+            shell = self.open_windows[key]._shell  # type: ignore[attr-defined]
+            shell.place_forget()
+        self._active_app = None
+        self._update_dock_highlight()
+        sounds.play("click")
+
+    def _minimize_window(self, key: str) -> None:
+        if key not in self.open_windows:
+            return
+        self.open_windows[key]._shell.place_forget()  # type: ignore[attr-defined]
+        self._active_app = None
+        if key == "terminal":
+            self._uninstall_terminal_key_catcher()
+            self._cancel_terminal_focus()
+        self._update_dock_highlight()
+        sounds.play("close")
 
     def _window(self, key: str, title: str, width: int, height: int) -> object:
         if key in self.open_windows:
@@ -588,51 +726,57 @@ class DesktopApp:
                 else:
                     self._close_window(other)
 
-        if self.desktop_view:
-            self.desktop_view.pack_forget()
-        assert self.app_shell is not None
+        canvas = self.desktop_canvas
+        assert canvas is not None
 
-        shell = tk.Frame(self.app_shell, bg=COLORS["window"])
-        shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+        shell = tk.Frame(
+            canvas, bg=COLORS["border"],
+            highlightthickness=1, highlightbackground=COLORS["border"],
+        )
+        inner = tk.Frame(shell, bg=COLORS["window"])
+        inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
-        titlebar = tk.Frame(shell, bg=COLORS["window_header"], height=36)
+        titlebar = tk.Frame(inner, bg=COLORS["window_header"], height=32)
         titlebar.pack(fill=tk.X)
         title_lbl = tk.Label(
             titlebar, text=f"  {title}", fg=COLORS["text"], bg=COLORS["window_header"],
             font=F(10),
         )
-        title_lbl.pack(side=tk.LEFT, pady=6)
-        tk.Button(
-            titlebar, text="← Desktop", command=lambda: self._close_window(key),
-            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
-        ).pack(side=tk.RIGHT, padx=8, pady=4)
-        tk.Frame(titlebar, bg=COLORS["accent"], width=3).pack(side=tk.RIGHT, fill=tk.Y)
+        title_lbl.pack(side=tk.LEFT, pady=5)
+        controls = tk.Frame(titlebar, bg=COLORS["window_header"])
+        controls.pack(side=tk.RIGHT, padx=4)
+        self._titlebar_button(controls, "×", "#E95420", lambda k=key: self._close_window(k))
+        self._titlebar_button(controls, "−", COLORS["border"], lambda k=key: self._minimize_window(k))
 
-        body = tk.Frame(shell, bg=COLORS["window"])
-        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        body = tk.Frame(inner, bg=COLORS["window"])
+        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
         panel = type("Panel", (), {})()
         panel._body = body
         panel._shell = shell
         panel._key = key
         panel._title_lbl = title_lbl  # type: ignore[attr-defined]
+        panel._geom = (width, height)  # type: ignore[attr-defined]
         self.open_windows[key] = panel
 
-        self.app_shell.pack(fill=tk.BOTH, expand=True)
+        self._place_window(key, shell, width, height)
+        self._show_app(key)
         sounds.play("open")
         return panel
 
     def _show_app(self, key: str) -> None:
-        if self.desktop_view:
-            self.desktop_view.pack_forget()
-        if self.app_shell:
-            self.app_shell.pack(fill=tk.BOTH, expand=True)
         for k, panel in self.open_windows.items():
-            shell = panel._shell
+            shell = panel._shell  # type: ignore[attr-defined]
             if k == key:
-                shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+                if not shell.winfo_ismapped():
+                    geom = getattr(panel, "_geom", WINDOW_SIZES.get(k, (720, 520)))
+                    self._place_window(k, shell, geom[0], geom[1])
+                else:
+                    shell.lift()
             else:
-                shell.pack_forget()
+                shell.place_forget()
+        self._active_app = key
+        self._update_dock_highlight()
         if key == "terminal" and (self._terminal_entry or self._terminal_input):
             self._arm_terminal_focus()
             self._ensure_terminal_key_catcher()
@@ -781,13 +925,16 @@ class DesktopApp:
         if key not in self.open_windows:
             return
         sounds.play("close")
-        self.open_windows[key]._shell.pack_forget()  # type: ignore[attr-defined]
+        self.open_windows[key]._shell.place_forget()  # type: ignore[attr-defined]
         if key == "terminal":
             self.game.close_terminal = False
             self._uninstall_terminal_key_catcher()
             self._cancel_terminal_focus()
+        if self._active_app == key:
+            self._active_app = None
+        self._update_dock_highlight()
         if show_desktop and not self._any_app_visible():
-            self._show_desktop()
+            pass  # desktop wallpaper stays visible
 
     def _close_window(self, key: str) -> None:
         if key == "terminal":
@@ -810,8 +957,9 @@ class DesktopApp:
         if key == "files":
             self._files_list_frame = None
             self._files_preview_frame = None
-        if not self.open_windows or not self._any_app_visible():
-            self._show_desktop()
+        if self._active_app == key:
+            self._active_app = None
+        self._update_dock_highlight()
 
     # ----- terminal command bridge -----
 
