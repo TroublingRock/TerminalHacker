@@ -465,6 +465,7 @@ class MailBox:
 
     def __init__(self) -> None:
         self.messages: list[MailMessage] = []
+        self.trash: list[MailMessage] = []
         self.on_new_mail: Callable[[MailMessage], None] | None = None
         self._counter = 0
 
@@ -485,7 +486,7 @@ class MailBox:
         return sum(1 for m in self.messages if not m.read)
 
     def mark_read(self, mail_id: str) -> None:
-        for m in self.messages:
+        for m in self.messages + self.trash:
             if m.mail_id == mail_id:
                 m.read = True
                 return
@@ -494,17 +495,37 @@ class MailBox:
         for m in self.messages:
             m.read = True
 
-    def delete(self, mail_id: str) -> bool:
+    def trash_message(self, mail_id: str) -> bool:
         for i, m in enumerate(self.messages):
             if m.mail_id == mail_id:
-                self.messages.pop(i)
+                self.trash.insert(0, self.messages.pop(i))
                 return True
         return False
 
-    def delete_all_read(self) -> int:
-        before = len(self.messages)
+    def trash_all_read(self) -> int:
+        read_msgs = [m for m in self.messages if m.read]
         self.messages = [m for m in self.messages if not m.read]
-        return before - len(self.messages)
+        self.trash = read_msgs + self.trash
+        return len(read_msgs)
+
+    def permanent_delete(self, mail_id: str) -> bool:
+        for i, m in enumerate(self.trash):
+            if m.mail_id == mail_id:
+                self.trash.pop(i)
+                return True
+        return False
+
+    def empty_trash(self) -> int:
+        count = len(self.trash)
+        self.trash.clear()
+        return count
+
+    # Back-compat aliases
+    def delete(self, mail_id: str) -> bool:
+        return self.trash_message(mail_id)
+
+    def delete_all_read(self) -> int:
+        return self.trash_all_read()
 
     def clear_inbox(self) -> int:
         count = len(self.messages)

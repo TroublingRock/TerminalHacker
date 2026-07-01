@@ -87,6 +87,11 @@ class DesktopApp:
         self._mail_listbox: tk.Listbox | None = None
         self._mail_viewer: scrolledtext.ScrolledText | None = None
         self._mail_meta: tk.Label | None = None
+        self._mail_folder: str = "inbox"
+        self._mail_header: tk.Label | None = None
+        self._mail_btn_row: tk.Frame | None = None
+        self._mail_inbox_btn: tk.Button | None = None
+        self._mail_trash_btn: tk.Button | None = None
         self.taskbar_label: tk.Label | None = None
         self.desktop_view: tk.Frame | None = None
         self.app_shell: tk.Frame | None = None
@@ -506,6 +511,11 @@ class DesktopApp:
             self._mail_listbox = None
             self._mail_viewer = None
             self._mail_meta = None
+            self._mail_header = None
+            self._mail_btn_row = None
+            self._mail_inbox_btn = None
+            self._mail_trash_btn = None
+            self._mail_folder = "inbox"
         if key == "files":
             self._files_list_frame = None
             self._files_preview_frame = None
@@ -525,12 +535,14 @@ class DesktopApp:
     def open_mail(self) -> None:
         if "mail" in self._built_panels:
             self._show_app("mail")
+            self._refresh_mail_ui()
             return
-        win = self._window("mail", "Mail — Secure Inbox", 720, 500)
+        win = self._window("mail", "Mail — Secure Inbox", 720, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
-        tk.Label(body, text="INBOX", fg=COLORS["accent"], bg=COLORS["window"],
-                 font=F(14, bold=True)).pack(anchor=tk.W)
+        self._mail_header = tk.Label(body, text="INBOX", fg=COLORS["accent"], bg=COLORS["window"],
+                                     font=F(14, bold=True))
+        self._mail_header.pack(anchor=tk.W)
 
         panes = tk.Frame(body, bg=COLORS["window"])
         panes.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
@@ -538,6 +550,19 @@ class DesktopApp:
         left = tk.Frame(panes, bg=COLORS["window"], width=240)
         left.pack(side=tk.LEFT, fill=tk.Y)
         left.pack_propagate(False)
+
+        folder_row = tk.Frame(left, bg=COLORS["window"])
+        folder_row.pack(fill=tk.X, pady=(0, 6))
+        self._mail_inbox_btn = tk.Button(
+            folder_row, text="Inbox", command=lambda: self._switch_mail_folder("inbox"),
+            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=8, pady=2,
+        )
+        self._mail_inbox_btn.pack(side=tk.LEFT)
+        self._mail_trash_btn = tk.Button(
+            folder_row, text="Trash", command=lambda: self._switch_mail_folder("trash"),
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=8, pady=2,
+        )
+        self._mail_trash_btn.pack(side=tk.LEFT, padx=6)
 
         listbox = tk.Listbox(
             left, bg=COLORS["terminal_bg"], fg=COLORS["text"],
@@ -567,7 +592,10 @@ class DesktopApp:
             sel = listbox.curselection()
             if not sel:
                 return
-            msg = self.game.mail.messages[sel[0]]
+            msgs = self._mail_current_messages()
+            if sel[0] >= len(msgs):
+                return
+            msg = msgs[sel[0]]
             self.game.mail.mark_read(msg.mail_id)
             meta.configure(
                 text=f"From: {msg.sender}  |  {msg.timestamp}  |  {msg.subject}",
@@ -582,28 +610,95 @@ class DesktopApp:
 
         listbox.bind("<<ListboxSelect>>", show_message)
 
-        btn_row = tk.Frame(body, bg=COLORS["window"])
-        btn_row.pack(fill=tk.X, pady=(8, 0))
-        tk.Button(btn_row, text="Delete", command=self._delete_selected_mail,
-                  bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
-        tk.Button(btn_row, text="Delete All Read", command=self._delete_read_mail,
-                  bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
-        tk.Button(btn_row, text="Mark All Read", command=self._mark_all_mail_read,
-                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
-        tk.Button(btn_row, text="Open Job Board", command=self.open_job_board,
-                  bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
+        self._mail_btn_row.pack(fill=tk.X, pady=(8, 0))
+        self._rebuild_mail_buttons()
 
-        self._populate_mail_list(listbox)
-        if self.game.mail.messages:
-            listbox.selection_set(0)
-            show_message()
+        self._refresh_mail_ui()
         self._built_panels.add("mail")
+
+    def _mail_current_messages(self) -> list[MailMessage]:
+        if self._mail_folder == "trash":
+            return self.game.mail.trash
+        return self.game.mail.messages
+
+    def _switch_mail_folder(self, folder: str) -> None:
+        self._mail_folder = folder
+        self._refresh_mail_ui()
+
+    def _refresh_mail_ui(self) -> None:
+        if not self._mail_listbox:
+            return
+        trash_n = len(self.game.mail.trash)
+        if self._mail_trash_btn and self._mail_trash_btn.winfo_exists():
+            self._mail_trash_btn.configure(text=f"Trash ({trash_n})" if trash_n else "Trash")
+        if self._mail_inbox_btn and self._mail_inbox_btn.winfo_exists():
+            if self._mail_folder == "inbox":
+                self._mail_inbox_btn.configure(bg=COLORS["accent_dim"], fg="white")
+                if self._mail_trash_btn:
+                    self._mail_trash_btn.configure(bg=COLORS["border"], fg=COLORS["text"])
+            else:
+                self._mail_inbox_btn.configure(bg=COLORS["border"], fg=COLORS["text"])
+                if self._mail_trash_btn:
+                    self._mail_trash_btn.configure(bg=COLORS["warn"], fg="white")
+        if self._mail_header:
+            self._mail_header.configure(
+                text="TRASH" if self._mail_folder == "trash" else "INBOX",
+                fg=COLORS["warn"] if self._mail_folder == "trash" else COLORS["accent"],
+            )
+        self._rebuild_mail_buttons()
+        self._populate_mail_list(self._mail_listbox)
+        if self._mail_meta:
+            folder_hint = "Trash — select to read. Delete Forever removes permanently."
+            inbox_hint = "Select a message"
+            self._mail_meta.configure(
+                text=folder_hint if self._mail_folder == "trash" else inbox_hint,
+                fg=COLORS["muted"],
+            )
+        if self._mail_viewer:
+            self._mail_viewer.configure(state=tk.NORMAL)
+            self._mail_viewer.delete("1.0", tk.END)
+            self._mail_viewer.configure(state=tk.DISABLED)
+        msgs = self._mail_current_messages()
+        if msgs:
+            self._mail_listbox.selection_set(0)
+            self._mail_listbox.event_generate("<<ListboxSelect>>")
+
+    def _rebuild_mail_buttons(self) -> None:
+        if not self._mail_btn_row:
+            return
+        for w in self._mail_btn_row.winfo_children():
+            w.destroy()
+        row = self._mail_btn_row
+        if self._mail_folder == "trash":
+            tk.Button(row, text="Delete Forever", command=self._permanent_delete_mail,
+                      bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+            tk.Button(row, text="Empty Trash", command=self._empty_mail_trash,
+                      bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+        else:
+            tk.Button(row, text="Move to Trash", command=self._delete_selected_mail,
+                      bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+            tk.Button(row, text="Trash All Read", command=self._delete_read_mail,
+                      bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+            tk.Button(row, text="Mark All Read", command=self._mark_all_mail_read,
+                      bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+        tk.Button(row, text="Open Job Board", command=self.open_job_board,
+                  bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
 
     def _populate_mail_list(self, listbox: tk.Listbox) -> None:
         listbox.delete(0, tk.END)
-        for msg in self.game.mail.messages:
-            prefix = "● " if not msg.read else "   "
-            listbox.insert(tk.END, f"{prefix}{msg.subject[:42]}")
+        for msg in self._mail_current_messages():
+            prefix = "● " if not msg.read and self._mail_folder == "inbox" else "   "
+            tag = "🗑 " if self._mail_folder == "trash" else prefix
+            listbox.insert(tk.END, f"{tag}{msg.subject[:40]}")
+
+    def _clear_mail_viewer(self, status: str) -> None:
+        if self._mail_meta:
+            self._mail_meta.configure(text=status, fg=COLORS["muted"])
+        if self._mail_viewer:
+            self._mail_viewer.configure(state=tk.NORMAL)
+            self._mail_viewer.delete("1.0", tk.END)
+            self._mail_viewer.configure(state=tk.DISABLED)
 
     def _mark_all_mail_read(self) -> None:
         self.game.mail.mark_all_read()
@@ -613,49 +708,62 @@ class DesktopApp:
             self._populate_mail_list(self._mail_listbox)
 
     def _delete_selected_mail(self) -> None:
-        if not self._mail_listbox:
+        if not self._mail_listbox or self._mail_folder != "inbox":
             return
         sel = self._mail_listbox.curselection()
         if not sel:
             return
-        idx = sel[0]
-        if idx >= len(self.game.mail.messages):
+        msgs = self.game.mail.messages
+        if sel[0] >= len(msgs):
             return
-        msg = self.game.mail.messages[idx]
-        self.game.mail.delete(msg.mail_id)
+        msg = msgs[sel[0]]
+        self.game.mail.trash_message(msg.mail_id)
         self.game.autosave(force=True)
-        self._populate_mail_list(self._mail_listbox)
-        if self._mail_meta:
-            self._mail_meta.configure(text="Message deleted.", fg=COLORS["muted"])
-        if self._mail_viewer:
-            self._mail_viewer.configure(state=tk.NORMAL)
-            self._mail_viewer.delete("1.0", tk.END)
-            self._mail_viewer.configure(state=tk.DISABLED)
+        self._refresh_mail_ui()
+        self._clear_mail_viewer("Moved to Trash.")
         self._refresh_mail_badge()
         self.refresh_taskbar()
-        if self.game.mail.messages:
-            self._mail_listbox.selection_set(0)
-            self._mail_listbox.event_generate("<<ListboxSelect>>")
 
     def _delete_read_mail(self) -> None:
-        removed = self.game.mail.delete_all_read()
+        if self._mail_folder != "inbox":
+            return
+        removed = self.game.mail.trash_all_read()
         if removed:
             self.game.autosave(force=True)
-        self._populate_mail_list(self._mail_listbox) if self._mail_listbox else None
-        if self._mail_meta:
-            self._mail_meta.configure(
-                text=f"Deleted {removed} read message(s)." if removed else "No read messages to delete.",
-                fg=COLORS["muted"],
-            )
-        if self._mail_viewer:
-            self._mail_viewer.configure(state=tk.NORMAL)
-            self._mail_viewer.delete("1.0", tk.END)
-            self._mail_viewer.configure(state=tk.DISABLED)
+        self._refresh_mail_ui()
+        self._clear_mail_viewer(
+            f"Moved {removed} read message(s) to Trash." if removed else "No read messages to trash."
+        )
         self._refresh_mail_badge()
         self.refresh_taskbar()
-        if self._mail_listbox and self.game.mail.messages:
-            self._mail_listbox.selection_set(0)
-            self._mail_listbox.event_generate("<<ListboxSelect>>")
+
+    def _permanent_delete_mail(self) -> None:
+        if not self._mail_listbox or self._mail_folder != "trash":
+            return
+        sel = self._mail_listbox.curselection()
+        if not sel:
+            return
+        msgs = self.game.mail.trash
+        if sel[0] >= len(msgs):
+            return
+        msg = msgs[sel[0]]
+        self.game.mail.permanent_delete(msg.mail_id)
+        self.game.autosave(force=True)
+        self._refresh_mail_ui()
+        self._clear_mail_viewer("Permanently deleted.")
+        self.refresh_taskbar()
+
+    def _empty_mail_trash(self) -> None:
+        if self._mail_folder != "trash":
+            return
+        removed = self.game.mail.empty_trash()
+        if removed:
+            self.game.autosave(force=True)
+        self._refresh_mail_ui()
+        self._clear_mail_viewer(
+            f"Emptied trash ({removed} message(s) gone forever)." if removed else "Trash is already empty."
+        )
+        self.refresh_taskbar()
 
     def open_terminal(self) -> None:
         if "terminal" in self._built_panels:

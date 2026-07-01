@@ -367,6 +367,9 @@ class SaveManager:
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
                       "body": m.body, "read": m.read, "timestamp": m.timestamp}
                      for m in game.mail.messages],
+            "mail_trash": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
+                            "body": m.body, "read": m.read, "timestamp": m.timestamp}
+                           for m in game.mail.trash],
             "servers": {ip: {"cracked": s.cracked, "ids": s.ids_alert_level}
                         for ip, s in game.network.servers.items()},
             "achievements": list(game.achievements.unlocked),
@@ -607,6 +610,7 @@ class SaveManager:
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
+        game.mail.trash = [MailMessage(**md) for md in data.get("mail_trash", [])]
         game.mail._counter = data.get("mail_counter", 0)
         for ip, sd in data.get("servers", {}).items():
             if ip in game.network.servers:
