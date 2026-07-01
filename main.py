@@ -227,85 +227,78 @@ class TutorialLesson:
 
 TUTORIAL_CURRICULUM: list[TutorialLesson] = [
     TutorialLesson(
-        0, "Network Identity",
-        "Every machine has a private LAN address (RFC 1918) and, behind NAT, a public IP "
-        "that victims see in logs. Defenders monitor both.",
-        "Run: ifconfig",
-        "ifconfig shows eth0, your LAN IP, gateway, and NAT/public address.",
+        0, "Network Boot",
+        "Before you touch anything remote, confirm your interfaces and routing table. "
+        "Defenders log both your LAN address and your public NAT egress.",
+        "Run: ifconfig  then  route",
+        "ifconfig shows your IP and NAT address; route shows how packets leave the lab.",
     ),
     TutorialLesson(
-        1, "Routing Tables",
-        "Routers forward packets using routing tables. Without a route to a subnet, "
-        "traffic never leaves your gateway.",
-        "Run: route",
-        "route prints destinations, gateways, and interfaces.",
-    ),
-    TutorialLesson(
-        2, "Host Discovery",
+        1, "Host Discovery",
         "Pen testers enumerate live hosts with port scanners (nmap). Open ports reveal "
         "attack surface (SSH/HTTP/etc.).",
-        "Run: scan   (or nmap)",
-        "Scan your lab subnet 192.168.1.0/24 to find training-node.",
+        "Run: scan   (or nmap 192.168.1.0/24)",
+        "Scan the lab subnet to find training-node — your first target.",
     ),
     TutorialLesson(
-        3, "TCP Sessions",
+        2, "TCP Sessions",
         "TCP uses a 3-way handshake (SYN, SYN-ACK, ACK) before SSH can authenticate.",
         "Run: connect 192.168.1.50 22",
-        "Connect to the training host discovered in the previous step.",
+        "Connect to the training host you discovered.",
     ),
     TutorialLesson(
-        4, "Service Fingerprinting",
+        3, "Service Fingerprinting",
         "Probing banners and versions helps choose exploits. IDS systems log probes.",
         "Run: probe",
         "Probe the host you are connected to.",
     ),
     TutorialLesson(
-        5, "Credential Attacks",
+        4, "Credential Attacks",
         "Brute-force tries passwords until SSH accepts. Failed attempts land in auth.log.",
         "Run: crack",
-        "Crack SSH on the training host. CPU level affects speed.",
+        "Crack SSH on the training host — your first real shell.",
     ),
     TutorialLesson(
-        6, "Log Forensics",
+        5, "Log Forensics",
         "Blue teams investigate auth.log/syslog. Your public IP is evidence.",
         "Run: cat /var/log/auth.log",
         "Read the remote auth log and find your IP address recorded.",
     ),
     TutorialLesson(
-        7, "Covering Tracks",
+        6, "Covering Tracks",
         "Deleting log files is illegal in the real world — here it teaches why wiping "
         "matters before disconnecting.",
         "Run: rm /var/log/syslog  then  rm /var/log/auth.log",
         "Remove BOTH log files on the remote training host.",
     ),
     TutorialLesson(
-        8, "Data Exfiltration",
+        7, "Data Exfiltration",
         "Attackers copy stolen files to their machine via SFTP/SCP equivalents.",
         "Run: download /home/trainee/training_flag.txt",
         "Download the flag file, then disconnect safely.",
     ),
     TutorialLesson(
-        9, "VPN / Proxy Routing",
+        8, "VPN / Proxy Routing",
         "VPNs tunnel traffic through an exit node so victims log the VPN IP, not yours. "
         "Critical for anonymity.",
         "Run: vpn connect  then reconnect and crack without exposing your real public IP.",
         "Activate VPN before your next connection to training-node.",
     ),
     TutorialLesson(
-        10, "Subnet Segmentation",
+        9, "Subnet Segmentation",
         "Enterprises segment networks (192.168.x vs 10.x). You need a route via the "
         "gateway to reach other subnets.",
         "Run: route add 10.0.0.0/24 via 192.168.1.1  then  scan 10.0.0.0/24",
         "Add the corporate route and scan the 10.0.0.0/24 subnet.",
     ),
     TutorialLesson(
-        11, "Privilege Escalation",
+        10, "Privilege Escalation",
         "Initial access is often a low-privilege user. Misconfigured sudo lets you become root.",
         "Connect to 10.0.0.99, crack, run: sudo -l  then  privesc  then download /root/classified.txt",
         "Escalate to root on tutorial-dmz and steal the root-only file.",
     ),
     TutorialLesson(
-        12, "Defense & Blue Team",
+        11, "Defense & Blue Team",
         "Rivals attack weak firewalls. Blue team upgrades defenses. Tutorial budget absorbs "
         "training losses — NOT your career money.",
         "Run: buy firewall  (uses tutorial credits) and survive rival probes.",
@@ -316,7 +309,8 @@ TUTORIAL_CURRICULUM: list[TutorialLesson] = [
 
 class TutorialManager:
     TUTORIAL_BUDGET = 500
-    DEFENSE_LESSON = 12
+    DEFENSE_LESSON = 11
+    CURRICULUM_VERSION = "v2"
 
     def __init__(self, game: "Game") -> None:
         self.game = game
@@ -358,19 +352,18 @@ class TutorialManager:
         g = self.game
 
         checks: dict[int, Callable[[], bool]] = {
-            0: lambda: "ifconfig" in p.command_history,
-            1: lambda: "route" in p.command_history,
-            2: lambda: "scan" in p.command_history or "nmap" in p.command_history,
-            3: lambda: p.connection == "192.168.1.50" or "connected_training" in p.tutorial_flags,
-            4: lambda: "probed_training" in p.tutorial_flags,
-            5: lambda: g.network.get_server("192.168.1.50") and g.network.get_server("192.168.1.50").cracked,
-            6: lambda: "read_authlog" in p.tutorial_flags,
-            7: lambda: "wiped_training_logs" in p.tutorial_flags,
-            8: lambda: "/home/hacker/downloads/training_flag.txt" in p.files and p.is_local(),
-            9: lambda: "vpn_success" in p.tutorial_flags and p.vpn_active,
-            10: lambda: any(ip.startswith("10.0.0.") for ip in p.discovered_ips),
-            11: lambda: "/home/hacker/downloads/classified.txt" in p.files and p.remote_was_root,
-            12: lambda: p.firewall_level >= 2,
+            0: lambda: "ifconfig" in p.command_history and "route" in p.command_history,
+            1: lambda: "scan" in p.command_history or "nmap" in p.command_history,
+            2: lambda: p.connection == "192.168.1.50" or "connected_training" in p.tutorial_flags,
+            3: lambda: "probed_training" in p.tutorial_flags,
+            4: lambda: g.network.get_server("192.168.1.50") and g.network.get_server("192.168.1.50").cracked,
+            5: lambda: "read_authlog" in p.tutorial_flags,
+            6: lambda: "wiped_training_logs" in p.tutorial_flags,
+            7: lambda: "/home/hacker/downloads/training_flag.txt" in p.files and p.is_local(),
+            8: lambda: "vpn_success" in p.tutorial_flags and p.vpn_active,
+            9: lambda: any(ip.startswith("10.0.0.") for ip in p.discovered_ips),
+            10: lambda: "/home/hacker/downloads/classified.txt" in p.files and p.remote_was_root,
+            11: lambda: p.firewall_level >= 2,
         }
 
         if step >= len(TUTORIAL_CURRICULUM):
@@ -382,7 +375,16 @@ class TutorialManager:
         lesson = self.current()
         divider("LESSON COMPLETE")
         success(f"{lesson.title} mastered.")
+        if lesson.step == 0:
+            self.game.try_unlock("boot_camp")
         self.player.tutorial_step += 1
+        if self.player.tutorial_step == 2:
+            self.game.mail.send(
+                "acid_k@rival.net",
+                "I see your scans",
+                "Nice port sweep on the lab subnet.\n"
+                "Connect to something interesting and I'll rate your form.\n\n— acid_k",
+            )
         if self.player.tutorial_step == self.DEFENSE_LESSON:
             self.defense_start_tick = self.player.ticks
             teach("Rivals will attack soon. Use tutorial credits to buy firewall BEFORE losses stack.")
@@ -416,6 +418,16 @@ class TutorialManager:
         if not any(r.destination == "10.0.0.0/24" for r in p.routes):
             p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
         self.game.network.deploy_company_hosts_with_puzzles(self.game, p.reputation, False)
+        starter_ip = "192.168.1.10"
+        if self.game.network.get_server(starter_ip):
+            self.game.missions.missions.insert(
+                0,
+                Mission(
+                    "starter-001", "ghost_broker",
+                    f"Warm-up contract: crack {starter_ip}, download /home/admin/notes.txt, wipe logs.",
+                    starter_ip, "/home/admin/notes.txt", 400, rep_reward=45,
+                ),
+            )
         divider("CAREER MODE UNLOCKED")
         success("Training complete. You are cleared for live contracts.")
         teach(
@@ -448,6 +460,7 @@ class TutorialManager:
 
     def reconcile_stuck_lessons(self) -> None:
         """Fix edge cases e.g. firewall bought via GUI Shop before rival attack fired."""
+        self.migrate_curriculum_step_for()
         if not self.in_tutorial():
             return
         p = self.player
@@ -462,6 +475,44 @@ class TutorialManager:
             p.tutorial_flags.add("defense_drill_done")
             self.complete_defense_drill()
             self.check_advance()
+
+    def migrate_curriculum_step_for(self) -> None:
+        p = self.player
+        flag = f"tutorial_{self.CURRICULUM_VERSION}"
+        if flag in p.tutorial_flags:
+            return
+        p.tutorial_flags.add(flag)
+        if p.tutorial_step >= 2:
+            p.tutorial_step -= 1
+        elif p.tutorial_step == 1:
+            p.tutorial_step = 0
+
+    def send_opening_hook(self) -> None:
+        p = self.player
+        if p.phase != "tutorial" or p.tutorial_step != 0:
+            return
+        if "opening_hook_sent" in p.tutorial_flags:
+            return
+        p.tutorial_flags.add("opening_hook_sent")
+        self.game.mail.send(
+            "training_officer@terminalhacker.local",
+            "URGENT — boot your workstation",
+            "Trainee,\n\n"
+            "We detected probe traffic on the lab subnet. Before you touch anything remote:\n\n"
+            "  1. Open Terminal → type: lesson\n"
+            "  2. Run: ifconfig\n"
+            "  3. Run: route\n"
+            "  4. Run: scan\n\n"
+            "Your goal today: crack training-node and capture the flag (~30 min).\n"
+            "Progress auto-saves. Job Board, Botnet, and contracts unlock after graduation.\n\n"
+            "— Training Officer",
+        )
+        self.game.mail.send(
+            "acid_k@rival.net",
+            "new fish on the wire",
+            "Another trainee just booted up.\n"
+            "I'll be watching your scans. Try not to embarrass yourself.\n\n— acid_k",
+        )
 
     def on_defense_tick(self) -> None:
         if not self.in_tutorial() or self.player.tutorial_step != self.DEFENSE_LESSON:
@@ -1501,7 +1552,7 @@ class Game:
             p.vpn_active = True
             success(f"VPN tunnel up. Exit node: {p.vpn_exit_ip}")
             teach("Remote logs will now record the VPN IP instead of your public address.")
-            if self.tutorial.in_tutorial() and p.tutorial_step == 9:
+            if self.tutorial.in_tutorial() and p.tutorial_step == 8:
                 p.tutorial_flags.add("vpn_success")
             return
 

@@ -55,6 +55,9 @@ COLORS = {
 UI_SCALE = float(os.environ.get("TERMINALHACKER_UI_SCALE", "1.55"))
 DOCK_WIDTH = 58
 
+# Dock apps locked during tutorial — visible previews of career endgame.
+DOCK_CAREER_LOCKED: frozenset[str] = frozenset({"jobs", "board", "botnet"})
+
 WINDOW_SIZES: dict[str, tuple[int, int]] = {
     "training": (680, 520),
     "terminal": (820, 560),
@@ -452,13 +455,13 @@ class DesktopApp:
             ("mail", "@", "Mail", self.open_mail),
             ("jobs", "[]", "Jobs", self.open_job_board),
             ("board", "//", "Board", self.open_social_board),
-    ("shop", "$", "Shop", self.open_shop),
-    ("botnet", "⊛", "Botnet", self.open_botnet),
-    ("achieve", "*", "Awards", self.open_achievements),
+            ("shop", "$", "Shop", self.open_shop),
+            ("botnet", "⊛", "Botnet", self.open_botnet),
+            ("achieve", "*", "Awards", self.open_achievements),
             ("status", "#", "Settings", self.open_status),
         ]
-        for key, glyph, _name, command in apps:
-            self._dock_icon(dock, key, glyph, command)
+        for key, glyph, name, command in apps:
+            self._dock_icon(dock, key, glyph, name, command)
 
         tk.Frame(dock, bg=COLORS["taskbar"]).pack(fill=tk.BOTH, expand=True)
 
@@ -469,8 +472,11 @@ class DesktopApp:
         show_btn.pack(side=tk.BOTTOM, pady=(0, 10))
         show_btn.bind("<Button-1>", lambda _e: self._show_desktop())
 
+    def _dock_locked(self, key: str) -> bool:
+        return self.game.player.phase == "tutorial" and key in DOCK_CAREER_LOCKED
+
     def _dock_icon(
-        self, parent: tk.Frame, key: str, glyph: str, command,
+        self, parent: tk.Frame, key: str, glyph: str, name: str, command,
     ) -> None:
         wrap = tk.Frame(parent, bg=COLORS["taskbar"], cursor="hand2")
         wrap.pack(fill=tk.X, pady=3)
@@ -482,11 +488,17 @@ class DesktopApp:
             box_bg, box_fg = COLORS["terminal_bg"], COLORS["prompt_user"]
         elif key == "training" and self.game.player.phase == "tutorial":
             box_bg, box_fg = COLORS["accent"], "white"
+        elif self._dock_locked(key):
+            box_bg, box_fg = COLORS["border"], COLORS["muted"]
         else:
             box_bg, box_fg = COLORS["aubergine"], COLORS["text"]
 
+        glyph_text = glyph
+        if self._dock_locked(key):
+            glyph_text = f"{glyph}"
+
         icon = tk.Label(
-            wrap, text=glyph, fg=box_fg, bg=box_bg,
+            wrap, text=glyph_text, fg=box_fg, bg=box_bg,
             font=MONO(18, bold=True), width=3, height=1,
             relief=tk.FLAT, bd=0, cursor="hand2",
         )
@@ -507,7 +519,21 @@ class DesktopApp:
             )
             self._refresh_mail_badge()
 
+        if self._dock_locked(key):
+            tk.Label(
+                wrap, text="🔒", fg=COLORS["muted"], bg=COLORS["taskbar"], font=F(8),
+            ).pack(side=tk.RIGHT, padx=(0, 4))
+
         def launch(_e=None) -> None:
+            if self._dock_locked(key):
+                sounds.play("error")
+                from tkinter import messagebox
+                messagebox.showinfo(
+                    "Career locked",
+                    f"{_name} unlocks after you graduate training.\n\n"
+                    "Finish the tutorial to access contracts, the darknet board, and botnet payloads.",
+                )
+                return
             self._toggle_dock_app(key, command)
 
         for widget in (wrap, indicator, icon):
@@ -650,6 +676,8 @@ class DesktopApp:
     def _run_onboarding(self) -> None:
         """Guide new tutorial players — auto-open Training on first launch."""
         p = self.game.player
+        if p.phase == "tutorial":
+            self.game.tutorial.send_opening_hook()
         if p.phase != "tutorial":
             if p.phase == "career":
                 self.root.after(500, self.open_files)
@@ -671,12 +699,13 @@ class DesktopApp:
         if p.tutorial_step == 0:
             headline = "TRAINING MODE — START HERE"
             steps = (
-                "1. Open Training from the dock for the full curriculum\n"
-                "2. Open Terminal and type: lesson\n"
-                "3. Open Notes to jot IPs and clues while you work\n"
-                "4. Read Mail from your training officer"
+                "Goal today: crack training-node and capture the flag (~30 min).\n\n"
+                "1. Open Mail — urgent orders from Training Officer\n"
+                "2. Open Terminal → type: lesson\n"
+                "3. Run: ifconfig  then  route  then  scan\n"
+                "4. Open Notes to jot IPs while you work"
             )
-            auto_open = True
+            auto_open = "mail"
         else:
             headline = f"RESUME TRAINING — Lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)}"
             steps = "Pick up where you left off.\nOpen Terminal and type: lesson"
@@ -733,7 +762,10 @@ class DesktopApp:
         self._banner_place_id = canvas.create_window(
             canvas.winfo_width() // 2, 48, window=banner, anchor=tk.N, width=bw,
         )
-        if auto_open:
+        if auto_open == "mail":
+            self.root.after(400, self.open_mail)
+            self.root.after(900, self.open_terminal)
+        elif auto_open:
             self.root.after(400, self.open_training)
         else:
             self.root.after(400, self.open_terminal)
@@ -2197,7 +2229,27 @@ class DesktopApp:
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
         tk.Label(body, text="CYBERSECURITY CURRICULUM", fg=COLORS["accent"], bg=COLORS["window"],
-                 font=F(14, bold=True)).pack(anchor=tk.W, pady=(0, 8))
+                 font=F(14, bold=True)).pack(anchor=tk.W, pady=(0, 4))
+
+        if self.game.player.phase == "tutorial":
+            lesson = self.game.tutorial.current()
+            cta = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
+                           highlightthickness=1, highlightbackground=COLORS["accent"])
+            cta.pack(fill=tk.X, pady=(0, 8))
+            tk.Label(
+                cta, text="DO THIS NOW", fg=COLORS["accent"], bg=COLORS["window"],
+                font=F(11, bold=True),
+            ).pack(anchor=tk.W)
+            tk.Label(
+                cta, text=lesson.objective, fg=COLORS["text"], bg=COLORS["window"],
+                font=F(12, bold=True), wraplength=560, justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(4, 2))
+            tk.Label(
+                cta, text=f"Hint: {lesson.hint}", fg=COLORS["muted"], bg=COLORS["window"],
+                font=F(10), wraplength=560, justify=tk.LEFT,
+            ).pack(anchor=tk.W)
+
+        tk.Label(body, text="", bg=COLORS["window"]).pack()  # spacer
 
         scroll = scrolledtext.ScrolledText(body, bg=COLORS["terminal_bg"], fg=COLORS["text"],
                                            font=F(10), relief=tk.FLAT)
@@ -2372,15 +2424,23 @@ class DesktopApp:
 
     def _show_graduation_popup(self) -> None:
         from tkinter import messagebox
+        p = self.game.player
+        sounds.play("success")
         messagebox.showinfo(
-            "Training Complete",
-            "Career mode unlocked!\n\n"
-            "Open Job Board for contracts, Terminal to hack, Files for loot.",
+            "CAREER CLEARED",
+            "Training complete — you are cleared for live operations.\n\n"
+            f"Starting balance: ${p.money}\n\n"
+            "• Check Mail — your first contracts are waiting\n"
+            "• Open Job Board for live paid ops\n"
+            "• Shop: buy miner_payload later for passive botnet income\n"
+            "• Rivals will probe your firewall — upgrade and run defend on\n\n"
+            "Traces and fines now hit your real wallet. Wipe your logs.",
         )
         self._save_restore_notice = ""
         self._run_onboarding()
         self._close_window("shop")
-        self.open_job_board()
+        self.root.after(300, self.open_mail)
+        self.root.after(900, self.open_job_board)
 
     def _finish_training_from_shop(self) -> None:
         phase_before = self.game.player.phase

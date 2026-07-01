@@ -95,6 +95,7 @@ FILE_TEMPLATES = [
 
 ACHIEVEMENTS: dict[str, str] = {
     "first_blood": "Crack your first remote host",
+    "boot_camp": "Complete the network boot lesson",
     "ghost_hands": "Disconnect with zero log traces",
     "vpn_shadow": "Crack while VPN is active",
     "root_queen": "Privilege escalate to root",

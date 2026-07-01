@@ -37,7 +37,7 @@ python3 main.py --cli
 ## Gameplay
 
 1. Start in **tutorial mode** with a $500 training budget (career money is protected)
-2. Complete 13 lessons teaching networking, logs, VPN, routing, privesc, and defense
+2. Complete 12 lessons teaching networking, logs, VPN, routing, privesc, and defense
 3. Graduate to **career mode** (~$750+ starting wallet) for live missions and progression
 
 ### Career systems
