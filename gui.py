@@ -64,6 +64,7 @@ WINDOW_SIZES: dict[str, tuple[int, int]] = {
     "jobs": (660, 500),
     "board": (620, 480),
     "shop": (560, 480),
+    "botnet": (520, 460),
     "achieve": (560, 440),
     "status": (480, 360),
 }
@@ -167,6 +168,7 @@ class DesktopApp:
         self._files_preview_frame: tk.Frame | None = None
         self._notes_editor: scrolledtext.ScrolledText | None = None
         self._notes_save_job: str | None = None
+        self._botnet_text: scrolledtext.ScrolledText | None = None
         self._terminal_history: list[str] = []
         self._terminal_history_pos: int = 0
         self._terminal_log: list[tuple[str, str]] = []
@@ -450,8 +452,9 @@ class DesktopApp:
             ("mail", "@", "Mail", self.open_mail),
             ("jobs", "[]", "Jobs", self.open_job_board),
             ("board", "//", "Board", self.open_social_board),
-            ("shop", "$", "Shop", self.open_shop),
-            ("achieve", "*", "Awards", self.open_achievements),
+    ("shop", "$", "Shop", self.open_shop),
+    ("botnet", "⊛", "Botnet", self.open_botnet),
+    ("achieve", "*", "Awards", self.open_achievements),
             ("status", "#", "Settings", self.open_status),
         ]
         for key, glyph, _name, command in apps:
@@ -1124,6 +1127,8 @@ class DesktopApp:
                 except tk.TclError:
                     pass
                 self._notes_save_job = None
+        if key == "botnet":
+            self._botnet_text = None
         if self._active_app == key:
             self._active_app = None
         self._update_dock_highlight()
@@ -2225,6 +2230,79 @@ class DesktopApp:
     def _lesson_to_terminal(self) -> None:
         self.open_terminal()
         self.game.cmd_lesson([])
+
+    def _refresh_botnet_panel(self) -> None:
+        viewer = self._botnet_text
+        if not viewer or not viewer.winfo_exists():
+            return
+        from botnet_system import BotnetManager
+        from io import StringIO
+        import contextlib
+        from main import Console
+
+        buf = StringIO()
+        old = Console.handler
+
+        def capture(text: str, tag: str = "normal") -> None:
+            buf.write(text)
+
+        Console.handler = capture
+        try:
+            BotnetManager.cmd_botnet(self.game, [])
+        finally:
+            Console.handler = old
+        viewer.configure(state=tk.NORMAL)
+        viewer.delete("1.0", tk.END)
+        viewer.insert("1.0", buf.getvalue() or "(no output)")
+        viewer.configure(state=tk.DISABLED)
+
+    def open_botnet(self) -> None:
+        if "botnet" in self._built_panels:
+            self._show_app("botnet")
+            self._refresh_botnet_panel()
+            return
+        win = self._window("botnet", "Botnet — payloads & income", 520, 460)
+        body: tk.Frame = win._body  # type: ignore[attr-defined]
+
+        tk.Label(
+            body, text="BOTNET CONTROL", fg=COLORS["accent"], bg=COLORS["window"],
+            font=F(14, bold=True),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            body,
+            text="Deploy miners for passive income or DDoS floods for tactical debuffs. Rivals purge loud nets.",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(10), wraplength=480, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(4, 8))
+
+        viewer = scrolledtext.ScrolledText(
+            body, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=MONO(10), relief=tk.FLAT, wrap=tk.WORD, height=16,
+        )
+        viewer.pack(fill=tk.BOTH, expand=True)
+        self._botnet_text = viewer
+
+        btn_row = tk.Frame(body, bg=COLORS["window"])
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        tk.Button(
+            btn_row, text="↻ Refresh", command=self._refresh_botnet_panel,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            btn_row, text="Collect $",
+            command=lambda: (self._gui_run_command("botnet collect"), self.root.after(150, self._refresh_botnet_panel)),
+            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            btn_row, text="Open Terminal", command=self.open_terminal,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            btn_row, text="Shop Payloads", command=self.open_shop,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT, padx=8)
+
+        self._built_panels.add("botnet")
+        self._refresh_botnet_panel()
 
     def open_status(self) -> None:
         if "status" in self._built_panels:

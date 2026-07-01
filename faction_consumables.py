@@ -60,6 +60,16 @@ CONSUMABLES: dict[str, dict[str, Any]] = {
         "cost": 200,
         "commands": 6,
     },
+    "miner_payload": {
+        "name": "Miner Payload",
+        "desc": "Deploy crypto miner on a cracked host (infect miner).",
+        "cost": 140,
+    },
+    "ddos_payload": {
+        "name": "DDoS Payload",
+        "desc": "Flood a target host (infect ddos <IP>).",
+        "cost": 220,
+    },
 }
 
 BROKER_NAMES = frozenset({

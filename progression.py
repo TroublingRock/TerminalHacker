@@ -129,6 +129,7 @@ ACHIEVEMENTS: dict[str, str] = {
     "faction_rival": "Reach 50 rep with Rival Syndicate",
     "faction_corp": "Reach 50 rep with Corporate Security",
     "consumable_user": "Use 10 consumables",
+    "botnet_herder": "Maintain 5 infected botnet nodes",
 }
 
 DAILY_POOL = [
@@ -641,6 +642,10 @@ class SaveManager:
                 "faction_perks_unlocked": list(game.meta.faction_perks_unlocked),
                 "contracts_since_free_consumable": game.meta.contracts_since_free_consumable,
                 "consumables_used": game.meta.consumables_used,
+                "infections": game.meta.infections,
+                "botnet_bank": game.meta.botnet_bank,
+                "ddos_targets": game.meta.ddos_targets,
+                "botnet_purges": game.meta.botnet_purges,
             },
         }
 
@@ -900,6 +905,10 @@ class SaveManager:
                 faction_perks_unlocked=set(md.get("faction_perks_unlocked", [])),
                 contracts_since_free_consumable=md.get("contracts_since_free_consumable", 0),
                 consumables_used=md.get("consumables_used", 0),
+                infections=md.get("infections", {}),
+                botnet_bank=md.get("botnet_bank", 0),
+                ddos_targets=md.get("ddos_targets", {}),
+                botnet_purges=md.get("botnet_purges", 0),
             )
         if p.phase == "endless" and game.endless.active:
             for ip in game.endless.floor_hosts:

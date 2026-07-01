@@ -782,6 +782,8 @@ SHOP_CATALOG = [
     ShopItem("burner_ip", "Burner IP Kit", "Mask egress IP for 8 commands.", 120, 1, consumable=True),
     ShopItem("zero_day", "Zero-day Exploit", "Auto-crack current SSH target once.", 450, 1, consumable=True),
     ShopItem("decoy_log", "Decoy Log Pack", "6 commands of full trace immunity.", 200, 1, consumable=True),
+    ShopItem("miner_payload", "Miner Payload", "Deploy passive miner via infect miner.", 140, 1, consumable=True),
+    ShopItem("ddos_payload", "DDoS Payload", "Flood a target via infect ddos <IP>.", 220, 1, consumable=True),
 ]
 
 
@@ -1122,6 +1124,10 @@ class ThreatSystem:
                 tutorial.on_defense_tick()
             return
 
+        from botnet_system import BotnetManager
+        if p.phase in ("career", "endless"):
+            BotnetManager.on_tick(self.game)
+
         if p.phase == "endless":
             if p.ticks % 3 == 0 and random.random() < 0.22:
                 self._maybe_attack(force=False)
@@ -1139,6 +1145,7 @@ class ThreatSystem:
         threat_bonus = RetentionManager.rival_threat_bonus(self.game)
         from depth_systems import RivalHeatManager
         threat_bonus += RivalHeatManager.threat_bonus(self.game)
+        threat_bonus += BotnetManager.threat_bonus(self.game)
         # Rookie grace: first ~20 commands in career, rivals probe less often
         rookie = p.ticks < 20 and len(self.game.retention.completed_operations) == 0
         chance = (0.12 if rookie else 0.16) * gap + threat_bonus
@@ -1390,13 +1397,16 @@ class Game:
             self.autosave(force=True)
         else:
             self.autosave()
-        if self.player.phase == "career":
+        if self.player.phase in ("career", "endless"):
             from retention import RetentionManager
-            RetentionManager.check_bridge_triggers(self)
+            if self.player.phase == "career":
+                RetentionManager.check_bridge_triggers(self)
             from depth_systems import ModifierManager
             ModifierManager.on_post_command(self)
             from faction_consumables import ConsumableManager
             ConsumableManager.on_post_command(self)
+            from botnet_system import BotnetManager
+            BotnetManager.on_post_command(self)
 
     def try_unlock(self, key: str) -> None:
         from progression import ACHIEVEMENTS
@@ -1441,7 +1451,7 @@ class Game:
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
-            "phish", "tunnel", "plant", "forge",
+            "phish", "tunnel", "plant", "forge", "infect", "botnet",
             "use [item]", "factions", "llm [test|on|off]", "world",
             "save", "load", "exit",
         ]
@@ -1655,6 +1665,7 @@ class Game:
             error(puzzle_msg)
             return
         from depth_systems import ToolManager
+        from botnet_system import BotnetManager
         if ToolManager.has_backdoor(self, s.ip):
             s.cracked = True
             self.player.has_remote_shell = True
@@ -1667,7 +1678,7 @@ class Game:
             words = [s.ssh_password] + words
         if "hydra" in self.player.owned_tools:
             words = [s.ssh_password] + [w for w in words if w != s.ssh_password]
-        attempts = max(2, int((s.security_level - self.player.cpu_level + 2) * 3 * self.player.crack_attempt_reduction()))
+        attempts = max(2, int((BotnetManager.effective_security(self, s) - self.player.cpu_level + 2) * 3 * self.player.crack_attempt_reduction()))
 
         for i in range(1, attempts + 1):
             guess = words[i % len(words)]
@@ -1979,6 +1990,9 @@ class Game:
             Console.out(f"  Daily:      {d}")
             from faction_consumables import ConsumableManager
             for line in ConsumableManager.inventory_lines(self):
+                Console.out(line)
+            from botnet_system import BotnetManager
+            for line in BotnetManager.status_lines(self):
                 Console.out(line)
 
     def cmd_rank(self, _a: list[str]) -> None:
@@ -2372,6 +2386,14 @@ class Game:
         from depth_systems import ToolManager
         ToolManager.cmd_forge(self)
 
+    def cmd_infect(self, args: list[str]) -> None:
+        from botnet_system import BotnetManager
+        BotnetManager.cmd_infect(self, args)
+
+    def cmd_botnet(self, args: list[str]) -> None:
+        from botnet_system import BotnetManager
+        BotnetManager.cmd_botnet(self, args)
+
     def cmd_use(self, args: list[str]) -> None:
         if not args:
             error("Usage: use <burner_ip|zero_day|decoy_log>")
@@ -2497,7 +2519,8 @@ class Game:
             "endless": self.cmd_endless, "story": self.cmd_story, "board": self.cmd_board,
             "spec": self.cmd_spec, "heist": self.cmd_heist, "heat": self.cmd_heat,
             "phish": self.cmd_phish, "tunnel": self.cmd_tunnel, "plant": self.cmd_plant,
-            "forge": self.cmd_forge, "use": self.cmd_use, "factions": self.cmd_factions,
+            "forge": self.cmd_forge, "infect": self.cmd_infect, "botnet": self.cmd_botnet,
+            "use": self.cmd_use, "factions": self.cmd_factions,
             "llm": self.cmd_llm,
             "world": self.cmd_world,
             "save": self.cmd_save, "load": self.cmd_load,

@@ -104,7 +104,18 @@ Modifiers: air-gapped, honey-net, split-tunnel, deadline, no-shop, rival-race.
 | Consumables | `buy burner_ip\|zero_day\|decoy_log` then `use <item>` |
 | Faction rep | `factions` — brokers / rivals / corps meters with perks at 20/50/100 |
 
-Consumables: **Burner IP Kit** (mask egress for 8 commands), **Zero-day Exploit** (instant SSH crack), **Decoy Log Pack** (6 commands trace immunity).
+Consumables: **Burner IP Kit** (mask egress for 8 commands), **Zero-day Exploit** (instant SSH crack), **Decoy Log Pack** (6 commands trace immunity), **Miner Payload** / **DDoS Payload** (botnet deploy).
+
+### Botnet payloads (v2.0)
+
+| System | Command |
+|--------|---------|
+| Deploy miner | `buy miner_payload` → crack host → `infect miner [IP]` |
+| Deploy DDoS | `buy ddos_payload` → `infect ddos <IP>` |
+| Status / cash out | `botnet` / `botnet collect` |
+| GUI | Dock **Botnet** (⊛) window |
+
+Miners accrue modest passive income each command (collect with `botnet collect`). DDoS softens target firewall and slows rival-race NPCs for ~14 commands. Loud nets spike **subnet heat**; rivals may **purge nodes** or **siphon** uncollected revenue. Saboteur spec gets +15% miner income.
 
 Faction rep shifts from story choices, contract targets, and board posts. Perks include shop discounts, payout bonuses, trace reduction, and broker freebies.
 

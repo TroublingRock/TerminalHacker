@@ -211,6 +211,10 @@ class MetaState:
     heist_month_key: str = ""
     heist_rotation_key: str = ""
     inventory: dict[str, int] = field(default_factory=dict)
+    infections: dict[str, str] = field(default_factory=dict)
+    botnet_bank: int = 0
+    ddos_targets: dict[str, int] = field(default_factory=dict)
+    botnet_purges: int = 0
     burner_commands_left: int = 0
     burner_mask_ip: str = ""
     decoy_trace_immunity: int = 0
@@ -287,6 +291,9 @@ class ModifierManager:
             step = random.randint(1, 3)
             step = max(1, int(step * FactionRepManager.rival_race_slow_mult(game)))
             game.meta.rival_race_prog[rid] = game.meta.rival_race_prog.get(rid, 0) + step
+            from botnet_system import BotnetManager
+            if BotnetManager.rival_race_slow(game, m.target_ip):
+                game.meta.rival_race_prog[rid] = max(0, game.meta.rival_race_prog[rid] - 1)
             if game.meta.rival_race_prog[rid] >= 28:
                 m.completed = True
                 warn(f"RIVAL WON RACE: {m.broker} contract sniped before you finished.")
