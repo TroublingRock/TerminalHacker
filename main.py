@@ -2352,6 +2352,10 @@ class Game:
             error("Unknown command. Try lesson or help.")
 
     def run(self) -> None:
+        try:
+            import readline  # noqa: F401 — enables arrow-key history in CLI mode
+        except ImportError:
+            pass
         self.banner()
         while self.running:
             try:

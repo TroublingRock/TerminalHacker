@@ -91,6 +91,8 @@ class DesktopApp:
         self.hint_label: tk.Label | None = None
         self.onboarding_banner: tk.Frame | None = None
         self._terminal_entry: tk.Entry | None = None
+        self._terminal_history: list[str] = []
+        self._terminal_history_pos: int = 0
         self._save_loaded = False
 
         self._try_resume_save()
@@ -537,7 +539,7 @@ class DesktopApp:
 
         tk.Label(
             body,
-            text="Click the command line below, then type. Press Enter to run.",
+            text="Click the command line below, then type. Press Enter to run. ↑↓ for history.",
             fg=COLORS["muted"], bg=COLORS["window"], font=F(10),
         ).pack(anchor=tk.W, pady=(0, 4))
 
@@ -596,11 +598,40 @@ class DesktopApp:
 
         Console.handler = console_handler
 
+        def remember_command(cmd: str) -> None:
+            if not cmd:
+                return
+            if not self._terminal_history or self._terminal_history[-1] != cmd:
+                self._terminal_history.append(cmd)
+            self._terminal_history_pos = len(self._terminal_history)
+
+        def history_up(_event=None) -> str:
+            if not self._terminal_history:
+                return "break"
+            if self._terminal_history_pos > 0:
+                self._terminal_history_pos -= 1
+            entry.delete(0, tk.END)
+            entry.insert(0, self._terminal_history[self._terminal_history_pos])
+            return "break"
+
+        def history_down(_event=None) -> str:
+            if not self._terminal_history:
+                return "break"
+            if self._terminal_history_pos < len(self._terminal_history) - 1:
+                self._terminal_history_pos += 1
+                entry.delete(0, tk.END)
+                entry.insert(0, self._terminal_history[self._terminal_history_pos])
+            else:
+                self._terminal_history_pos = len(self._terminal_history)
+                entry.delete(0, tk.END)
+            return "break"
+
         def run_command(_event=None) -> None:
             cmd = entry.get().strip()
             entry.delete(0, tk.END)
             if not cmd:
                 return
+            remember_command(cmd)
             sounds.play("click")
             append_line(self.game.prompt() + cmd, "prompt")
             self.game.close_terminal = False
@@ -616,6 +647,8 @@ class DesktopApp:
             entry.focus_set()
 
         entry.bind("<Return>", run_command)
+        entry.bind("<Up>", history_up)
+        entry.bind("<Down>", history_down)
         entry.bind("<Button-1>", lambda _e: entry.focus_force())
         prompt_lbl.configure(text=self.game.prompt())
         self.root.after(200, self._focus_terminal_input)
