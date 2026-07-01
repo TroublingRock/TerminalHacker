@@ -102,6 +102,7 @@ class DesktopApp:
         self._terminal_input: tk.Text | None = None
         self._terminal_input_frame: tk.Frame | None = None
         self._terminal_focus_job: str | None = None
+        self._terminal_key_catcher: str | None = None
         self._terminal_run_cmd: object | None = None
         self._terminal_prompt_lbl: tk.Label | None = None
         self._files_list_frame: tk.Frame | None = None
@@ -461,10 +462,72 @@ class DesktopApp:
                 shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
             else:
                 shell.pack_forget()
-        if key == "terminal" and self._terminal_input:
+        if key == "terminal" and (self._terminal_entry or self._terminal_input):
             self._arm_terminal_focus()
         if key == "files" and "files" in self._built_panels:
             self._refresh_files()
+
+    def _uninstall_terminal_key_catcher(self) -> None:
+        if self._terminal_key_catcher:
+            try:
+                self.root.unbind_all("<KeyPress>")
+            except tk.TclError:
+                pass
+            self._terminal_key_catcher = None
+
+    def _install_terminal_key_catcher(self, entry: tk.Entry, run_command) -> None:
+        """Route keyboard to command line when Terminal is open (Cursor Desktop fix)."""
+        self._uninstall_terminal_key_catcher()
+
+        def _focus_is_other_editor() -> bool:
+            focus = self.root.focus_get()
+            if focus is None or focus == entry:
+                return False
+            cls = focus.winfo_class()
+            if cls not in ("Text", "Entry", "TEntry"):
+                return False
+            w: tk.Misc | None = focus
+            while w is not None:
+                if w == entry:
+                    return False
+                w = w.master if hasattr(w, "master") else None
+            return True
+
+        def catcher(event) -> str | None:
+            if "terminal" not in self.open_windows or not entry.winfo_exists():
+                return None
+            if _focus_is_other_editor():
+                return None
+            keysym = event.keysym
+            if keysym in ("Return", "KP_Enter"):
+                run_command()
+                return "break"
+            if keysym == "BackSpace":
+                entry.focus_set()
+                if entry.selection_present():
+                    entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
+                else:
+                    pos = entry.index(tk.INSERT)
+                    if pos > 0:
+                        entry.delete(pos - 1)
+                return "break"
+            if keysym == "Up":
+                entry.event_generate("<Up>")
+                return "break"
+            if keysym == "Down":
+                entry.event_generate("<Down>")
+                return "break"
+            if keysym in ("Left", "Right", "Home", "End"):
+                entry.focus_set()
+                entry.event_generate(f"<{keysym}>")
+                return "break"
+            if event.char and len(event.char) == 1 and event.char.isprintable():
+                entry.focus_set()
+                entry.insert(tk.INSERT, event.char)
+                return "break"
+            return None
+
+        self._terminal_key_catcher = self.root.bind_all("<KeyPress>", catcher, add="+")
 
     def _cancel_terminal_focus(self) -> None:
         if self._terminal_focus_job:
@@ -479,7 +542,7 @@ class DesktopApp:
         self._cancel_terminal_focus()
 
         def pump(remaining: int = 12) -> None:
-            if "terminal" not in self.open_windows or not self._terminal_input:
+            if "terminal" not in self.open_windows or not (self._terminal_entry or self._terminal_input):
                 return
             self._activate_terminal_input()
             if remaining > 0:
@@ -488,15 +551,22 @@ class DesktopApp:
         pump()
 
     def _activate_terminal_input(self) -> None:
-        if not self._terminal_input or not self._terminal_input.winfo_exists():
+        entry = self._terminal_entry or self._terminal_input
+        if not entry or not entry.winfo_exists():
             return
         try:
-            self._terminal_input.configure(state="normal")
-            self._terminal_input.focus_force()
-            self._terminal_input.mark_set(tk.INSERT, tk.END)
-            self._terminal_input.see(tk.END)
+            entry.configure(state="normal")
+            entry.focus_force()
+            if isinstance(entry, tk.Text):
+                entry.mark_set(tk.INSERT, tk.END)
+                entry.see(tk.END)
+            else:
+                entry.icursor(tk.END)
             if self._terminal_input_frame:
-                self._terminal_input_frame.configure(highlightbackground=COLORS["accent"])
+                self._terminal_input_frame.configure(
+                    highlightbackground=COLORS["accent"],
+                    highlightthickness=3,
+                )
         except tk.TclError:
             pass
 
@@ -524,6 +594,7 @@ class DesktopApp:
             self._built_panels.discard(key)
         if key == "terminal":
             self.game.close_terminal = False
+            self._uninstall_terminal_key_catcher()
             self._terminal_entry = None
             self._terminal_input = None
             self._terminal_input_frame = None
@@ -791,17 +862,52 @@ class DesktopApp:
             self._show_app("terminal")
             self._arm_terminal_focus()
             return
-        win = self._window("terminal", "Terminal — hacker@localhost", 780, 520)
+        win = self._window("terminal", "Terminal — hacker@localhost", 780, 560)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(3, weight=1)
 
-        tk.Label(
+        # --- Command line at TOP (always visible) ---
+        cmd_banner = tk.Label(
             body,
-            text="▶ Click the green command box below to type. Enter runs commands. Ctrl+V to paste. ↑↓ history.",
-            fg=COLORS["accent"], bg=COLORS["window"], font=F(10, bold=True),
-        ).pack(anchor=tk.W, pady=(0, 4))
+            text="▼ COMMAND LINE — click the green bar, type your command, press Enter or RUN ▼",
+            fg="#00ff41", bg="#001a0a", font=F(11, bold=True),
+            pady=6, padx=8,
+        )
+        cmd_banner.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+
+        cmd_outer = tk.Frame(
+            body, bg="#001a0a",
+            highlightthickness=3, highlightbackground="#00ff41", highlightcolor="#00ff41",
+        )
+        cmd_outer.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        cmd_outer.columnconfigure(1, weight=1)
+        self._terminal_input_frame = cmd_outer
+
+        prompt_lbl = tk.Label(
+            cmd_outer, text="", fg="#00ff41", bg="#001a0a", font=MONO(13, bold=True),
+        )
+        prompt_lbl.grid(row=0, column=0, sticky="w", padx=(8, 4), pady=8)
+        self._terminal_prompt_lbl = prompt_lbl
+
+        entry = tk.Entry(
+            cmd_outer,
+            bg="#002211", fg="#ffffff",
+            insertbackground="#00ff41",
+            font=MONO(15, bold=True),
+            relief=tk.SOLID, bd=2,
+            highlightthickness=2,
+            highlightbackground="#00ff41",
+            highlightcolor="#00ff41",
+            selectbackground="#238636",
+            selectforeground="#ffffff",
+        )
+        entry.grid(row=0, column=1, sticky="ew", padx=4, pady=8, ipady=10)
+        self._terminal_entry = entry
+        self._terminal_input = None
 
         toolbar = tk.Frame(body, bg=COLORS["window"])
-        toolbar.pack(fill=tk.X, pady=(0, 6))
+        toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         tk.Label(toolbar, text="Quick:", fg=COLORS["muted"], bg=COLORS["window"],
                  font=F(9)).pack(side=tk.LEFT, padx=(0, 6))
         for label, cmd in (
@@ -821,10 +927,10 @@ class DesktopApp:
 
         output = scrolledtext.ScrolledText(
             body, bg=COLORS["terminal_bg"], fg=COLORS["terminal_fg"],
-            insertbackground=COLORS["accent"], font=MONO(14),
+            insertbackground=COLORS["accent"], font=MONO(13),
             relief=tk.FLAT, wrap=tk.WORD, takefocus=0,
         )
-        output.pack(fill=tk.BOTH, expand=True)
+        output.grid(row=3, column=0, sticky="nsew")
         output.configure(state=tk.DISABLED)
 
         for tag, color in (
@@ -833,49 +939,6 @@ class DesktopApp:
             ("error", COLORS["error"]), ("teach", COLORS["teach"]), ("prompt", "#ffffff"),
         ):
             output.tag_configure(tag, foreground=color)
-
-        input_frame = tk.Frame(
-            body, bg=COLORS["window"], highlightthickness=2,
-            highlightbackground=COLORS["accent"], highlightcolor=COLORS["accent"],
-        )
-        input_frame.pack(fill=tk.X, pady=(6, 0))
-        self._terminal_input_frame = input_frame
-        prompt_lbl = tk.Label(input_frame, text="", fg=COLORS["accent"],
-                              bg=COLORS["window"], font=MONO(14))
-        prompt_lbl.pack(side=tk.LEFT, padx=(4, 0))
-        cmd_input = tk.Text(
-            input_frame, height=2, bg=COLORS["terminal_bg"], fg=COLORS["text"],
-            insertbackground=COLORS["accent"], font=MONO(14),
-            relief=tk.FLAT, wrap=tk.NONE, undo=True,
-            highlightthickness=0, padx=6, pady=6,
-        )
-        cmd_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4), pady=4)
-        self._terminal_input = cmd_input
-        self._terminal_entry = None
-        self._terminal_prompt_lbl = prompt_lbl
-
-        def focus_input(_event=None) -> str:
-            self._activate_terminal_input()
-            return "break"
-
-        def paste_clip(_event=None) -> str:
-            try:
-                text = self.root.clipboard_get()
-                if text:
-                    cmd_input.insert(tk.INSERT, text.replace("\n", " ").replace("\r", ""))
-            except tk.TclError:
-                pass
-            return "break"
-
-        for widget in (output, input_frame, prompt_lbl):
-            widget.bind("<Button-1>", focus_input, add="+")
-        body.bind("<Button-1>", lambda e: self._activate_terminal_input() if e.widget == body else None)
-        cmd_input.bind("<Button-1>", lambda _e: self._activate_terminal_input())
-        cmd_input.bind("<Control-v>", paste_clip)
-        cmd_input.bind("<Control-V>", paste_clip)
-        cmd_input.bind("<<Paste>>", paste_clip)
-        cmd_input.bind("<FocusIn>", lambda _e: input_frame.configure(highlightbackground=COLORS["accent"]))
-        cmd_input.bind("<FocusOut>", lambda _e: input_frame.configure(highlightbackground=COLORS["border"]))
 
         def append_line(text: str, tag: str = "normal") -> None:
             output.configure(state=tk.NORMAL)
@@ -905,8 +968,8 @@ class DesktopApp:
                 return "break"
             if self._terminal_history_pos > 0:
                 self._terminal_history_pos -= 1
-            cmd_input.delete("1.0", tk.END)
-            cmd_input.insert("1.0", self._terminal_history[self._terminal_history_pos])
+            entry.delete(0, tk.END)
+            entry.insert(0, self._terminal_history[self._terminal_history_pos])
             return "break"
 
         def history_down(_event=None) -> str:
@@ -914,14 +977,11 @@ class DesktopApp:
                 return "break"
             if self._terminal_history_pos < len(self._terminal_history) - 1:
                 self._terminal_history_pos += 1
-                cmd_input.delete("1.0", tk.END)
-                cmd_input.insert("1.0", self._terminal_history[self._terminal_history_pos])
+                entry.delete(0, tk.END)
+                entry.insert(0, self._terminal_history[self._terminal_history_pos])
             else:
                 self._terminal_history_pos = len(self._terminal_history)
-                cmd_input.delete("1.0", tk.END)
-            return "break"
-
-        def block_newline(_event=None) -> str:
+                entry.delete(0, tk.END)
             return "break"
 
         def execute_command(cmd: str) -> None:
@@ -948,24 +1008,52 @@ class DesktopApp:
             self._activate_terminal_input()
 
         def run_command(_event=None) -> str:
-            cmd = cmd_input.get("1.0", "end-1c").strip()
-            cmd_input.delete("1.0", tk.END)
+            cmd = entry.get().strip()
+            entry.delete(0, tk.END)
             execute_command(cmd)
             return "break"
 
         self._terminal_run_cmd = execute_command
 
-        cmd_input.bind("<Return>", run_command)
-        cmd_input.bind("<KP_Enter>", run_command)
-        cmd_input.bind("<Up>", history_up)
-        cmd_input.bind("<Down>", history_down)
-        cmd_input.bind("<Shift-Return>", block_newline)
+        def paste_clip(_event=None) -> str:
+            try:
+                text = self.root.clipboard_get()
+                if text:
+                    entry.insert(tk.INSERT, text.replace("\n", " ").strip())
+            except tk.TclError:
+                pass
+            return "break"
+
+        def focus_cmd(_event=None) -> str:
+            self._activate_terminal_input()
+            return "break"
+
+        tk.Button(
+            cmd_outer, text="RUN ▶", command=run_command,
+            bg="#238636", fg="white", font=F(11, bold=True),
+            relief=tk.FLAT, padx=14, pady=6,
+        ).grid(row=0, column=2, sticky="e", padx=8, pady=8)
+
+        entry.bind("<Return>", run_command)
+        entry.bind("<KP_Enter>", run_command)
+        entry.bind("<Up>", history_up)
+        entry.bind("<Down>", history_down)
+        entry.bind("<Control-v>", paste_clip)
+        entry.bind("<Control-V>", paste_clip)
+        entry.bind("<Button-1>", lambda _e: self._activate_terminal_input())
+        cmd_banner.bind("<Button-1>", focus_cmd)
+        cmd_outer.bind("<Button-1>", focus_cmd)
+        output.bind("<Button-1>", focus_cmd)
+        prompt_lbl.bind("<Button-1>", focus_cmd)
+
+        self._install_terminal_key_catcher(entry, run_command)
+
         prompt_lbl.configure(text=self.game.prompt())
         self._arm_terminal_focus()
         if not self.terminal_booted:
             self.terminal_booted = True
             self.game.banner()
-            self.root.after(100, self._activate_terminal_input)
+        self.root.after(150, self._activate_terminal_input)
 
         self._built_panels.add("terminal")
 
