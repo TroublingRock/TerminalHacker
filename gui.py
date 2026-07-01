@@ -76,6 +76,16 @@ WINDOW_STAGGER: dict[str, tuple[int, int]] = {
     "mail": (64, 44),
 }
 
+# Quick-launch buttons appear only after the player types each command once.
+TERMINAL_QUICK_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("probe", "probe"),
+    ("crack", "crack"),
+    ("ls", "ls"),
+    ("download", "download"),
+    ("disconnect", "disconnect"),
+    ("help", "help"),
+)
+
 
 def _fs(size: int) -> int:
     return max(10, int(round(size * UI_SCALE)))
@@ -161,6 +171,10 @@ class DesktopApp:
         self._terminal_history_pos: int = 0
         self._terminal_log: list[tuple[str, str]] = []
         self._terminal_output_widget: scrolledtext.ScrolledText | None = None
+        self._terminal_toolbar: tk.Frame | None = None
+        self._terminal_toolbar_label: tk.Label | None = None
+        self._terminal_quick_buttons: dict[str, tk.Button] = {}
+        self._terminal_used_commands: set[str] = set()
         self._taskbar_refresh_job: str | None = None
         self._save_loaded = False
         self._save_restore_notice: str = ""
@@ -1114,6 +1128,31 @@ class DesktopApp:
             self._active_app = None
         self._update_dock_highlight()
 
+    def _terminal_command_verb(self, cmd: str) -> str:
+        line = cmd.strip().split("#", 1)[0].strip()
+        if not line:
+            return ""
+        verb = line.split()[0].lower()
+        return "help" if verb == "?" else verb
+
+    def _reveal_terminal_quick(self, cmd: str) -> None:
+        """Show a toolbar shortcut only after the player has typed that command."""
+        verb = self._terminal_command_verb(cmd)
+        if not verb or verb not in self._terminal_quick_buttons:
+            return
+        if verb in self._terminal_used_commands:
+            return
+        was_empty = not self._terminal_used_commands
+        self._terminal_used_commands.add(verb)
+        btn = self._terminal_quick_buttons[verb]
+        if btn.winfo_exists():
+            btn.pack(side=tk.LEFT, padx=2, pady=4)
+        toolbar = self._terminal_toolbar
+        if toolbar and toolbar.winfo_exists():
+            toolbar.grid(row=0, column=0, sticky="ew")
+        if was_empty and self._terminal_toolbar_label and self._terminal_toolbar_label.winfo_exists():
+            self._terminal_toolbar_label.pack(side=tk.LEFT, padx=(8, 6), pady=4)
+
     # ----- terminal command bridge -----
 
     def _gui_run_command(self, cmd: str) -> None:
@@ -1373,23 +1412,27 @@ class DesktopApp:
 
         toolbar = tk.Frame(body, bg=COLORS["window"])
         toolbar.grid(row=0, column=0, sticky="ew")
-        tk.Label(
+        toolbar.grid_remove()
+        self._terminal_toolbar = toolbar
+        quick_lbl = tk.Label(
             toolbar, text="Quick:", fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
-        ).pack(side=tk.LEFT, padx=(8, 6), pady=4)
-        for label, cmd in (
-            ("probe", "probe"),
-            ("crack", "crack"),
-            ("ls", "ls"),
-            ("download", "download"),
-            ("disconnect", "disconnect"),
-            ("help", "help"),
-        ):
-            tk.Button(
+        )
+        self._terminal_toolbar_label = quick_lbl
+        self._terminal_quick_buttons = {}
+        for label, cmd in TERMINAL_QUICK_COMMANDS:
+            btn = tk.Button(
                 toolbar, text=label,
                 command=lambda c=cmd: self._gui_run_command(c),
                 bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT,
                 font=F(9), padx=8, pady=2,
-            ).pack(side=tk.LEFT, padx=2, pady=4)
+            )
+            self._terminal_quick_buttons[cmd] = btn
+        for verb in self._terminal_used_commands:
+            if verb in self._terminal_quick_buttons:
+                self._terminal_quick_buttons[verb].pack(side=tk.LEFT, padx=2, pady=4)
+        if self._terminal_used_commands:
+            quick_lbl.pack(side=tk.LEFT, padx=(8, 6), pady=4)
+            toolbar.grid()
 
         output = scrolledtext.ScrolledText(
             body, bg=COLORS["terminal_bg"], fg=COLORS["terminal_fg"],
@@ -1480,6 +1523,7 @@ class DesktopApp:
             self.root.update_idletasks()
             self.game.close_terminal = False
             self.game.dispatch(cmd)
+            self._reveal_terminal_quick(cmd)
             self._flush_taskbar_refresh()
             if phase_before == "tutorial" and self.game.player.phase == "career":
                 self.root.after(150, self._show_graduation_popup)
