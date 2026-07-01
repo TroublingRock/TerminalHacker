@@ -593,11 +593,17 @@ class DesktopApp:
         h = min(h, ch - 8)
         x = max(0, min(x, cw - w))
         y = max(0, min(y, ch - h))
+        # Clear any prior relwidth/relheight from maximize — Tk keeps stale absolute
+        # width/height when switching place modes, which clips the right edge.
+        shell.place_forget()
         shell.place(x=x, y=y, width=w, height=h, relwidth=0, relheight=0)
         shell.lift()
 
     def _place_maximized(self, shell: tk.Frame) -> None:
-        shell.place(x=0, y=0, relwidth=1, relheight=1)
+        cw, ch = self._desktop_size()
+        # Use explicit pixel size — relwidth=1 on top of a prior width=… overflows the canvas.
+        shell.place_forget()
+        shell.place(x=0, y=0, width=cw, height=ch, relwidth=0, relheight=0)
         shell.lift()
 
     def _sync_window_layout(self, key: str) -> None:
