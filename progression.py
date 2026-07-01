@@ -426,7 +426,7 @@ class SaveManager:
 
     @staticmethod
     def _serialize(game: Game) -> dict:
-        from main import NOTES_PATH
+        from main import NOTES_PATH, TutorialManager
         p = game.player
         return {
             "player": {
@@ -613,6 +613,7 @@ class SaveManager:
                 "world_event_week": game.llm.world_event_week,
             },
             "meta": {
+                "curriculum_version": TutorialManager.CURRICULUM_VERSION,
                 "specialization": game.meta.specialization,
                 "spec_unlock_pending": game.meta.spec_unlock_pending,
                 "backdoors": list(game.meta.backdoors),

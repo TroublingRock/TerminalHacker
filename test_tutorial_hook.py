@@ -38,8 +38,29 @@ class TutorialHookTests(unittest.TestCase):
         game = Game()
         game.player.phase = "tutorial"
         game.player.tutorial_step = 5
+        game.player.tutorial_flags.discard("tutorial_v2")
         game.tutorial.migrate_curriculum_step_for()
         self.assertEqual(game.player.tutorial_step, 4)
+
+    def test_curriculum_migration_keeps_v2_lesson_one(self) -> None:
+        game = Game()
+        game.player.phase = "tutorial"
+        game.player.tutorial_step = 1
+        game.player.tutorial_flags.discard("tutorial_v2")
+        game.player.command_history.add("ifconfig")
+        game.player.command_history.add("route")
+        game.tutorial.migrate_curriculum_step_for()
+        self.assertEqual(game.player.tutorial_step, 1)
+
+    def test_sync_repairs_reset_tutorial_step(self) -> None:
+        game = Game()
+        game.player.phase = "tutorial"
+        game.player.tutorial_step = 0
+        game.player.tutorial_flags.add("tutorial_v2")
+        game.player.command_history.add("ifconfig")
+        game.player.command_history.add("route")
+        game.tutorial.sync_tutorial_step_from_progress()
+        self.assertEqual(game.player.tutorial_step, 1)
 
 
 if __name__ == "__main__":

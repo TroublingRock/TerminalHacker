@@ -351,20 +351,7 @@ class TutorialManager:
         step = p.tutorial_step
         g = self.game
 
-        checks: dict[int, Callable[[], bool]] = {
-            0: lambda: "ifconfig" in p.command_history and "route" in p.command_history,
-            1: lambda: "scan" in p.command_history or "nmap" in p.command_history,
-            2: lambda: p.connection == "192.168.1.50" or "connected_training" in p.tutorial_flags,
-            3: lambda: "probed_training" in p.tutorial_flags,
-            4: lambda: g.network.get_server("192.168.1.50") and g.network.get_server("192.168.1.50").cracked,
-            5: lambda: "read_authlog" in p.tutorial_flags,
-            6: lambda: "wiped_training_logs" in p.tutorial_flags,
-            7: lambda: "/home/hacker/downloads/training_flag.txt" in p.files and p.is_local(),
-            8: lambda: "vpn_success" in p.tutorial_flags and p.vpn_active,
-            9: lambda: any(ip.startswith("10.0.0.") for ip in p.discovered_ips),
-            10: lambda: "/home/hacker/downloads/classified.txt" in p.files and p.remote_was_root,
-            11: lambda: p.firewall_level >= 2,
-        }
+        checks = self._lesson_completion_checks()
 
         if step >= len(TUTORIAL_CURRICULUM):
             return
@@ -458,9 +445,47 @@ class TutorialManager:
         self.defense_survived = True
         success("Defense drill passed — firewall holding against rival probes.")
 
+    def _lesson_completion_checks(self) -> dict[int, Callable[[], bool]]:
+        p = self.player
+        g = self.game
+        return {
+            0: lambda: "ifconfig" in p.command_history and "route" in p.command_history,
+            1: lambda: "scan" in p.command_history or "nmap" in p.command_history,
+            2: lambda: p.connection == "192.168.1.50" or "connected_training" in p.tutorial_flags,
+            3: lambda: "probed_training" in p.tutorial_flags,
+            4: lambda: g.network.get_server("192.168.1.50") and g.network.get_server("192.168.1.50").cracked,
+            5: lambda: "read_authlog" in p.tutorial_flags,
+            6: lambda: "wiped_training_logs" in p.tutorial_flags,
+            7: lambda: "/home/hacker/downloads/training_flag.txt" in p.files and p.is_local(),
+            8: lambda: "vpn_success" in p.tutorial_flags and p.vpn_active,
+            9: lambda: any(ip.startswith("10.0.0.") for ip in p.discovered_ips),
+            10: lambda: "/home/hacker/downloads/classified.txt" in p.files and p.remote_was_root,
+            11: lambda: p.firewall_level >= 2,
+        }
+
+    def _inferred_tutorial_step(self) -> int:
+        """Lowest step index consistent with recorded commands and flags."""
+        checks = self._lesson_completion_checks()
+        step = 0
+        for s in range(len(TUTORIAL_CURRICULUM)):
+            if checks.get(s, lambda: False)():
+                step = s + 1
+            else:
+                break
+        return min(step, len(TUTORIAL_CURRICULUM))
+
+    def sync_tutorial_step_from_progress(self) -> None:
+        """Never lower tutorial_step — only repair accidental resets from bad migrations."""
+        if not self.in_tutorial():
+            return
+        inferred = self._inferred_tutorial_step()
+        if inferred > self.player.tutorial_step:
+            self.player.tutorial_step = inferred
+
     def reconcile_stuck_lessons(self) -> None:
         """Fix edge cases e.g. firewall bought via GUI Shop before rival attack fired."""
         self.migrate_curriculum_step_for()
+        self.sync_tutorial_step_from_progress()
         if not self.in_tutorial():
             return
         p = self.player
@@ -477,6 +502,7 @@ class TutorialManager:
             self.check_advance()
 
     def migrate_curriculum_step_for(self) -> None:
+        """One-time shift for saves started on the pre-v2 (13-lesson) curriculum."""
         p = self.player
         flag = f"tutorial_{self.CURRICULUM_VERSION}"
         if flag in p.tutorial_flags:
@@ -485,7 +511,13 @@ class TutorialManager:
         if p.tutorial_step >= 2:
             p.tutorial_step -= 1
         elif p.tutorial_step == 1:
-            p.tutorial_step = 0
+            # v2 lesson 0 ends at step 1 (scan). Only downgrade legacy saves that
+            # have not yet finished Network Boot on the compressed curriculum.
+            hist = p.command_history
+            if "ifconfig" in hist and "route" in hist:
+                pass
+            else:
+                p.tutorial_step = 0
 
     def send_opening_hook(self) -> None:
         p = self.player
@@ -1288,6 +1320,7 @@ class Game:
 
         self.player = Player()
         self.player._game_ref = self
+        self.player.tutorial_flags.add(f"tutorial_{TutorialManager.CURRICULUM_VERSION}")
         self.network = VirtualNetwork(career=False)
         self.missions = MissionBoard()
         self.mail = MailBox()
