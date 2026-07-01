@@ -57,14 +57,23 @@ DOCK_WIDTH = 58
 
 WINDOW_SIZES: dict[str, tuple[int, int]] = {
     "training": (680, 520),
-    "terminal": (920, 640),
-    "files": (800, 540),
-    "mail": (800, 560),
+    "terminal": (820, 560),
+    "notes": (440, 520),
+    "files": (520, 480),
+    "mail": (640, 500),
     "jobs": (660, 500),
-    "board": (720, 540),
-    "shop": (680, 540),
-    "achieve": (600, 460),
-    "status": (520, 400),
+    "board": (620, 480),
+    "shop": (560, 480),
+    "achieve": (560, 440),
+    "status": (480, 360),
+}
+
+WINDOW_STAGGER: dict[str, tuple[int, int]] = {
+    "terminal": (48, 36),
+    "notes": (36, 48),
+    "files": (72, 52),
+    "training": (56, 40),
+    "mail": (64, 44),
 }
 
 
@@ -146,6 +155,8 @@ class DesktopApp:
         self._terminal_title_lbl: tk.Label | None = None
         self._files_list_frame: tk.Frame | None = None
         self._files_preview_frame: tk.Frame | None = None
+        self._notes_editor: scrolledtext.ScrolledText | None = None
+        self._notes_save_job: str | None = None
         self._terminal_history: list[str] = []
         self._terminal_history_pos: int = 0
         self._terminal_log: list[tuple[str, str]] = []
@@ -387,8 +398,13 @@ class DesktopApp:
                 pass
         for key, panel in self.open_windows.items():
             shell = panel._shell  # type: ignore[attr-defined]
-            if shell.winfo_ismapped():
-                self._place_window(key, shell)
+            if not shell.winfo_ismapped():
+                continue
+            if getattr(panel, "_maximized", False):
+                shell.place(x=0, y=0, relwidth=1, relheight=1)
+            else:
+                geom = getattr(panel, "_geom", self._default_window_geom(key))
+                self._apply_window_geom(key, shell, geom)
 
     def _build_desktop(self) -> None:
         self.content = tk.Frame(self.root, bg=COLORS["desktop"])
@@ -415,6 +431,7 @@ class DesktopApp:
         apps = [
             ("training", "?", "Training", self.open_training),
             ("terminal", ">_", "Terminal", self.open_terminal),
+            ("notes", "≡", "Notes", self.open_notes),
             ("files", "{}", "Files", self.open_files),
             ("mail", "@", "Mail", self.open_mail),
             ("jobs", "[]", "Jobs", self.open_job_board),
@@ -505,21 +522,60 @@ class DesktopApp:
             else:
                 dot.pack_forget()
 
-    def _place_window(self, key: str, shell: tk.Frame, width: int = 0, height: int = 0) -> None:
+    def _desktop_size(self) -> tuple[int, int]:
         canvas = self.desktop_canvas
         if not canvas:
-            return
+            return 1280, 720
         canvas.update_idletasks()
-        shell.place(x=0, y=0, relwidth=1, relheight=1)
+        return max(canvas.winfo_width(), 400), max(canvas.winfo_height(), 300)
+
+    def _default_window_geom(self, key: str) -> tuple[int, int, int, int]:
+        w, h = WINDOW_SIZES.get(key, (720, 520))
+        cw, ch = self._desktop_size()
+        stagger = WINDOW_STAGGER.get(key, (40 + len(self.open_windows) * 28, 40 + len(self.open_windows) * 24))
+        x = min(stagger[0], max(12, cw - w - 12))
+        y = min(stagger[1], max(12, ch - h - 12))
+        if key == "terminal" and cw > w + 480:
+            x = cw - w - 24
+        if key == "notes":
+            x = 24
+            y = 48
+        return x, y, w, h
+
+    def _apply_window_geom(self, key: str, shell: tk.Frame, geom: tuple[int, int, int, int]) -> None:
+        x, y, w, h = geom
+        cw, ch = self._desktop_size()
+        w = min(w, cw - 8)
+        h = min(h, ch - 8)
+        x = max(0, min(x, cw - w))
+        y = max(0, min(y, ch - h))
+        shell.place(x=x, y=y, width=w, height=h)
         shell.lift()
 
+    def _place_window(self, key: str, shell: tk.Frame, width: int = 0, height: int = 0) -> None:
+        panel = self.open_windows.get(key)
+        if panel and getattr(panel, "_maximized", False):
+            shell.place(x=0, y=0, relwidth=1, relheight=1)
+            shell.lift()
+            return
+        if panel and getattr(panel, "_geom", None):
+            self._apply_window_geom(key, shell, panel._geom)  # type: ignore[attr-defined]
+            return
+        geom = self._default_window_geom(key)
+        if panel:
+            panel._geom = geom  # type: ignore[attr-defined]
+        self._apply_window_geom(key, shell, geom)
+
     def _toggle_dock_app(self, key: str, opener) -> None:
-        """Dock click: minimize if this app is already showing, otherwise open/focus it."""
+        """Dock click: minimize focused app, focus unfocused app, or open it."""
         if key in self.open_windows:
             shell = self.open_windows[key]._shell  # type: ignore[attr-defined]
             try:
                 if shell.winfo_ismapped():
-                    self._minimize_window(key)
+                    if self._active_app == key:
+                        self._minimize_window(key)
+                    else:
+                        self._focus_window(key)
                     return
             except tk.TclError:
                 pass
@@ -532,15 +588,47 @@ class DesktopApp:
         self.root.after(30_000, self._tick_clock)
 
     def _titlebar_button(
-        self, parent: tk.Frame, text: str, bg: str, command,
+        self, parent: tk.Frame, text: str, bg: str, command, *, side: str = tk.RIGHT,
     ) -> tk.Label:
         btn = tk.Label(
             parent, text=text, fg=COLORS["text"], bg=bg,
             font=F(10, bold=True), width=3, cursor="hand2",
         )
-        btn.pack(side=tk.RIGHT, padx=1, pady=4)
+        btn.pack(side=side, padx=1, pady=4)
         btn.bind("<Button-1>", lambda _e: command())
         return btn
+
+    def _bind_window_drag(self, key: str, titlebar: tk.Frame, title_lbl: tk.Label, shell: tk.Frame) -> None:
+        drag = {"x": 0, "y": 0}
+
+        def _can_drag() -> bool:
+            panel = self.open_windows.get(key)
+            return bool(panel and not getattr(panel, "_maximized", False))
+
+        def start(event) -> None:
+            if not _can_drag():
+                return
+            drag["x"] = event.x_root
+            drag["y"] = event.y_root
+            self._focus_window(key)
+
+        def move(event) -> None:
+            if not _can_drag():
+                return
+            panel = self.open_windows[key]
+            dx = event.x_root - drag["x"]
+            dy = event.y_root - drag["y"]
+            drag["x"] = event.x_root
+            drag["y"] = event.y_root
+            nx = shell.winfo_x() + dx
+            ny = shell.winfo_y() + dy
+            geom = getattr(panel, "_geom", self._default_window_geom(key))
+            panel._geom = (nx, ny, geom[2], geom[3])  # type: ignore[attr-defined]
+            shell.place(x=nx, y=ny, width=geom[2], height=geom[3])
+
+        for widget in (titlebar, title_lbl):
+            widget.bind("<ButtonPress-1>", start, add="+")
+            widget.bind("<B1-Motion>", move, add="+")
 
     def _run_onboarding(self) -> None:
         """Guide new tutorial players — auto-open Training on first launch."""
@@ -568,7 +656,8 @@ class DesktopApp:
             steps = (
                 "1. Open Training from the dock for the full curriculum\n"
                 "2. Open Terminal and type: lesson\n"
-                "3. Read Mail from your training officer"
+                "3. Open Notes to jot IPs and clues while you work\n"
+                "4. Read Mail from your training officer"
             )
             auto_open = True
         else:
@@ -611,6 +700,10 @@ class DesktopApp:
         ).pack(side=tk.LEFT)
         tk.Button(
             btn_row, text="Open Terminal", command=self.open_terminal,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=14, pady=4,
+        ).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            btn_row, text="Open Notes", command=self.open_notes,
             bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=14, pady=4,
         ).pack(side=tk.LEFT, padx=8)
         tk.Button(
@@ -705,26 +798,27 @@ class DesktopApp:
         if key not in self.open_windows:
             return
         self.open_windows[key]._shell.place_forget()  # type: ignore[attr-defined]
-        self._active_app = None
         if key == "terminal":
             self._uninstall_terminal_key_catcher()
             self._cancel_terminal_focus()
+        self._active_app = None
+        for other in reversed(list(self.open_windows.keys())):
+            shell = self.open_windows[other]._shell  # type: ignore[attr-defined]
+            try:
+                if other != key and shell.winfo_ismapped():
+                    self._active_app = other
+                    break
+            except tk.TclError:
+                continue
         self._update_dock_highlight()
         sounds.play("close")
 
     def _window(self, key: str, title: str, width: int, height: int) -> object:
         if key in self.open_windows:
             panel = self.open_windows[key]
-            self._show_app(key)
+            self._focus_window(key)
             sounds.play("click")
             return panel
-
-        for other in list(self.open_windows.keys()):
-            if other != key:
-                if other == "terminal":
-                    self._hide_app(other, show_desktop=False)
-                else:
-                    self._close_window(other)
 
         canvas = self.desktop_canvas
         assert canvas is not None
@@ -736,51 +830,99 @@ class DesktopApp:
         inner = tk.Frame(shell, bg=COLORS["window"])
         inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
-        titlebar = tk.Frame(inner, bg=COLORS["window_header"], height=32)
+        titlebar = tk.Frame(inner, bg=COLORS["window_header"], height=32, cursor="fleur")
         titlebar.pack(fill=tk.X)
         title_lbl = tk.Label(
             titlebar, text=f"  {title}", fg=COLORS["text"], bg=COLORS["window_header"],
-            font=F(10),
+            font=F(10), cursor="fleur",
         )
-        title_lbl.pack(side=tk.LEFT, pady=5)
+        title_lbl.pack(side=tk.LEFT, pady=5, fill=tk.X, expand=True)
         controls = tk.Frame(titlebar, bg=COLORS["window_header"])
         controls.pack(side=tk.RIGHT, padx=4)
         self._titlebar_button(controls, "×", "#E95420", lambda k=key: self._close_window(k))
+        max_btn = self._titlebar_button(
+            controls, "□", COLORS["border"], lambda k=key: self._toggle_maximize(k),
+        )
         self._titlebar_button(controls, "−", COLORS["border"], lambda k=key: self._minimize_window(k))
 
         body = tk.Frame(inner, bg=COLORS["window"])
         body.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
+        geom = self._default_window_geom(key)
+        if width and height:
+            geom = (geom[0], geom[1], width, height)
+
         panel = type("Panel", (), {})()
         panel._body = body
         panel._shell = shell
+        panel._inner = inner  # type: ignore[attr-defined]
         panel._key = key
         panel._title_lbl = title_lbl  # type: ignore[attr-defined]
-        panel._geom = (width, height)  # type: ignore[attr-defined]
+        panel._titlebar = titlebar  # type: ignore[attr-defined]
+        panel._geom = geom  # type: ignore[attr-defined]
+        panel._maximized = False  # type: ignore[attr-defined]
+        panel._max_btn = max_btn  # type: ignore[attr-defined]
         self.open_windows[key] = panel
 
-        self._place_window(key, shell, width, height)
-        self._show_app(key)
+        self._bind_window_drag(key, titlebar, title_lbl, shell)
+        inner.bind("<Button-1>", lambda _e, k=key: self._focus_window(k), add="+")
+        shell.bind("<Button-1>", lambda _e, k=key: self._focus_window(k), add="+")
+
+        self._place_window(key, shell, geom[2], geom[3])
+        self._focus_window(key)
         sounds.play("open")
         return panel
 
-    def _show_app(self, key: str) -> None:
-        for k, panel in self.open_windows.items():
-            shell = panel._shell  # type: ignore[attr-defined]
-            if k == key:
-                if not shell.winfo_ismapped():
-                    self._place_window(k, shell)
-                else:
-                    shell.lift()
-            else:
-                shell.place_forget()
+    def _focus_window(self, key: str) -> None:
+        if key not in self.open_windows:
+            return
+        panel = self.open_windows[key]
+        shell = panel._shell  # type: ignore[attr-defined]
+        if not shell.winfo_ismapped():
+            self._place_window(key, shell)
+        shell.lift()
         self._active_app = key
         self._update_dock_highlight()
         if key == "terminal" and (self._terminal_entry or self._terminal_input):
             self._arm_terminal_focus()
             self._ensure_terminal_key_catcher()
+        elif key == "notes" and self._notes_editor and self._notes_editor.winfo_exists():
+            self._uninstall_terminal_key_catcher()
+            self._cancel_terminal_focus()
+            self._notes_editor.focus_set()
+        else:
+            self._uninstall_terminal_key_catcher()
+            self._cancel_terminal_focus()
         if key == "files" and "files" in self._built_panels:
             self._refresh_files()
+
+    def _show_app(self, key: str) -> None:
+        self._focus_window(key)
+
+    def _toggle_maximize(self, key: str) -> None:
+        if key not in self.open_windows:
+            return
+        panel = self.open_windows[key]
+        shell = panel._shell  # type: ignore[attr-defined]
+        max_btn = getattr(panel, "_max_btn", None)
+        if getattr(panel, "_maximized", False):
+            panel._maximized = False  # type: ignore[attr-defined]
+            geom = getattr(panel, "_geom", self._default_window_geom(key))
+            self._apply_window_geom(key, shell, geom)
+            if max_btn and max_btn.winfo_exists():
+                max_btn.configure(text="□")
+        else:
+            if shell.winfo_ismapped():
+                panel._geom = (  # type: ignore[attr-defined]
+                    shell.winfo_x(), shell.winfo_y(),
+                    shell.winfo_width(), shell.winfo_height(),
+                )
+            panel._maximized = True  # type: ignore[attr-defined]
+            shell.place(x=0, y=0, relwidth=1, relheight=1)
+            if max_btn and max_btn.winfo_exists():
+                max_btn.configure(text="❐")
+        self._focus_window(key)
+        sounds.play("click")
 
     def _uninstall_terminal_key_catcher(self) -> None:
         self._terminal_key_catcher_active = False
@@ -814,6 +956,8 @@ class DesktopApp:
 
         def catcher(event) -> str | None:
             if not self._terminal_key_catcher_active:
+                return None
+            if self._active_app != "terminal":
                 return None
             if "terminal" not in self.open_windows or not entry.winfo_exists():
                 return None
@@ -939,6 +1083,8 @@ class DesktopApp:
         if key == "terminal":
             self._hide_app(key)
             return
+        if key == "notes":
+            self._save_notes_from_editor()
         if key in self.open_windows:
             sounds.play("close")
             self.open_windows[key]._shell.destroy()
@@ -956,6 +1102,14 @@ class DesktopApp:
         if key == "files":
             self._files_list_frame = None
             self._files_preview_frame = None
+        if key == "notes":
+            self._notes_editor = None
+            if self._notes_save_job:
+                try:
+                    self.root.after_cancel(self._notes_save_job)
+                except tk.TclError:
+                    pass
+                self._notes_save_job = None
         if self._active_app == key:
             self._active_app = None
         self._update_dock_highlight()
@@ -1420,6 +1574,89 @@ class DesktopApp:
                 locs.append((f"Remote ({p.connection})", cwd, s.files))
         return locs
 
+    def _save_notes_from_editor(self) -> None:
+        editor = self._notes_editor
+        if not editor or not editor.winfo_exists():
+            return
+        notes = self.game._local_notes_file()
+        notes.content = editor.get("1.0", "end-1c")
+        if notes.content and not notes.content.endswith("\n"):
+            notes.content += "\n"
+        self.game.autosave(force=True)
+
+    def _schedule_notes_save(self) -> None:
+        if self._notes_save_job:
+            try:
+                self.root.after_cancel(self._notes_save_job)
+            except tk.TclError:
+                pass
+        self._notes_save_job = self.root.after(800, self._flush_notes_save)
+
+    def _flush_notes_save(self) -> None:
+        self._notes_save_job = None
+        self._save_notes_from_editor()
+
+    def open_notes(self) -> None:
+        if "notes" in self._built_panels:
+            self._show_app("notes")
+            if self._notes_editor and self._notes_editor.winfo_exists():
+                self._notes_editor.focus_set()
+            return
+        win = self._window("notes", "Notes — scratchpad", 440, 520)
+        body: tk.Frame = win._body  # type: ignore[attr-defined]
+
+        tk.Label(
+            body, text="SCRATCHPAD", fg=COLORS["accent"], bg=COLORS["window"],
+            font=F(14, bold=True),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            body,
+            text=(
+                f"{NOTES_PATH} — jot IPs, targets, and passwords while you hack. "
+                "Drag this window next to Terminal or Files. Auto-saves."
+            ),
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(10),
+            wraplength=400, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(4, 8))
+
+        notes = self.game._local_notes_file()
+        editor = scrolledtext.ScrolledText(
+            body, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=MONO(11), relief=tk.FLAT, wrap=tk.WORD,
+            insertbackground=COLORS["accent"], undo=True,
+        )
+        editor.pack(fill=tk.BOTH, expand=True)
+        editor.insert("1.0", notes.read())
+        self._notes_editor = editor
+
+        def on_edit(_event=None) -> None:
+            try:
+                if editor.edit_modified():
+                    editor.edit_modified(False)
+                    self._schedule_notes_save()
+            except tk.TclError:
+                pass
+
+        editor.bind("<<Modified>>", on_edit)
+        editor.bind("<FocusOut>", lambda _e: self._save_notes_from_editor())
+
+        btn_row = tk.Frame(body, bg=COLORS["window"])
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        tk.Button(
+            btn_row, text="Save Now", command=lambda: (self._save_notes_from_editor(), sounds.play("success")),
+            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4,
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            btn_row, text="Open Terminal", command=self.open_terminal,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12, pady=4,
+        ).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            btn_row, text="Open Files", command=self.open_files,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12, pady=4,
+        ).pack(side=tk.LEFT)
+
+        self._built_panels.add("notes")
+
     def open_files(self) -> None:
         if "files" in self._built_panels:
             self._show_app("files")
@@ -1454,6 +1691,8 @@ class DesktopApp:
                   bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
         tk.Button(btn_row, text="Open Terminal", command=self.open_terminal,
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_row, text="Open Notes", command=self.open_notes,
+                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
 
         self._refresh_files()
         self._built_panels.add("files")
@@ -1575,6 +1814,10 @@ class DesktopApp:
             btn_row.pack(fill=tk.X, padx=12, pady=(0, 12))
             tk.Button(
                 btn_row, text="Save Notes", command=save_notes,
+                bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4,
+            ).pack(side=tk.LEFT)
+            tk.Button(
+                btn_row, text="Open Notes App", command=self.open_notes,
                 bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4,
             ).pack(side=tk.LEFT)
             tk.Button(
