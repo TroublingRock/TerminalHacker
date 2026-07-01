@@ -109,6 +109,7 @@ class DesktopApp:
         self._terminal_history: list[str] = []
         self._terminal_history_pos: int = 0
         self._save_loaded = False
+        self._save_restore_notice: str = ""
 
         self._try_resume_save()
         self._build_desktop()
@@ -119,12 +120,25 @@ class DesktopApp:
         self.refresh_taskbar()
 
     def _try_resume_save(self) -> None:
-        from progression import SAVE_PATH, SaveManager
+        from progression import BACKUP_PATH, SAVE_PATH, SaveManager
 
-        if SAVE_PATH.exists():
-            self._save_loaded = SaveManager.load(self.game, quiet=True)
-        else:
-            self._save_loaded = False
+        primary_was_reset = False
+        if SAVE_PATH.exists() and BACKUP_PATH.exists():
+            primary = SaveManager._read_save_file(SAVE_PATH)
+            backup = SaveManager._read_save_file(BACKUP_PATH)
+            if primary and backup and SaveManager._progress_key(backup) > SaveManager._progress_key(primary):
+                primary_was_reset = True
+
+        self._save_loaded = SaveManager.load(self.game, quiet=True)
+        if self._save_loaded and primary_was_reset:
+            self._save_restore_notice = (
+                "Your career progress was restored from save backup. "
+                "A bad save overwrite was detected and fixed."
+            )
+        elif not self._save_loaded:
+            self._save_restore_notice = (
+                "Could not load save — starting fresh. Progress will save after each command."
+            )
 
     def _on_quit(self) -> None:
         self.game.autosave(force=True)
@@ -214,12 +228,19 @@ class DesktopApp:
 
     def _run_onboarding(self) -> None:
         """Guide new tutorial players — auto-open Training on first launch."""
+        if self._save_restore_notice and self.hint_label:
+            self.hint_label.configure(text=self._save_restore_notice, fg=COLORS["success"])
+
         p = self.game.player
         if p.phase != "tutorial":
             if self.hint_label:
-                self.hint_label.configure(
-                    text="Career: Terminal to hack · Files for loot · Shop for upgrades · Job Board for contracts."
-                )
+                if self._save_restore_notice:
+                    self.hint_label.configure(text=self._save_restore_notice, fg=COLORS["success"])
+                else:
+                    self.hint_label.configure(
+                        text="Career: Terminal to hack · Files for loot · Shop for upgrades · Job Board for contracts.",
+                        fg=COLORS["muted"],
+                    )
             if p.phase == "career":
                 self.root.after(500, self.open_files)
             return
@@ -1511,14 +1532,34 @@ class DesktopApp:
         btn_row.pack(fill=tk.X, pady=(8, 0))
         tk.Button(btn_row, text="Save Game", command=lambda: (SaveManager.save(self.game), sounds.play("success")),
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12).pack(side=tk.LEFT)
-        tk.Button(btn_row, text="Load Game", command=lambda: (SaveManager.load(self.game), self.refresh_taskbar()),
+        tk.Button(btn_row, text="Load Game", command=self._gui_load_game,
                   bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_row, text="Restore Backup", command=self._gui_restore_backup,
+                  bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         tk.Button(btn_row, text="Chaos Mode (terminal: chaos)", command=self.open_terminal,
                   bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT)
         if p.phase == "career":
             tk.Button(btn_row, text="Endless Run (endless start)", command=self.open_terminal,
                       bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         self._built_panels.add("status")
+
+    def _gui_load_game(self) -> None:
+        from progression import SaveManager
+        if SaveManager.load(self.game):
+            self.game.player._game_ref = self.game
+            sounds.play("success")
+            self._save_restore_notice = ""
+            self.refresh_taskbar()
+            self._run_onboarding()
+
+    def _gui_restore_backup(self) -> None:
+        from progression import SaveManager
+        if SaveManager.restore_backup(self.game):
+            self.game.player._game_ref = self.game
+            sounds.play("success")
+            self._save_restore_notice = "Restored from save backup."
+            self.refresh_taskbar()
+            self._run_onboarding()
 
     def run(self) -> None:
         import signal

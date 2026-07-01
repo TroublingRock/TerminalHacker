@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from main import Game, Player, Server
 
 SAVE_PATH = Path.home() / ".terminalhacker" / "save.json"
+BACKUP_PATH = SAVE_PATH.with_suffix(".json.bak")
 
 # ---------------------------------------------------------------------------
 # Ranks & subnet unlocks
@@ -258,15 +259,131 @@ class SaveManager:
     AUTOSAVE_EVERY = 5
 
     @staticmethod
-    def save(game: Game, *, quiet: bool = False) -> bool:
+    def _progress_key(data: dict) -> tuple[int, int, int, int]:
+        """Higher = more progress. Used to detect accidental save overwrites."""
+        p = data.get("player", {})
+        phase_rank = {"tutorial": 0, "endless": 1, "career": 2}.get(p.get("phase", "tutorial"), 0)
+        return (
+            phase_rank,
+            int(p.get("tutorial_step", 0)),
+            int(p.get("money", 0)),
+            int(p.get("reputation", 0)),
+        )
+
+    @staticmethod
+    def _would_regress(existing: dict, new_data: dict) -> bool:
+        old = SaveManager._progress_key(existing)
+        new = SaveManager._progress_key(new_data)
+        if new < old:
+            return True
+        # Career save wiped back to fresh tutorial
+        if old[0] >= 2 and new[0] == 0 and new[1] <= 1:
+            return True
+        return False
+
+    @staticmethod
+    def _read_save_file(path: Path) -> dict | None:
+        try:
+            return json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def backup_is_better(path: Path, game: Game) -> bool:
+        data = SaveManager._read_save_file(path)
+        if not data:
+            return False
+        current = SaveManager._serialize(game)
+        return SaveManager._progress_key(data) > SaveManager._progress_key(current)
+
+    @staticmethod
+    def load_from_path(game: Game, path: Path, *, quiet: bool = False) -> bool:
         from main import error, success
 
+        data = SaveManager._read_save_file(path)
+        if not data:
+            if not quiet:
+                error(f"Could not read {path}")
+            return False
         try:
+            SaveManager._deserialize(game, data)
+            if not quiet:
+                success(f"Loaded from {path}")
+            return True
+        except (KeyError, TypeError, ValueError) as exc:
+            if not quiet:
+                error(f"Load failed: {exc}")
+            return False
+
+    @staticmethod
+    def restore_backup(game: Game, *, quiet: bool = False) -> bool:
+        if not BACKUP_PATH.exists():
+            return False
+        if not SaveManager.load_from_path(game, BACKUP_PATH, quiet=quiet):
+            return False
+        return SaveManager.save(game, quiet=quiet)
+
+    @staticmethod
+    def _load_primary(game: Game, *, quiet: bool = False) -> bool:
+        from main import error
+
+        if not SAVE_PATH.exists():
+            return False
+        try:
+            SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()))
+            return True
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            if not quiet:
+                error(f"Load failed: {exc}")
+            return False
+
+    @staticmethod
+    def load_best_available(game: Game, *, quiet: bool = False) -> bool:
+        """Load primary save; auto-restore from backup if primary is an accidental reset."""
+        from main import error, success, warn
+
+        loaded = SaveManager._load_primary(game, quiet=True)
+        if loaded and BACKUP_PATH.exists() and SaveManager.backup_is_better(BACKUP_PATH, game):
+            if SaveManager.load_from_path(game, BACKUP_PATH, quiet=True):
+                SaveManager.save(game, quiet=True)
+                if not quiet:
+                    warn("Restored your progress from save backup (primary save had regressed).")
+                return True
+        if loaded:
+            if not quiet:
+                success(f"Loaded from {SAVE_PATH}")
+            return True
+        if BACKUP_PATH.exists() and SaveManager.load_from_path(game, BACKUP_PATH, quiet=quiet):
+            SaveManager.save(game, quiet=True)
+            if not quiet:
+                warn("Primary save missing or corrupt — restored from backup.")
+            return True
+        if not quiet:
+            error("No save file found.")
+        return False
+
+    @staticmethod
+    def save(game: Game, *, quiet: bool = False, allow_regression: bool = False) -> bool:
+        from main import error, success, warn
+
+        try:
+            new_data = SaveManager._serialize(game)
             SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            if SAVE_PATH.exists() and not allow_regression:
+                existing = SaveManager._read_save_file(SAVE_PATH)
+                if existing and SaveManager._would_regress(existing, new_data):
+                    blocked = SAVE_PATH.with_suffix(".json.blocked")
+                    blocked.write_text(json.dumps(new_data, indent=2))
+                    if not quiet:
+                        warn(
+                            "Save blocked — would reset your progress. "
+                            f"Backup kept at {BACKUP_PATH}. "
+                            "Use System Status → Restore Backup, or type 'load' in Terminal."
+                        )
+                    return False
             if SAVE_PATH.exists():
-                backup = SAVE_PATH.with_suffix(".json.bak")
-                backup.write_text(SAVE_PATH.read_text())
-            SAVE_PATH.write_text(json.dumps(SaveManager._serialize(game), indent=2))
+                BACKUP_PATH.write_text(SAVE_PATH.read_text())
+            SAVE_PATH.write_text(json.dumps(new_data, indent=2))
             if not quiet:
                 success(f"Saved to {SAVE_PATH}")
             return True
@@ -290,20 +407,7 @@ class SaveManager:
 
     @staticmethod
     def load(game: Game, *, quiet: bool = False) -> bool:
-        from main import error, success
-        if not SAVE_PATH.exists():
-            if not quiet:
-                error("No save file found.")
-            return False
-        try:
-            SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()))
-            if not quiet:
-                success(f"Loaded from {SAVE_PATH}")
-            return True
-        except (OSError, json.JSONDecodeError, KeyError) as exc:
-            if not quiet:
-                error(f"Load failed: {exc}")
-            return False
+        return SaveManager.load_best_available(game, quiet=quiet)
 
     @staticmethod
     def _serialize(game: Game) -> dict:
