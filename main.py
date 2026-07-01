@@ -46,11 +46,14 @@ class Console:
 # ---------------------------------------------------------------------------
 
 def divider(title: str = "") -> None:
-    line = "=" * 62
     if title:
-        Console.out(f"\n{line}\n  {title}\n{line}")
+        Console.out(f"\n── {title} " + "─" * max(4, 54 - len(title)), "info")
     else:
-        Console.out(line)
+        Console.out("─" * 62, "info")
+
+
+def muted(message: str) -> None:
+    Console.out(message, "muted")
 
 
 def info(message: str) -> None:
@@ -1269,14 +1272,29 @@ class Game:
         )
 
     def banner(self) -> None:
-        divider("TERMINALHACKER — CYBERSECURITY TRAINING SIMULATOR")
+        Console.out("Welcome to Ubuntu 24.04.2 LTS (GNU/Linux 6.8.0-generic x86_64)", "info")
+        Console.out("")
+        muted(" * Documentation:  https://help.ubuntu.com")
+        muted(" * Management:     https://landscape.canonical.com")
+        muted(" * Support:        https://ubuntu.com/pro")
+        Console.out("")
+        Console.out("Last login: " + time.strftime("%a %b %d %H:%M:%S on tty1"), "muted")
+        Console.out("")
+        divider("TERMINALHACKER TRAINING ENVIRONMENT")
         Console.out(
-            "You begin in the TUTORIAL phase with a $500 training budget.\n"
-            "Losses during training come from tutorial credits — NOT career money.\n"
-            "Type 'lesson' for objectives. Graduate to career mode after all lessons.\n"
-            "Progress auto-saves periodically to ~/.terminalhacker/save.json\n"
+            "Tutorial phase uses a $500 training budget — career funds stay protected.\n"
+            "Type 'lesson' for objectives. Progress saves to ~/.terminalhacker/save.json",
+            "normal",
         )
         self.tutorial.show_lesson()
+
+    def _display_path(self, path: str) -> str:
+        home = "/home/hacker"
+        if path == home:
+            return "~"
+        if path.startswith(home + "/"):
+            return "~" + path[len(home):]
+        return path
 
     def prompt(self) -> str:
         p = self.player
@@ -1287,8 +1305,13 @@ class Game:
         else:
             user = self.remote_server().ssh_user if self.remote_server() else p.username
         host = p.prompt_host
-        path = p.cwd if p.has_remote_shell or p.is_local() else "~"
-        sym = "#" if p.is_local() or p.has_remote_shell else ">"
+        if p.has_remote_shell or p.is_local():
+            path = self._display_path(p.cwd)
+        else:
+            path = "~"
+        sym = "#" if (p.is_local() or p.has_remote_shell) and p.remote_is_root else "$"
+        if not p.is_local() and not p.has_remote_shell:
+            sym = ">"
         vpn = " [VPN]" if p.vpn_active else ""
         return f"{user}@{host}:{path}{sym}{vpn} "
 

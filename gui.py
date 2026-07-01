@@ -25,22 +25,29 @@ from retention import SEASON_TIERS, RetentionManager
 # Theme
 # ---------------------------------------------------------------------------
 
+# Ubuntu Yaru dark + GNOME Terminal palette
 COLORS = {
-    "desktop": "#0d1117",
-    "taskbar": "#161b22",
-    "window": "#1c2128",
-    "border": "#30363d",
-    "text": "#e6edf3",
-    "accent": "#00ff41",
-    "accent_dim": "#238636",
-    "muted": "#8b949e",
-    "terminal_bg": "#0a0e14",
-    "terminal_fg": "#00ff41",
-    "info": "#79c0ff",
-    "success": "#3fb950",
-    "warn": "#d29922",
-    "error": "#f85149",
-    "teach": "#56d4dd",
+    "desktop": "#241f31",
+    "taskbar": "#1e1e1e",
+    "window": "#303030",
+    "window_header": "#303030",
+    "border": "#4d4d4d",
+    "text": "#ffffff",
+    "accent": "#E95420",
+    "accent_dim": "#c34113",
+    "aubergine": "#77216F",
+    "muted": "#babdb4",
+    "terminal_bg": "#300A24",
+    "terminal_fg": "#ffffff",
+    "prompt_user": "#8AE234",
+    "prompt_path": "#729FCF",
+    "prompt_sym": "#ffffff",
+    "info": "#729FCF",
+    "success": "#8AE234",
+    "warn": "#FCAF3E",
+    "error": "#EF2929",
+    "teach": "#AD7FA8",
+    "selection": "#E95420",
 }
 
 # Text scale — set TERMINALHACKER_UI_SCALE=2.0 in env for even larger UI
@@ -52,12 +59,13 @@ def _fs(size: int) -> int:
 
 
 def F(size: int, *, bold: bool = False) -> tuple[str, int] | tuple[str, int, str]:
-    base: tuple[str, int] | tuple[str, int, str] = ("Helvetica", _fs(size))
+    # DejaVu ships on Ubuntu; Tk accepts one family per font tuple.
+    base: tuple[str, int] | tuple[str, int, str] = ("DejaVu Sans", _fs(size))
     return (*base, "bold") if bold else base
 
 
 def MONO(size: int, *, bold: bool = False) -> tuple[str, int] | tuple[str, int, str]:
-    base: tuple[str, int] | tuple[str, int, str] = ("Courier", _fs(size))
+    base: tuple[str, int] | tuple[str, int, str] = ("DejaVu Sans Mono", _fs(size))
     return (*base, "bold") if bold else base
 
 
@@ -69,7 +77,7 @@ class DesktopApp:
 
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("TerminalHacker OS")
+        self.root.title("TerminalHacker — Ubuntu 24.04 LTS")
         self.root.geometry("1280x860")
         self.root.minsize(1024, 720)
         self.root.tk.call("tk", "scaling", UI_SCALE)
@@ -108,7 +116,8 @@ class DesktopApp:
         self._terminal_key_catcher_active = False
         self._terminal_run_cmd: object | None = None
         self._terminal_submit_cmd: object | None = None
-        self._terminal_prompt_lbl: tk.Label | None = None
+        self._terminal_prompt_frame: tk.Frame | None = None
+        self._terminal_title_lbl: tk.Label | None = None
         self._files_list_frame: tk.Frame | None = None
         self._files_preview_frame: tk.Frame | None = None
         self._terminal_history: list[str] = []
@@ -120,8 +129,8 @@ class DesktopApp:
         self._save_restore_notice: str = ""
 
         self._try_resume_save()
+        self._build_top_panel()
         self._build_desktop()
-        self._build_taskbar()
         self._run_onboarding()
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self._schedule_autosave()
@@ -252,42 +261,106 @@ class DesktopApp:
             self.mail_badge.configure(text="")
             self.mail_badge.place_forget()
 
+    def _prompt_home(self) -> str:
+        return "/home/hacker"
+
+    def _prompt_path_display(self, path: str) -> str:
+        home = self._prompt_home()
+        if path == home:
+            return "~"
+        if path.startswith(home + "/"):
+            return "~" + path[len(home):]
+        return path
+
+    def _prompt_parts(self) -> list[tuple[str, str]]:
+        p = self.game.player
+        if p.is_local():
+            user, host = p.username, "localhost"
+        elif p.remote_is_root:
+            user, host = "root", p.prompt_host
+        else:
+            srv = self.game.remote_server()
+            user = srv.ssh_user if srv else p.username
+            host = p.prompt_host
+        if p.has_remote_shell or p.is_local():
+            path = self._prompt_path_display(p.cwd)
+        else:
+            path = "~"
+        sym = "#" if (p.is_local() or p.has_remote_shell) and p.remote_is_root else "$"
+        if not p.is_local() and not p.has_remote_shell:
+            sym = ">"
+        vpn = " [VPN]" if p.vpn_active else ""
+        return [
+            (f"{user}@{host}", COLORS["prompt_user"]),
+            (":", COLORS["prompt_sym"]),
+            (path, COLORS["prompt_path"]),
+            (sym, COLORS["prompt_sym"]),
+            (vpn, COLORS["muted"]),
+            (" ", COLORS["prompt_sym"]),
+        ]
+
+    def _terminal_window_title(self) -> str:
+        p = self.game.player
+        if p.is_local():
+            user, host = p.username, "localhost"
+        elif p.remote_is_root:
+            user, host = "root", p.prompt_host
+        else:
+            srv = self.game.remote_server()
+            user = srv.ssh_user if srv else p.username
+            host = p.prompt_host
+        path = self._prompt_path_display(p.cwd) if (p.has_remote_shell or p.is_local()) else "~"
+        return f"{user}@{host}: {path}"
+
+    def _rebuild_terminal_prompt(self) -> None:
+        frame = self._terminal_prompt_frame
+        if not frame or not frame.winfo_exists():
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        for text, color in self._prompt_parts():
+            if not text:
+                continue
+            tk.Label(
+                frame, text=text, fg=color, bg=COLORS["terminal_bg"], font=MONO(13),
+            ).pack(side=tk.LEFT)
+
     # ----- layout -----
 
     def _build_desktop(self) -> None:
-        header = tk.Frame(self.root, bg=COLORS["desktop"])
-        header.pack(fill=tk.X, padx=24, pady=(20, 8))
-        title_font = tkfont.Font(family="Helvetica", size=_fs(22), weight="bold")
-        tk.Label(
-            header, text="TERMINALHACKER OS", fg=COLORS["accent"],
-            bg=COLORS["desktop"], font=title_font,
-        ).pack(side=tk.LEFT)
-        tk.Label(
-            header, text="  v1.9 — Cybersecurity Training Environment",
-            fg=COLORS["muted"], bg=COLORS["desktop"], font=F(12),
-        ).pack(side=tk.LEFT, padx=(8, 0))
-
         self.content = tk.Frame(self.root, bg=COLORS["desktop"])
         self.content.pack(fill=tk.BOTH, expand=True)
 
         self.desktop_view = tk.Frame(self.content, bg=COLORS["desktop"])
         self.desktop_view.pack(fill=tk.BOTH, expand=True)
 
+        welcome = tk.Frame(self.desktop_view, bg=COLORS["desktop"])
+        welcome.pack(fill=tk.X, padx=32, pady=(16, 8))
+        tk.Label(
+            welcome, text="Ubuntu Desktop",
+            fg=COLORS["text"], bg=COLORS["desktop"], font=F(20, bold=True),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            welcome,
+            text="TerminalHacker training environment — 24.04 LTS",
+            fg=COLORS["muted"], bg=COLORS["desktop"], font=F(11),
+        ).pack(anchor=tk.W, pady=(2, 0))
+
         icons = tk.Frame(self.desktop_view, bg=COLORS["desktop"])
-        icons.pack(fill=tk.BOTH, expand=True, padx=32, pady=16)
+        icons.pack(fill=tk.BOTH, expand=True, padx=32, pady=8)
 
         self.app_shell = tk.Frame(self.content, bg=COLORS["window"])
 
         apps = [
-            ("training", "?", "Training", "START HERE — tutorial lessons", self.open_training),
-            ("terminal", ">_", "Terminal", "SSH shell & hacking commands", self.open_terminal),
-            ("files", "{}", "Files", "Downloads & loot — view exfiltrated files", self.open_files),
-            ("mail", "@", "Mail", "NPC brokers & training messages", self.open_mail),
-            ("jobs", "[]", "Job Board", "Paid contracts & missions", self.open_job_board),
-            ("board", "//", "Darknet Board", "Intel, rivals, flex & LFG posts", self.open_social_board),
-            ("shop", "$", "Black Market", "CPU, firewall & tools", self.open_shop),
-            ("achieve", "*", "Achievements", "Badges & daily challenges", self.open_achievements),
-            ("status", "#", "System Status", "Hardware, VPN, save/load", self.open_status),
+            ("training", "?", "Training", "Tutorial lessons", self.open_training),
+            ("terminal", ">_", "Terminal", "Bash shell & commands", self.open_terminal),
+            ("files", "{}", "Files", "Downloads & loot", self.open_files),
+            ("mail", "@", "Mail", "Messages & contracts", self.open_mail),
+            ("jobs", "[]", "Job Board", "Paid missions", self.open_job_board),
+            ("board", "//", "Darknet Board", "Intel & LFG posts", self.open_social_board),
+            ("shop", "$", "Software", "Upgrades & tools", self.open_shop),
+            ("achieve", "*", "Achievements", "Badges & dailies", self.open_achievements),
+            ("status", "#", "Settings", "System status & saves", self.open_status),
         ]
 
         for i, app in enumerate(apps):
@@ -296,7 +369,7 @@ class DesktopApp:
 
         hint = tk.Label(
             self.desktop_view,
-            text="Click an icon to launch. Use ← Desktop to return from any app.",
+            text="Activities — click an app to launch. Use ← Desktop to return.",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=F(11),
         )
         hint.pack(pady=(0, 12))
@@ -400,13 +473,17 @@ class DesktopApp:
         icon_wrap = tk.Frame(frame, bg=COLORS["desktop"])
         icon_wrap.pack()
 
+        if key == "terminal":
+            box_bg, box_fg = COLORS["terminal_bg"], COLORS["prompt_user"]
+        elif key == "training" and self.game.player.phase == "tutorial":
+            box_bg, box_fg = COLORS["accent"], "white"
+        else:
+            box_bg, box_fg = COLORS["aubergine"], COLORS["text"]
         box = tk.Label(
-            icon_wrap, text=glyph, fg=COLORS["accent"], bg=COLORS["window"],
-            font=MONO(30, bold=True), width=4, height=2,
-            relief=tk.RAISED, bd=2,
+            icon_wrap, text=glyph, fg=box_fg, bg=box_bg,
+            font=MONO(26, bold=True), width=4, height=2,
+            relief=tk.FLAT, bd=0,
         )
-        if key == "training" and self.game.player.phase == "tutorial":
-            box.configure(bg=COLORS["accent_dim"], fg="white")
         box.pack()
 
         if key == "mail":
@@ -436,17 +513,30 @@ class DesktopApp:
         for widget in widgets:
             widget.bind("<Button-1>", launch)
             widget.configure(cursor="hand2")
-        box.bind("<Enter>", lambda _e, b=box: b.configure(bg=COLORS["border"]))
-        box.bind("<Leave>", lambda _e, b=box: b.configure(bg=COLORS["window"]))
+        def on_enter(_e: object, b: tk.Label = box, bg: str = box_bg) -> None:
+            b.configure(bg=COLORS["accent_dim"])
 
-    def _build_taskbar(self) -> None:
-        bar = tk.Frame(self.root, bg=COLORS["taskbar"], height=36)
-        bar.pack(fill=tk.X, side=tk.BOTTOM)
+        def on_leave(_e: object, b: tk.Label = box, bg: str = box_bg) -> None:
+            b.configure(bg=bg)
+
+        box.bind("<Enter>", on_enter)
+        box.bind("<Leave>", on_leave)
+
+    def _build_top_panel(self) -> None:
+        bar = tk.Frame(self.root, bg=COLORS["taskbar"], height=34)
+        bar.pack(fill=tk.X, side=tk.TOP)
+        tk.Label(
+            bar, text="  ◉", fg=COLORS["accent"], bg=COLORS["taskbar"], font=F(11, bold=True),
+        ).pack(side=tk.LEFT)
+        tk.Label(
+            bar, text="TerminalHacker", fg=COLORS["text"], bg=COLORS["taskbar"],
+            font=F(11, bold=True),
+        ).pack(side=tk.LEFT, padx=(0, 12))
         self.taskbar_label = tk.Label(
-            bar, text="", fg=COLORS["text"], bg=COLORS["taskbar"],
-            font=F(10), anchor=tk.W, padx=12,
+            bar, text="", fg=COLORS["muted"], bg=COLORS["taskbar"],
+            font=F(10), anchor=tk.W,
         )
-        self.taskbar_label.pack(fill=tk.X, side=tk.LEFT)
+        self.taskbar_label.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=4)
 
     def refresh_taskbar(self) -> None:
         if self.taskbar_label is None:
@@ -505,16 +595,18 @@ class DesktopApp:
         shell = tk.Frame(self.app_shell, bg=COLORS["window"])
         shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
 
-        titlebar = tk.Frame(shell, bg=COLORS["border"], height=36)
+        titlebar = tk.Frame(shell, bg=COLORS["window_header"], height=36)
         titlebar.pack(fill=tk.X)
-        tk.Label(
-            titlebar, text=f"  {title}", fg=COLORS["text"], bg=COLORS["border"],
-            font=F(10, bold=True),
-        ).pack(side=tk.LEFT, pady=6)
+        title_lbl = tk.Label(
+            titlebar, text=f"  {title}", fg=COLORS["text"], bg=COLORS["window_header"],
+            font=F(10),
+        )
+        title_lbl.pack(side=tk.LEFT, pady=6)
         tk.Button(
             titlebar, text="← Desktop", command=lambda: self._close_window(key),
-            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
         ).pack(side=tk.RIGHT, padx=8, pady=4)
+        tk.Frame(titlebar, bg=COLORS["accent"], width=3).pack(side=tk.RIGHT, fill=tk.Y)
 
         body = tk.Frame(shell, bg=COLORS["window"])
         body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -523,6 +615,7 @@ class DesktopApp:
         panel._body = body
         panel._shell = shell
         panel._key = key
+        panel._title_lbl = title_lbl  # type: ignore[attr-defined]
         self.open_windows[key] = panel
 
         self.app_shell.pack(fill=tk.BOTH, expand=True)
@@ -653,7 +746,7 @@ class DesktopApp:
             if self._terminal_input_frame:
                 self._terminal_input_frame.configure(
                     highlightbackground=COLORS["accent"],
-                    highlightthickness=3,
+                    highlightthickness=2,
                 )
         except tk.TclError:
             pass
@@ -969,54 +1062,19 @@ class DesktopApp:
             self._arm_terminal_focus()
             self._ensure_terminal_key_catcher()
             return
-        win = self._window("terminal", "Terminal — hacker@localhost", 780, 560)
+        title = self._terminal_window_title()
+        win = self._window("terminal", title, 820, 580)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(3, weight=1)
-
-        # --- Command line at TOP (always visible) ---
-        cmd_banner = tk.Label(
-            body,
-            text="▼ COMMAND LINE — click the green bar, type your command, press Enter or RUN ▼",
-            fg="#00ff41", bg="#001a0a", font=F(11, bold=True),
-            pady=6, padx=8,
-        )
-        cmd_banner.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-
-        cmd_outer = tk.Frame(
-            body, bg="#001a0a",
-            highlightthickness=3, highlightbackground="#00ff41", highlightcolor="#00ff41",
-        )
-        cmd_outer.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        cmd_outer.columnconfigure(1, weight=1)
-        self._terminal_input_frame = cmd_outer
-
-        prompt_lbl = tk.Label(
-            cmd_outer, text="", fg="#00ff41", bg="#001a0a", font=MONO(13, bold=True),
-        )
-        prompt_lbl.grid(row=0, column=0, sticky="w", padx=(8, 4), pady=8)
-        self._terminal_prompt_lbl = prompt_lbl
-
-        entry = tk.Entry(
-            cmd_outer,
-            bg="#002211", fg="#ffffff",
-            insertbackground="#00ff41",
-            font=MONO(15, bold=True),
-            relief=tk.SOLID, bd=2,
-            highlightthickness=2,
-            highlightbackground="#00ff41",
-            highlightcolor="#00ff41",
-            selectbackground="#238636",
-            selectforeground="#ffffff",
-        )
-        entry.grid(row=0, column=1, sticky="ew", padx=4, pady=8, ipady=10)
-        self._terminal_entry = entry
-        self._terminal_input = None
+        body.rowconfigure(0, weight=0)
+        body.rowconfigure(1, weight=1)
+        body.rowconfigure(2, weight=0)
 
         toolbar = tk.Frame(body, bg=COLORS["window"])
-        toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 6))
-        tk.Label(toolbar, text="Quick:", fg=COLORS["muted"], bg=COLORS["window"],
-                 font=F(9)).pack(side=tk.LEFT, padx=(0, 6))
+        toolbar.grid(row=0, column=0, sticky="ew")
+        tk.Label(
+            toolbar, text="Quick:", fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+        ).pack(side=tk.LEFT, padx=(8, 6), pady=4)
         for label, cmd in (
             ("probe", "probe"),
             ("crack", "crack"),
@@ -1028,28 +1086,60 @@ class DesktopApp:
             tk.Button(
                 toolbar, text=label,
                 command=lambda c=cmd: self._gui_run_command(c),
-                bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT,
+                bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT,
                 font=F(9), padx=8, pady=2,
-            ).pack(side=tk.LEFT, padx=2)
+            ).pack(side=tk.LEFT, padx=2, pady=4)
 
         output = scrolledtext.ScrolledText(
             body, bg=COLORS["terminal_bg"], fg=COLORS["terminal_fg"],
-            insertbackground=COLORS["accent"], font=MONO(13),
-            relief=tk.FLAT, wrap=tk.WORD, takefocus=0,
+            insertbackground=COLORS["prompt_user"], font=MONO(12),
+            relief=tk.FLAT, wrap=tk.WORD, takefocus=0, padx=8, pady=8,
         )
-        output.grid(row=3, column=0, sticky="nsew")
+        output.grid(row=1, column=0, sticky="nsew")
         output.configure(state=tk.DISABLED)
         self._terminal_output_widget = output
 
         for tag, color in (
-            ("normal", COLORS["terminal_fg"]), ("info", COLORS["info"]),
-            ("success", COLORS["success"]), ("warn", COLORS["warn"]),
-            ("error", COLORS["error"]), ("teach", COLORS["teach"]), ("prompt", "#ffffff"),
+            ("normal", COLORS["terminal_fg"]),
+            ("info", COLORS["info"]),
+            ("success", COLORS["success"]),
+            ("warn", COLORS["warn"]),
+            ("error", COLORS["error"]),
+            ("teach", COLORS["teach"]),
+            ("muted", COLORS["muted"]),
+            ("prompt", COLORS["prompt_user"]),
         ):
             output.tag_configure(tag, foreground=color)
 
         if self._terminal_log:
             self._replay_terminal_log(output)
+
+        cmd_outer = tk.Frame(
+            body, bg=COLORS["terminal_bg"],
+            highlightthickness=1, highlightbackground=COLORS["border"],
+        )
+        cmd_outer.grid(row=2, column=0, sticky="ew")
+        cmd_outer.columnconfigure(1, weight=1)
+        self._terminal_input_frame = cmd_outer
+
+        prompt_frame = tk.Frame(cmd_outer, bg=COLORS["terminal_bg"])
+        prompt_frame.grid(row=0, column=0, sticky="w", padx=(8, 0), pady=6)
+        self._terminal_prompt_frame = prompt_frame
+
+        entry = tk.Entry(
+            cmd_outer,
+            bg=COLORS["terminal_bg"], fg=COLORS["terminal_fg"],
+            insertbackground=COLORS["prompt_user"],
+            font=MONO(12),
+            relief=tk.FLAT, bd=0,
+            highlightthickness=0,
+            selectbackground=COLORS["selection"],
+            selectforeground="#ffffff",
+        )
+        entry.grid(row=0, column=1, sticky="ew", padx=4, pady=6, ipady=4)
+        self._terminal_entry = entry
+        self._terminal_input = None
+        self._terminal_title_lbl = getattr(win, "_title_lbl", None)
 
         def remember_command(cmd: str) -> None:
             if not cmd:
@@ -1104,8 +1194,9 @@ class DesktopApp:
             if self.game.close_terminal:
                 self._close_window("terminal")
                 return
-            if self._terminal_prompt_lbl:
-                self._terminal_prompt_lbl.configure(text=self.game.prompt())
+            self._rebuild_terminal_prompt()
+            if self._terminal_title_lbl and self._terminal_title_lbl.winfo_exists():
+                self._terminal_title_lbl.configure(text=f"  {self._terminal_window_title()}")
             self._activate_terminal_input()
 
         def run_command(_event=None) -> str:
@@ -1130,12 +1221,6 @@ class DesktopApp:
             self._activate_terminal_input()
             return "break"
 
-        tk.Button(
-            cmd_outer, text="RUN ▶", command=run_command,
-            bg="#238636", fg="white", font=F(11, bold=True),
-            relief=tk.FLAT, padx=14, pady=6,
-        ).grid(row=0, column=2, sticky="e", padx=8, pady=8)
-
         entry.bind("<Return>", run_command)
         entry.bind("<KP_Enter>", run_command)
         entry.bind("<Up>", history_up)
@@ -1143,14 +1228,13 @@ class DesktopApp:
         entry.bind("<Control-v>", paste_clip)
         entry.bind("<Control-V>", paste_clip)
         entry.bind("<Button-1>", lambda _e: self._activate_terminal_input())
-        cmd_banner.bind("<Button-1>", focus_cmd)
         cmd_outer.bind("<Button-1>", focus_cmd)
         output.bind("<Button-1>", focus_cmd)
-        prompt_lbl.bind("<Button-1>", focus_cmd)
+        prompt_frame.bind("<Button-1>", focus_cmd)
 
         self._install_terminal_key_catcher(entry, run_command)
 
-        prompt_lbl.configure(text=self.game.prompt())
+        self._rebuild_terminal_prompt()
         self._arm_terminal_focus()
         if not self.terminal_booted:
             self.terminal_booted = True
