@@ -1169,6 +1169,7 @@ class Game:
         self.running = True
         self.gui_mode = False
         self.close_terminal = False
+        self.quit_game = False
         self._cmds_since_autosave = 0
         self.last_autosave = ""
         self._seed_mail()
@@ -2284,11 +2285,22 @@ class Game:
 
     def cmd_exit(self, _a: list[str]) -> None:
         if self.gui_mode:
+            self.autosave(force=True)
             self.close_terminal = True
-            Console.out("Terminal minimized to desktop.")
+            Console.out("Back to desktop — progress saved. (Use quit to leave the game.)")
             return
         self.running = False
         self.autosave(force=True)
+        Console.out("Goodbye.")
+
+    def cmd_quit(self, _a: list[str]) -> None:
+        self.autosave(force=True)
+        if self.gui_mode:
+            self.quit_game = True
+            self.close_terminal = True
+            Console.out("Saving and quitting...")
+            return
+        self.running = False
         Console.out("Goodbye.")
 
     def dispatch(self, raw: str) -> None:
@@ -2328,7 +2340,7 @@ class Game:
             "llm": self.cmd_llm,
             "world": self.cmd_world,
             "save": self.cmd_save, "load": self.cmd_load,
-            "exit": self.cmd_exit, "quit": self.cmd_exit,
+            "exit": self.cmd_exit, "quit": self.cmd_quit,
         }
         if cmd in handlers:
             handlers[cmd](args)

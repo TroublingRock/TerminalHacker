@@ -203,19 +203,33 @@ class DesktopApp:
         banner.pack(fill=tk.X, padx=24, pady=(0, 4), before=self.hint_label)
         self.onboarding_banner = banner
 
+        if p.tutorial_step == 0:
+            headline = "TRAINING MODE — START HERE"
+            steps = (
+                "1. Open Training for the full curriculum\n"
+                "2. Open Terminal and type: lesson\n"
+                "3. Read Mail from your training officer"
+            )
+            auto_open = True
+        else:
+            headline = f"RESUME TRAINING — Lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)}"
+            steps = (
+                "Pick up where you left off.\n"
+                "Open Terminal and type: lesson"
+            )
+            auto_open = False
+
         tk.Label(
-            banner, text="TRAINING MODE — START HERE",
+            banner, text=headline,
             fg=COLORS["accent"], bg=COLORS["window"],
             font=F(14, bold=True),
         ).pack(anchor=tk.W)
         tk.Label(
             banner,
             text=(
-                f"Lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)}: {lesson.title}\n"
+                f"{lesson.title}\n"
                 f"{lesson.objective}\n\n"
-                "1. Open Training for the full curriculum\n"
-                "2. Open Terminal and type commands (start with: lesson)\n"
-                "3. Read Mail from your training officer"
+                f"{steps}"
             ),
             fg=COLORS["text"], bg=COLORS["window"],
             font=F(12), justify=tk.LEFT, wraplength=int(900 * UI_SCALE),
@@ -238,9 +252,12 @@ class DesktopApp:
 
         if self.hint_label:
             self.hint_label.configure(
-                text="Tutorial uses a $500 training budget — career money unlocks after graduation."
+                text=f"Tutorial lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)} — progress auto-saves."
             )
-        self.root.after(400, self.open_training)
+        if auto_open:
+            self.root.after(400, self.open_training)
+        else:
+            self.root.after(400, self.open_terminal)
 
     def _desktop_icon(
         self, parent: tk.Frame, key: str, glyph: str, name: str, desc: str,
@@ -575,6 +592,9 @@ class DesktopApp:
             self.game.close_terminal = False
             self.game.dispatch(cmd)
             self.refresh_taskbar()
+            if self.game.quit_game:
+                self._on_quit()
+                return
             if self.game.close_terminal:
                 self._close_window("terminal")
                 return
