@@ -496,6 +496,9 @@ class DesktopApp:
         def catcher(event) -> str | None:
             if "terminal" not in self.open_windows or not entry.winfo_exists():
                 return None
+            # Entry already has focus — let it handle keys (prevents double-typing).
+            if self.root.focus_get() == entry:
+                return None
             if _focus_is_other_editor():
                 return None
             keysym = event.keysym
