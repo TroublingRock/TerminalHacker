@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import scrolledtext
@@ -41,6 +42,23 @@ COLORS = {
     "teach": "#56d4dd",
 }
 
+# Text scale — set TERMINALHACKER_UI_SCALE=2.0 in env for even larger UI
+UI_SCALE = float(os.environ.get("TERMINALHACKER_UI_SCALE", "1.55"))
+
+
+def _fs(size: int) -> int:
+    return max(10, int(round(size * UI_SCALE)))
+
+
+def F(size: int, *, bold: bool = False) -> tuple[str, int] | tuple[str, int, str]:
+    base: tuple[str, int] | tuple[str, int, str] = ("Helvetica", _fs(size))
+    return (*base, "bold") if bold else base
+
+
+def MONO(size: int, *, bold: bool = False) -> tuple[str, int] | tuple[str, int, str]:
+    base: tuple[str, int] | tuple[str, int, str] = ("Courier", _fs(size))
+    return (*base, "bold") if bold else base
+
 
 class DesktopApp:
     """Simulated hacker workstation desktop."""
@@ -51,8 +69,9 @@ class DesktopApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("TerminalHacker OS")
-        self.root.geometry("1100x720")
-        self.root.minsize(900, 600)
+        self.root.geometry("1280x860")
+        self.root.minsize(1024, 720)
+        self.root.tk.call("tk", "scaling", UI_SCALE)
         self.root.configure(bg=COLORS["desktop"])
 
         self.game = Game()
@@ -121,14 +140,14 @@ class DesktopApp:
     def _build_desktop(self) -> None:
         header = tk.Frame(self.root, bg=COLORS["desktop"])
         header.pack(fill=tk.X, padx=24, pady=(20, 8))
-        title_font = tkfont.Font(family="Helvetica", size=22, weight="bold")
+        title_font = tkfont.Font(family="Helvetica", size=_fs(22), weight="bold")
         tk.Label(
             header, text="TERMINALHACKER OS", fg=COLORS["accent"],
             bg=COLORS["desktop"], font=title_font,
         ).pack(side=tk.LEFT)
         tk.Label(
             header, text="  v1.9 — Cybersecurity Training Environment",
-            fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 11),
+            fg=COLORS["muted"], bg=COLORS["desktop"], font=F(12),
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.content = tk.Frame(self.root, bg=COLORS["desktop"])
@@ -160,7 +179,7 @@ class DesktopApp:
         hint = tk.Label(
             self.desktop_view,
             text="Click an icon to launch. Use ← Desktop to return from any app.",
-            fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 10),
+            fg=COLORS["muted"], bg=COLORS["desktop"], font=F(11),
         )
         hint.pack(pady=(0, 12))
         self.hint_label = hint
@@ -186,7 +205,7 @@ class DesktopApp:
         tk.Label(
             banner, text="TRAINING MODE — START HERE",
             fg=COLORS["accent"], bg=COLORS["window"],
-            font=("Helvetica", 13, "bold"),
+            font=F(14, bold=True),
         ).pack(anchor=tk.W)
         tk.Label(
             banner,
@@ -198,7 +217,7 @@ class DesktopApp:
                 "3. Read Mail from your training officer"
             ),
             fg=COLORS["text"], bg=COLORS["window"],
-            font=("Helvetica", 10), justify=tk.LEFT, wraplength=900,
+            font=F(12), justify=tk.LEFT, wraplength=int(900 * UI_SCALE),
         ).pack(anchor=tk.W, pady=(6, 8))
 
         btn_row = tk.Frame(banner, bg=COLORS["window"])
@@ -234,7 +253,7 @@ class DesktopApp:
 
         box = tk.Label(
             icon_wrap, text=glyph, fg=COLORS["accent"], bg=COLORS["window"],
-            font=("Courier", 28, "bold"), width=4, height=2,
+            font=MONO(30, bold=True), width=4, height=2,
             relief=tk.RAISED, bd=2,
         )
         if key == "training" and self.game.player.phase == "tutorial":
@@ -244,14 +263,14 @@ class DesktopApp:
         if key == "mail":
             self.mail_badge = tk.Label(
                 icon_wrap, text="", fg="white", bg=COLORS["error"],
-                font=("Helvetica", 8, "bold"),
+                font=F(8, bold=True),
             )
             self._refresh_mail_badge()
 
         tk.Label(frame, text=name, fg=COLORS["text"], bg=COLORS["desktop"],
-                 font=("Helvetica", 11, "bold")).pack(pady=(6, 0))
+                 font=F(11, bold=True)).pack(pady=(6, 0))
         tk.Label(frame, text=desc, fg=COLORS["muted"], bg=COLORS["desktop"],
-                 font=("Helvetica", 9), wraplength=150, justify=tk.CENTER).pack()
+                 font=F(9), wraplength=150, justify=tk.CENTER).pack()
 
         def launch(_e=None) -> None:
             sounds.play("click")
@@ -276,7 +295,7 @@ class DesktopApp:
         bar.pack(fill=tk.X, side=tk.BOTTOM)
         self.taskbar_label = tk.Label(
             bar, text="", fg=COLORS["text"], bg=COLORS["taskbar"],
-            font=("Helvetica", 10), anchor=tk.W, padx=12,
+            font=F(10), anchor=tk.W, padx=12,
         )
         self.taskbar_label.pack(fill=tk.X, side=tk.LEFT)
 
@@ -338,7 +357,7 @@ class DesktopApp:
         titlebar.pack(fill=tk.X)
         tk.Label(
             titlebar, text=f"  {title}", fg=COLORS["text"], bg=COLORS["border"],
-            font=("Helvetica", 10, "bold"),
+            font=F(10, bold=True),
         ).pack(side=tk.LEFT, pady=6)
         tk.Button(
             titlebar, text="← Desktop", command=lambda: self._close_window(key),
@@ -393,7 +412,7 @@ class DesktopApp:
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
         tk.Label(body, text="INBOX", fg=COLORS["accent"], bg=COLORS["window"],
-                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W)
+                 font=F(14, bold=True)).pack(anchor=tk.W)
 
         panes = tk.Frame(body, bg=COLORS["window"])
         panes.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
@@ -404,7 +423,7 @@ class DesktopApp:
 
         listbox = tk.Listbox(
             left, bg=COLORS["terminal_bg"], fg=COLORS["text"],
-            font=("Helvetica", 10), relief=tk.FLAT, selectbackground=COLORS["accent_dim"],
+            font=F(10), relief=tk.FLAT, selectbackground=COLORS["accent_dim"],
             activestyle="none",
         )
         listbox.pack(fill=tk.BOTH, expand=True)
@@ -414,12 +433,12 @@ class DesktopApp:
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
 
         meta = tk.Label(right, text="Select a message", fg=COLORS["muted"],
-                        bg=COLORS["window"], font=("Helvetica", 10), anchor=tk.W)
+                        bg=COLORS["window"], font=F(10), anchor=tk.W)
         meta.pack(fill=tk.X)
 
         viewer = scrolledtext.ScrolledText(
             right, bg=COLORS["terminal_bg"], fg=COLORS["text"],
-            font=("Helvetica", 11), relief=tk.FLAT, wrap=tk.WORD,
+            font=F(11), relief=tk.FLAT, wrap=tk.WORD,
         )
         viewer.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
         viewer.configure(state=tk.DISABLED)
@@ -478,7 +497,7 @@ class DesktopApp:
 
         output = scrolledtext.ScrolledText(
             body, bg=COLORS["terminal_bg"], fg=COLORS["terminal_fg"],
-            insertbackground=COLORS["accent"], font=("Courier", 11),
+            insertbackground=COLORS["accent"], font=MONO(14),
             relief=tk.FLAT, wrap=tk.WORD,
         )
         output.pack(fill=tk.BOTH, expand=True)
@@ -494,11 +513,11 @@ class DesktopApp:
         input_frame = tk.Frame(body, bg=COLORS["window"])
         input_frame.pack(fill=tk.X, pady=(6, 0))
         prompt_lbl = tk.Label(input_frame, text="", fg=COLORS["accent"],
-                              bg=COLORS["window"], font=("Courier", 11))
+                              bg=COLORS["window"], font=MONO(14))
         prompt_lbl.pack(side=tk.LEFT)
         entry = tk.Entry(
             input_frame, bg=COLORS["terminal_bg"], fg=COLORS["text"],
-            insertbackground=COLORS["accent"], font=("Courier", 11),
+            insertbackground=COLORS["accent"], font=MONO(14),
             relief=tk.FLAT, bd=4,
         )
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -555,23 +574,23 @@ class DesktopApp:
         p = self.game.player
 
         tk.Label(body, text="CONTRACT CHANNEL", fg=COLORS["accent"], bg=COLORS["window"],
-                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W)
+                 font=F(14, bold=True)).pack(anchor=tk.W)
         tk.Label(body, text=p.wallet_label(), fg=COLORS["muted"], bg=COLORS["window"],
-                 font=("Helvetica", 10)).pack(anchor=tk.W, pady=(4, 12))
+                 font=F(10)).pack(anchor=tk.W, pady=(4, 12))
 
         if p.phase == "tutorial":
             tk.Label(
                 body,
                 text="Complete training to unlock live contracts.\n"
                      "Check Mail for messages from your training officer.",
-                fg=COLORS["warn"], bg=COLORS["window"], font=("Helvetica", 11),
+                fg=COLORS["warn"], bg=COLORS["window"], font=F(11),
                 justify=tk.LEFT,
             ).pack(anchor=tk.W, pady=8)
             lesson = self.game.tutorial.current()
             tk.Label(body, text=f"Current: {lesson.title}", fg=COLORS["text"],
-                     bg=COLORS["window"], font=("Helvetica", 10, "bold")).pack(anchor=tk.W, pady=(16, 4))
+                     bg=COLORS["window"], font=F(10, bold=True)).pack(anchor=tk.W, pady=(16, 4))
             tk.Label(body, text=lesson.objective, fg=COLORS["muted"], bg=COLORS["window"],
-                     font=("Helvetica", 10), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W)
+                     font=F(10), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W)
             tk.Button(body, text="Open Training", command=self.open_training,
                       bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4).pack(anchor=tk.W, pady=12)
             return
@@ -586,25 +605,25 @@ class DesktopApp:
             if hourly_m:
                 rem = HourlyManager.time_remaining()
                 tk.Label(body, text=f"⚡ HOURLY FLASH ({rem} left): {hourly_m.briefing}",
-                         fg=COLORS["warn"], bg=COLORS["window"], font=("Helvetica", 9, "bold"),
+                         fg=COLORS["warn"], bg=COLORS["window"], font=F(9, bold=True),
                          wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
             if s.active_chain_id:
                 chain = LateralManager.chain_by_id(s.active_chain_id)
                 step = LateralManager.active_step(self.game)
                 if chain and step:
                     tk.Label(body, text=f"LATERAL: {chain['name']} — step {s.chain_step + 1}/{len(chain['steps'])}: {step['label']}",
-                             fg=COLORS["accent"], bg=COLORS["window"], font=("Helvetica", 9, "bold"),
+                             fg=COLORS["accent"], bg=COLORS["window"], font=F(9, bold=True),
                              wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
             if RetentionManager.bridge_active(self.game):
                 tk.Label(body, text="PREP TONIGHT (type 'bridge' in terminal):",
-                         fg=COLORS["warn"], bg=COLORS["window"], font=("Helvetica", 9, "bold")).pack(anchor=tk.W, pady=(4, 0))
+                         fg=COLORS["warn"], bg=COLORS["window"], font=F(9, bold=True)).pack(anchor=tk.W, pady=(4, 0))
                 prep = tk.Label(body, text=RetentionManager.bridge_summary(self.game).replace("  ", ""),
-                                fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9),
+                                fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
                                 justify=tk.LEFT, wraplength=560)
                 prep.pack(anchor=tk.W, pady=(2, 4))
 
         scroll = scrolledtext.ScrolledText(body, height=16, bg=COLORS["terminal_bg"],
-                                           fg=COLORS["text"], font=("Helvetica", 11), relief=tk.FLAT)
+                                           fg=COLORS["text"], font=F(11), relief=tk.FLAT)
         scroll.pack(fill=tk.BOTH, expand=True)
         for m in self.game.missions.missions:
             scroll.insert(tk.END, f"{m.status_line()}\n\n")
@@ -616,9 +635,9 @@ class DesktopApp:
         )
         r = self.game.retention
         tk.Label(body, text=daily_txt, fg=COLORS["teach"], bg=COLORS["window"],
-                 font=("Helvetica", 10), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(8, 4))
+                 font=F(10), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W, pady=(8, 4))
         tk.Label(body, text=f"Streak: {r.streak} days | Season {r.season_tier}/{len(SEASON_TIERS)} | Ops {len(r.completed_operations)} done",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(0, 4))
+                 fg=COLORS["muted"], bg=COLORS["window"], font=F(9)).pack(anchor=tk.W, pady=(0, 4))
         btn_row_intel = tk.Frame(body, bg=COLORS["window"])
         btn_row_intel.pack(fill=tk.X, pady=(0, 4))
         tk.Button(btn_row_intel, text="Intel (intel)", command=self.open_terminal,
@@ -627,7 +646,7 @@ class DesktopApp:
                   bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=8, pady=2).pack(side=tk.LEFT, padx=6)
 
         tk.Label(body, text="Contract details also arrive via Mail from brokers.",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(4, 0))
+                 fg=COLORS["muted"], bg=COLORS["window"], font=F(9)).pack(anchor=tk.W, pady=(4, 0))
 
         btn_row = tk.Frame(body, bg=COLORS["window"])
         btn_row.pack(fill=tk.X, pady=(10, 0))
@@ -646,7 +665,7 @@ class DesktopApp:
         p = self.game.player
 
         tk.Label(body, text="DARKNET BOARDS", fg=COLORS["accent"], bg=COLORS["window"],
-                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W)
+                 font=F(14, bold=True)).pack(anchor=tk.W)
         if p.phase not in ("career", "endless"):
             tk.Label(body, text="Complete training to access the board.",
                      fg=COLORS["warn"], bg=COLORS["window"]).pack(anchor=tk.W, pady=12)
@@ -654,10 +673,10 @@ class DesktopApp:
 
         SocialBoardManager.seed_if_needed(self.game)
         tk.Label(body, text=f"Karma: {self.game.board.karma}  |  Boards: {', '.join(BOARD_NAMES)}",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 10)).pack(anchor=tk.W, pady=(4, 8))
+                 fg=COLORS["muted"], bg=COLORS["window"], font=F(10)).pack(anchor=tk.W, pady=(4, 8))
 
         scroll = scrolledtext.ScrolledText(body, height=18, bg=COLORS["terminal_bg"],
-                                           fg=COLORS["text"], font=("Helvetica", 10), relief=tk.FLAT)
+                                           fg=COLORS["text"], font=F(10), relief=tk.FLAT)
         scroll.pack(fill=tk.BOTH, expand=True)
         for post in SocialBoardManager.list_posts(self.game, limit=20):
             tag = " [YOU]" if post.player_post else ""
@@ -667,7 +686,7 @@ class DesktopApp:
         scroll.configure(state=tk.DISABLED)
 
         tk.Label(body, text="Terminal: board post flex Title | body  |  board upvote post-0001",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(8, 0))
+                 fg=COLORS["muted"], bg=COLORS["window"], font=F(9)).pack(anchor=tk.W, pady=(8, 0))
         self._built_panels.add("board")
 
     def open_shop(self) -> None:
@@ -679,9 +698,9 @@ class DesktopApp:
         p = self.game.player
 
         tk.Label(body, text="BLACK MARKET SHOP", fg=COLORS["accent"], bg=COLORS["window"],
-                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W)
+                 font=F(14, bold=True)).pack(anchor=tk.W)
         wallet = tk.Label(body, text=p.wallet_label(), fg=COLORS["muted"], bg=COLORS["window"],
-                          font=("Helvetica", 10))
+                          font=F(10))
         wallet.pack(anchor=tk.W, pady=(4, 12))
 
         if not p.is_local():
@@ -732,11 +751,11 @@ class DesktopApp:
                 state = tk.DISABLED if owned else tk.NORMAL
 
             tk.Label(row, text=item.name, fg=COLORS["text"], bg=COLORS["border"],
-                     font=("Helvetica", 11, "bold"), width=16, anchor=tk.W).pack(side=tk.LEFT)
+                     font=F(11, bold=True), width=16, anchor=tk.W).pack(side=tk.LEFT)
             tk.Label(row, text=item.description, fg=COLORS["muted"], bg=COLORS["border"],
-                     font=("Helvetica", 9), wraplength=280, justify=tk.LEFT).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+                     font=F(9), wraplength=280, justify=tk.LEFT).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
             tk.Label(row, text=price_text, fg=COLORS["accent"], bg=COLORS["border"],
-                     font=("Helvetica", 10, "bold"), width=8).pack(side=tk.RIGHT, padx=(4, 8))
+                     font=F(10, bold=True), width=8).pack(side=tk.RIGHT, padx=(4, 8))
             tk.Button(
                 row, text="BUY", command=lambda k=item.key: buy_item(k),
                 bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
@@ -758,9 +777,9 @@ class DesktopApp:
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
         tk.Label(body, text="ACHIEVEMENTS", fg=COLORS["accent"], bg=COLORS["window"],
-                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W)
+                 font=F(14, bold=True)).pack(anchor=tk.W)
         scroll = scrolledtext.ScrolledText(body, height=12, bg=COLORS["terminal_bg"],
-                                           fg=COLORS["text"], font=("Helvetica", 10), relief=tk.FLAT)
+                                           fg=COLORS["text"], font=F(10), relief=tk.FLAT)
         scroll.pack(fill=tk.BOTH, expand=True, pady=8)
         for key, desc in ACHIEVEMENTS.items():
             mark = "[x]" if key in self.game.achievements.unlocked else "[ ]"
@@ -771,9 +790,9 @@ class DesktopApp:
         daily = "COMPLETE" if d.completed else f"{d.description} — ${d.reward}"
         r = self.game.retention
         tk.Label(body, text=f"TODAY'S CHALLENGE: {daily}", fg=COLORS["teach"],
-                 bg=COLORS["window"], font=("Helvetica", 10), wraplength=520).pack(anchor=tk.W)
+                 bg=COLORS["window"], font=F(10), wraplength=520).pack(anchor=tk.W)
         tk.Label(body, text=f"Streak: {r.streak} days (best {r.longest_streak}) | Season tier {r.season_tier}/{len(SEASON_TIERS)}",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 10)).pack(anchor=tk.W, pady=(4, 0))
+                 fg=COLORS["muted"], bg=COLORS["window"], font=F(10)).pack(anchor=tk.W, pady=(4, 0))
         self._built_panels.add("achieve")
 
     def open_training(self) -> None:
@@ -784,10 +803,10 @@ class DesktopApp:
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
         tk.Label(body, text="CYBERSECURITY CURRICULUM", fg=COLORS["accent"], bg=COLORS["window"],
-                 font=("Helvetica", 14, "bold")).pack(anchor=tk.W, pady=(0, 8))
+                 font=F(14, bold=True)).pack(anchor=tk.W, pady=(0, 8))
 
         scroll = scrolledtext.ScrolledText(body, bg=COLORS["terminal_bg"], fg=COLORS["text"],
-                                           font=("Helvetica", 10), relief=tk.FLAT)
+                                           font=F(10), relief=tk.FLAT)
         scroll.pack(fill=tk.BOTH, expand=True)
 
         step = self.game.player.tutorial_step
@@ -845,6 +864,7 @@ class DesktopApp:
         lines.append(f"Routes:      {len(p.routes)}")
         lines.append(f"Tools:       {', '.join(sorted(p.owned_tools)) or 'none'}")
         lines.append(f"Unread mail: {self.game.mail.unread_count()}")
+        lines.append(f"UI scale:    {UI_SCALE}x (set TERMINALHACKER_UI_SCALE=2.0 for larger text)")
         if self.game.last_autosave:
             lines.append(f"Auto-save:   {self.game.last_autosave} (~/.terminalhacker/save.json)")
         if p.phase == "endless":
@@ -866,7 +886,7 @@ class DesktopApp:
             lines.append(f"Best floor:  {self.game.endless.best_floor} (meta)")
 
         tk.Label(body, text="\n".join(lines), fg=COLORS["text"], bg=COLORS["window"],
-                 font=("Courier", 11), justify=tk.LEFT, anchor=tk.NW).pack(fill=tk.BOTH, expand=True)
+                 font=MONO(14), justify=tk.LEFT, anchor=tk.NW).pack(fill=tk.BOTH, expand=True)
 
         btn_row = tk.Frame(body, bg=COLORS["window"])
         btn_row.pack(fill=tk.X, pady=(8, 0))
