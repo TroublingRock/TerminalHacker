@@ -1,0 +1,16 @@
+{
+  "slug": "terminalhacker",
+  "path": "/terminalhacker",
+  "name": "TerminalHacker",
+  "headline": "Learn Cybersecurity Through a Simulated Hacker Desktop",
+  "subheadline": "Educational terminal + GUI training simulator",
+  "description": "TerminalHacker teaches networking, VPN, log analysis, privilege escalation, and blue-team defense in a safe sandbox. Complete 13 tutorial lessons, then graduate to career contracts with rivals, missions, and progression.",
+  "seoTitle": "TerminalHacker — Cybersecurity Training Simulator",
+  "seoDescription": "Desktop hacking simulator for learning cybersecurity. Tutorial mode with protected budget, terminal commands, GUI apps, and career progression.",
+  "keywords": "cybersecurity training game, terminal hacking simulator, learn linux security, blue team tutorial, hacking simulator education",
+  "appUrl": "/terminalhacker/",
+  "appUrlExternal": false,
+  "accentFrom": "from-green-500",
+  "accentTo": "to-emerald-600",
+  "color": "text-green-400"
+}

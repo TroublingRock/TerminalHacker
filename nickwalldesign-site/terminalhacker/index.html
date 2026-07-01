@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/terminalhacker/favicon.svg" />
+    <link rel="apple-touch-icon" href="/terminalhacker/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TerminalHacker — Cybersecurity Training Simulator</title>
+    <meta name="description" content="Learn networking, VPN, log wiping, privesc, and blue-team defense in a desktop hacking simulator with tutorial mode and career missions." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://nickwalldesign.com/terminalhacker/" />
+    <meta property="og:title" content="TerminalHacker — Cybersecurity Training Simulator" />
+    <meta property="og:description" content="Desktop GUI + terminal hacking simulator. Tutorial budget, career contracts, rivals, missions, and progression." />
+    <meta property="og:site_name" content="TerminalHacker" />
+    <meta property="og:image" content="https://nickwalldesign.com/terminalhacker/og-image.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TerminalHacker — Cybersecurity Training Simulator" />
+    <meta name="twitter:description" content="Learn cybersecurity through a simulated Linux terminal and desktop GUI." />
+    <meta name="twitter:image" content="https://nickwalldesign.com/terminalhacker/og-image.svg" />
+    <link rel="stylesheet" href="/terminalhacker/assets/style.css" />
+  </head>
+  <body>
+    <div class="scanlines" aria-hidden="true"></div>
+    <header class="top">
+      <a class="brand" href="https://nickwalldesign.com/">← Nick Wall Design</a>
+      <span class="badge">v1.9</span>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <p class="eyebrow">Educational hacking simulator</p>
+        <h1>TerminalHacker</h1>
+        <p class="lead">
+          Train in a simulated Linux desktop: scan networks, crack SSH, wipe logs, upgrade firewalls,
+          and graduate into career contracts — without touching real systems.
+        </p>
+        <div class="cta-row">
+          <a class="btn primary" href="https://github.com/TroublingRock/TerminalHacker" target="_blank" rel="noopener">View on GitHub</a>
+          <a class="btn ghost" href="#run">How to run</a>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h2>13-lesson tutorial</h2>
+          <p>Protected $500 training budget while you learn ifconfig, routing, VPN, privesc, and blue-team defense.</p>
+        </article>
+        <article class="card">
+          <h2>Desktop GUI</h2>
+          <p>Terminal, Mail, Files, Shop, Job Board, and Training apps — or play pure CLI with <code>--cli</code>.</p>
+        </article>
+        <article class="card">
+          <h2>Career mode</h2>
+          <p>Missions, rivals, seasons, operations, achievements, and autosave to <code>~/.terminalhacker/save.json</code>.</p>
+        </article>
+      </section>
+
+      <section class="panel" id="run">
+        <h2>Run locally</h2>
+        <pre><code>git clone https://github.com/TroublingRock/TerminalHacker.git
+cd TerminalHacker
+python3 main.py          # GUI (needs python3-tk on Linux)
+python3 main.py --cli    # terminal-only fallback</code></pre>
+        <p class="note">Requires Python 3.10+. Debian/Ubuntu: <code>sudo apt install python3-tk</code></p>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>© Nick Wall Design</span>
+      <a href="https://github.com/TroublingRock/TerminalHacker">Source</a>
+    </footer>
+  </body>
+</html>
