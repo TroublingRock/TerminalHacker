@@ -60,15 +60,16 @@ class DesktopApp:
         self.game.player._game_ref = self.game
         Console.fast_mode = True
         self.game.mail.on_new_mail = self._on_new_mail
-        self._try_resume_save()
 
         self.open_windows: dict[str, tk.Toplevel] = {}
         self.terminal_booted = False
         self.mail_badge: tk.Label | None = None
         self._mail_listbox: tk.Listbox | None = None
+        self.taskbar_label: tk.Label | None = None
 
         self._build_desktop()
         self._build_taskbar()
+        self._try_resume_save()
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self._schedule_autosave()
         self.refresh_taskbar()
@@ -91,6 +92,8 @@ class DesktopApp:
 
     def _on_new_mail(self, msg: MailMessage) -> None:
         sounds.play("mail")
+        if self.taskbar_label is None:
+            return
         self.refresh_taskbar()
         self._refresh_mail_badge()
         if self._mail_listbox and "mail" in self.open_windows:
@@ -195,6 +198,8 @@ class DesktopApp:
         self.taskbar_label.pack(fill=tk.X, side=tk.LEFT)
 
     def refresh_taskbar(self) -> None:
+        if self.taskbar_label is None:
+            return
         p = self.game.player
         phase = "TRAINING" if p.phase == "tutorial" else ("ENDLESS" if p.phase == "endless" else "CAREER")
         if p.phase == "tutorial":
