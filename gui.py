@@ -90,6 +90,7 @@ class DesktopApp:
         self._built_panels: set[str] = set()
         self.hint_label: tk.Label | None = None
         self.onboarding_banner: tk.Frame | None = None
+        self._terminal_entry: tk.Entry | None = None
 
         self._try_resume_save()
         self._build_desktop()
@@ -388,6 +389,12 @@ class DesktopApp:
                 shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
             else:
                 shell.pack_forget()
+        if key == "terminal" and self._terminal_entry:
+            self.root.after(80, self._focus_terminal_input)
+
+    def _focus_terminal_input(self) -> None:
+        if self._terminal_entry and self._terminal_entry.winfo_exists():
+            self._terminal_entry.focus_force()
 
     def _close_window(self, key: str) -> None:
         if key in self.open_windows:
@@ -397,6 +404,7 @@ class DesktopApp:
             self._built_panels.discard(key)
         if key == "terminal":
             self.game.close_terminal = False
+            self._terminal_entry = None
         if key == "mail":
             self._mail_listbox = None
         if not self.open_windows:
@@ -491,14 +499,21 @@ class DesktopApp:
     def open_terminal(self) -> None:
         if "terminal" in self._built_panels:
             self._show_app("terminal")
+            self.root.after(80, self._focus_terminal_input)
             return
         win = self._window("terminal", "Terminal — hacker@localhost", 780, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
+        tk.Label(
+            body,
+            text="Click the command line below, then type. Press Enter to run.",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(10),
+        ).pack(anchor=tk.W, pady=(0, 4))
+
         output = scrolledtext.ScrolledText(
             body, bg=COLORS["terminal_bg"], fg=COLORS["terminal_fg"],
             insertbackground=COLORS["accent"], font=MONO(14),
-            relief=tk.FLAT, wrap=tk.WORD,
+            relief=tk.FLAT, wrap=tk.WORD, takefocus=0,
         )
         output.pack(fill=tk.BOTH, expand=True)
         output.configure(state=tk.DISABLED)
@@ -518,9 +533,21 @@ class DesktopApp:
         entry = tk.Entry(
             input_frame, bg=COLORS["terminal_bg"], fg=COLORS["text"],
             insertbackground=COLORS["accent"], font=MONO(14),
-            relief=tk.FLAT, bd=4,
+            relief=tk.SOLID, bd=2,
+            highlightthickness=2, highlightcolor=COLORS["accent"],
+            highlightbackground=COLORS["border"],
+            takefocus=True,
         )
-        entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
+        self._terminal_entry = entry
+
+        def focus_input(_event=None) -> None:
+            entry.focus_force()
+            return "break"
+
+        output.bind("<Button-1>", focus_input)
+        body.bind("<Button-1>", lambda e: entry.focus_force() if e.widget == body else None)
+        input_frame.bind("<Button-1>", focus_input)
 
         def append_line(text: str, tag: str = "normal") -> None:
             output.configure(state=tk.NORMAL)
@@ -555,14 +582,13 @@ class DesktopApp:
             entry.focus_set()
 
         entry.bind("<Return>", run_command)
+        entry.bind("<Button-1>", lambda _e: entry.focus_force())
         prompt_lbl.configure(text=self.game.prompt())
-        entry.focus_set()
-
+        self.root.after(200, self._focus_terminal_input)
         if not self.terminal_booted:
             self.terminal_booted = True
             self.game.banner()
 
-        self.root.after(120, entry.focus_set)
         self._built_panels.add("terminal")
 
     def open_job_board(self) -> None:
