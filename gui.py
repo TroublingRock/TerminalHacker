@@ -81,6 +81,8 @@ class DesktopApp:
         Console.fast_mode = True
         self.game.mail.on_new_mail = self._on_new_mail
 
+        self._install_global_console_handler()
+
         self.open_windows: dict[str, object] = {}
         self.terminal_booted = False
         self.mail_badge: tk.Label | None = None
@@ -109,6 +111,8 @@ class DesktopApp:
         self._files_preview_frame: tk.Frame | None = None
         self._terminal_history: list[str] = []
         self._terminal_history_pos: int = 0
+        self._terminal_log: list[tuple[str, str]] = []
+        self._terminal_output_widget: scrolledtext.ScrolledText | None = None
         self._save_loaded = False
         self._save_restore_notice: str = ""
 
@@ -119,6 +123,42 @@ class DesktopApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self._schedule_autosave()
         self.refresh_taskbar()
+
+    def _install_global_console_handler(self) -> None:
+        """Keep terminal output across Desktop ↔ app switches."""
+
+        def handler(text: str, tag: str = "normal") -> None:
+            if not text:
+                return
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if i < len(lines) - 1:
+                    self._terminal_log.append((line, tag))
+                elif line:
+                    self._terminal_log.append((line, tag))
+            if len(self._terminal_log) > 4000:
+                self._terminal_log = self._terminal_log[-3000:]
+            out = self._terminal_output_widget
+            if out and out.winfo_exists():
+                out.configure(state=tk.NORMAL)
+                out.insert(tk.END, text + ("\n" if not text.endswith("\n") else ""), tag)
+                out.see(tk.END)
+                out.configure(state=tk.DISABLED)
+            self.refresh_taskbar()
+            if tag == "error":
+                sounds.play("error")
+            elif tag == "warn" and "INTRUSION" in text:
+                sounds.play("alert")
+
+        Console.handler = handler
+
+    def _replay_terminal_log(self, output: scrolledtext.ScrolledText) -> None:
+        output.configure(state=tk.NORMAL)
+        output.delete("1.0", tk.END)
+        for line, tag in self._terminal_log:
+            output.insert(tk.END, line + "\n", tag)
+        output.see(tk.END)
+        output.configure(state=tk.DISABLED)
 
     def _try_resume_save(self) -> None:
         from progression import BACKUP_PATH, SAVE_PATH, SaveManager
@@ -603,6 +643,7 @@ class DesktopApp:
             self._terminal_entry = None
             self._terminal_input = None
             self._terminal_input_frame = None
+            self._terminal_output_widget = None
             self._cancel_terminal_focus()
         if key == "mail":
             self._mail_listbox = None
@@ -937,6 +978,7 @@ class DesktopApp:
         )
         output.grid(row=3, column=0, sticky="nsew")
         output.configure(state=tk.DISABLED)
+        self._terminal_output_widget = output
 
         for tag, color in (
             ("normal", COLORS["terminal_fg"]), ("info", COLORS["info"]),
@@ -945,21 +987,8 @@ class DesktopApp:
         ):
             output.tag_configure(tag, foreground=color)
 
-        def append_line(text: str, tag: str = "normal") -> None:
-            output.configure(state=tk.NORMAL)
-            output.insert(tk.END, text + "\n", tag)
-            output.see(tk.END)
-            output.configure(state=tk.DISABLED)
-
-        def console_handler(text: str, tag: str = "normal") -> None:
-            append_line(text, tag)
-            self.refresh_taskbar()
-            if tag == "error":
-                sounds.play("error")
-            elif tag == "warn" and "INTRUSION" in text:
-                sounds.play("alert")
-
-        Console.handler = console_handler
+        if self._terminal_log:
+            self._replay_terminal_log(output)
 
         def remember_command(cmd: str) -> None:
             if not cmd:
@@ -994,7 +1023,7 @@ class DesktopApp:
                 return
             remember_command(cmd)
             sounds.play("click")
-            append_line(self.game.prompt() + cmd, "prompt")
+            Console.out(self.game.prompt() + cmd, "prompt")
             self.game.close_terminal = False
             self.game.dispatch(cmd)
             self.refresh_taskbar()
@@ -1057,6 +1086,8 @@ class DesktopApp:
         self._arm_terminal_focus()
         if not self.terminal_booted:
             self.terminal_booted = True
+            self.game.banner()
+        elif not self._terminal_log:
             self.game.banner()
         self.root.after(150, self._activate_terminal_input)
 
