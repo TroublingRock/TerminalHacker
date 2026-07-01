@@ -131,6 +131,8 @@ class DesktopApp:
                 primary_was_reset = True
 
         self._save_loaded = SaveManager.load(self.game, quiet=True)
+        if self._save_loaded:
+            self.game.tutorial.reconcile_stuck_lessons()
         if self._save_loaded and primary_was_reset:
             self._save_restore_notice = (
                 "Your career progress was restored from save backup. "
@@ -1445,8 +1447,10 @@ class DesktopApp:
             sounds.play("click")
             if Shop.buy(p, key):
                 sounds.play("success")
+                self.game.on_shop_purchase(key)
                 refresh_wallet()
                 refresh_shop()
+                self.refresh_taskbar()
 
         for item in SHOP_CATALOG:
             row = tk.Frame(list_frame, bg=COLORS["border"], pady=6, padx=8)

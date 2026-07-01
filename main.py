@@ -364,7 +364,10 @@ class TutorialManager:
             9: lambda: "vpn_success" in p.tutorial_flags and p.vpn_active,
             10: lambda: any(ip.startswith("10.0.0.") for ip in p.discovered_ips),
             11: lambda: "/home/hacker/downloads/classified.txt" in p.files and p.remote_was_root,
-            12: lambda: self.defense_survived and p.firewall_level >= 2,
+            12: lambda: p.firewall_level >= 2 and (
+                self.defense_survived
+                or "tutorial_firewall_upgraded" in p.tutorial_flags
+            ),
         }
 
         if step >= len(TUTORIAL_CURRICULUM):
@@ -429,6 +432,23 @@ class TutorialManager:
         RetentionManager.on_career_session(self.game)
         self.game.autosave(force=True)
 
+    def complete_defense_drill(self) -> None:
+        if self.defense_survived:
+            return
+        self.defense_attacks_triggered = max(self.defense_attacks_triggered, 1)
+        self.defense_survived = True
+        success("Defense drill passed — firewall holding against rival probes.")
+
+    def reconcile_stuck_lessons(self) -> None:
+        """Fix edge cases e.g. firewall bought via GUI Shop before rival attack fired."""
+        if not self.in_tutorial():
+            return
+        p = self.player
+        if p.tutorial_step == self.DEFENSE_LESSON and p.firewall_level >= 2:
+            p.tutorial_flags.add("tutorial_firewall_upgraded")
+            self.complete_defense_drill()
+            self.check_advance()
+
     def on_defense_tick(self) -> None:
         if not self.in_tutorial() or self.player.tutorial_step != self.DEFENSE_LESSON:
             return
@@ -437,8 +457,7 @@ class TutorialManager:
         if self.defense_start_tick is not None and self.player.ticks - self.defense_start_tick < 2:
             return
         if self.player.firewall_level >= 2 and self.defense_attacks_triggered >= 1:
-            self.defense_survived = True
-            success("Defense drill passed — firewall blocked rival probes.")
+            self.complete_defense_drill()
             self.check_advance()
 
 
@@ -802,6 +821,8 @@ class Shop:
                 MasteryGrader.on_shop_spend(player._game_ref, cost)
             player.cpu_level += 1
             success(f"CPU level {player.cpu_level}")
+            if player._game_ref:
+                player._game_ref.on_shop_purchase("cpu")
             return True
         if item.key == "firewall":
             if player.firewall_level >= item.max_level:
@@ -815,6 +836,8 @@ class Shop:
                 MasteryGrader.on_shop_spend(player._game_ref, cost)
             player.firewall_level += 1
             success(f"Firewall level {player.firewall_level}")
+            if player._game_ref:
+                player._game_ref.on_shop_purchase("firewall")
             return True
         if item.key in player.owned_tools:
             warn("Already owned.")
@@ -1123,7 +1146,12 @@ class ThreatSystem:
             self.game, random.randint(2, 4),
         )
         if not force and p.firewall_level >= power:
-            return
+            in_defense_lesson = (
+                self.game.tutorial.in_tutorial()
+                and p.tutorial_step == TutorialManager.DEFENSE_LESSON
+            )
+            if not in_defense_lesson:
+                return
 
         divider("!!! RIVAL INTRUSION — LOCALHOST !!!")
         warn(f"'{rival}' targeting {p.public_ip} (firewall L{p.firewall_level} vs attack {power})")
@@ -1290,6 +1318,24 @@ class Game:
             error("Permission denied — root privileges required. Try privesc.")
             return False
         return True
+
+    def on_shop_purchase(self, item_key: str) -> None:
+        """Called after any successful shop purchase (terminal or GUI)."""
+        key = item_key.lower()
+        p = self.player
+        if key in ("cpu", "firewall"):
+            p.tutorial_flags.add("daily_buy_done")
+            p.tutorial_flags.add("daily_shop_bought")
+            p.tutorial_flags.add("daily_gear_up_done")
+            if key == "firewall" and self.tutorial.in_tutorial():
+                p.tutorial_flags.add("tutorial_firewall_upgraded")
+                if p.tutorial_step == TutorialManager.DEFENSE_LESSON and p.firewall_level >= 2:
+                    self.tutorial.complete_defense_drill()
+            if self.player.phase == "career":
+                from retention import RetentionManager
+                RetentionManager.on_bridge_event(self, "gear")
+        self.tutorial.check_advance()
+        self.autosave(force=True)
 
     def post_command(self, cmd: str) -> None:
         from session_content import HourlyManager, MasteryGrader
@@ -1866,12 +1912,7 @@ class Game:
             error("Active no-shop contract — finish it before buying gear.")
             return
         if Shop.buy(self.player, args[0].lower()):
-            self.player.tutorial_flags.add("daily_buy_done")
-            self.player.tutorial_flags.add("daily_shop_bought")
-            if args[0].lower() in ("cpu", "firewall"):
-                self.player.tutorial_flags.add("daily_gear_up_done")
-                from retention import RetentionManager
-                RetentionManager.on_bridge_event(self, "gear")
+            self.on_shop_purchase(args[0].lower())
 
     def cmd_missions(self, _a: list[str]) -> None:
         if self.player.phase == "tutorial":
