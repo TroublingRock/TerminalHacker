@@ -69,10 +69,13 @@ class DesktopApp:
         self.desktop_view: tk.Frame | None = None
         self.app_shell: tk.Frame | None = None
         self._built_panels: set[str] = set()
+        self.hint_label: tk.Label | None = None
+        self.onboarding_banner: tk.Frame | None = None
 
+        self._try_resume_save()
         self._build_desktop()
         self._build_taskbar()
-        self._try_resume_save()
+        self._run_onboarding()
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self._schedule_autosave()
         self.refresh_taskbar()
@@ -140,12 +143,12 @@ class DesktopApp:
         self.app_shell = tk.Frame(self.content, bg=COLORS["window"])
 
         apps = [
+            ("training", "?", "Training", "START HERE — tutorial lessons", self.open_training),
             ("terminal", ">_", "Terminal", "SSH shell & hacking commands", self.open_terminal),
             ("mail", "@", "Mail", "NPC brokers & training messages", self.open_mail),
             ("jobs", "[]", "Job Board", "Paid contracts & missions", self.open_job_board),
             ("board", "//", "Darknet Board", "Intel, rivals, flex & LFG posts", self.open_social_board),
             ("shop", "$", "Black Market", "CPU, firewall & tools", self.open_shop),
-            ("training", "?", "Training", "Tutorial lessons & objectives", self.open_training),
             ("achieve", "*", "Achievements", "Badges & daily challenges", self.open_achievements),
             ("status", "#", "System Status", "Hardware, VPN, save/load", self.open_status),
         ]
@@ -160,6 +163,64 @@ class DesktopApp:
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 10),
         )
         hint.pack(pady=(0, 12))
+        self.hint_label = hint
+
+    def _run_onboarding(self) -> None:
+        """Guide new tutorial players — auto-open Training on first launch."""
+        p = self.game.player
+        if p.phase != "tutorial":
+            if self.hint_label:
+                self.hint_label.configure(
+                    text="Career mode: Terminal for commands, Job Board for contracts, Mail for intel."
+                )
+            return
+
+        lesson = self.game.tutorial.current()
+        if self.onboarding_banner:
+            self.onboarding_banner.destroy()
+
+        banner = tk.Frame(self.desktop_view, bg=COLORS["window"], padx=16, pady=12)
+        banner.pack(fill=tk.X, padx=24, pady=(0, 4), before=self.hint_label)
+        self.onboarding_banner = banner
+
+        tk.Label(
+            banner, text="TRAINING MODE — START HERE",
+            fg=COLORS["accent"], bg=COLORS["window"],
+            font=("Helvetica", 13, "bold"),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            banner,
+            text=(
+                f"Lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)}: {lesson.title}\n"
+                f"{lesson.objective}\n\n"
+                "1. Open Training for the full curriculum\n"
+                "2. Open Terminal and type commands (start with: lesson)\n"
+                "3. Read Mail from your training officer"
+            ),
+            fg=COLORS["text"], bg=COLORS["window"],
+            font=("Helvetica", 10), justify=tk.LEFT, wraplength=900,
+        ).pack(anchor=tk.W, pady=(6, 8))
+
+        btn_row = tk.Frame(banner, bg=COLORS["window"])
+        btn_row.pack(anchor=tk.W)
+        tk.Button(
+            btn_row, text="Open Training", command=self.open_training,
+            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=14, pady=4,
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            btn_row, text="Open Terminal", command=self.open_terminal,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=14, pady=4,
+        ).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            btn_row, text="Read Mail", command=self.open_mail,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=14, pady=4,
+        ).pack(side=tk.LEFT)
+
+        if self.hint_label:
+            self.hint_label.configure(
+                text="Tutorial uses a $500 training budget — career money unlocks after graduation."
+            )
+        self.root.after(400, self.open_training)
 
     def _desktop_icon(
         self, parent: tk.Frame, key: str, glyph: str, name: str, desc: str,
@@ -176,6 +237,8 @@ class DesktopApp:
             font=("Courier", 28, "bold"), width=4, height=2,
             relief=tk.RAISED, bd=2,
         )
+        if key == "training" and self.game.player.phase == "tutorial":
+            box.configure(bg=COLORS["accent_dim"], fg="white")
         box.pack()
 
         if key == "mail":
