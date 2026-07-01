@@ -882,7 +882,18 @@ class DesktopApp:
         self._built_panels.add("status")
 
     def run(self) -> None:
+        import signal
+
+        def on_sigint(_signum: int, _frame: object) -> None:
+            self._on_quit()
+
+        signal.signal(signal.SIGINT, on_sigint)
+        # Let Python process SIGINT while tkinter mainloop is blocking.
+        self.root.after(200, self._sigint_pump)
         self.root.mainloop()
+
+    def _sigint_pump(self) -> None:
+        self.root.after(200, self._sigint_pump)
 
 
 def run_gui() -> None:
