@@ -91,6 +91,10 @@ class DesktopApp:
         self.hint_label: tk.Label | None = None
         self.onboarding_banner: tk.Frame | None = None
         self._terminal_entry: tk.Entry | None = None
+        self._terminal_run_cmd: object | None = None
+        self._terminal_prompt_lbl: tk.Label | None = None
+        self._files_list_frame: tk.Frame | None = None
+        self._files_preview_frame: tk.Frame | None = None
         self._terminal_history: list[str] = []
         self._terminal_history_pos: int = 0
         self._save_loaded = False
@@ -176,6 +180,7 @@ class DesktopApp:
         apps = [
             ("training", "?", "Training", "START HERE — tutorial lessons", self.open_training),
             ("terminal", ">_", "Terminal", "SSH shell & hacking commands", self.open_terminal),
+            ("files", "{}", "Files", "Downloads & loot — view exfiltrated files", self.open_files),
             ("mail", "@", "Mail", "NPC brokers & training messages", self.open_mail),
             ("jobs", "[]", "Job Board", "Paid contracts & missions", self.open_job_board),
             ("board", "//", "Darknet Board", "Intel, rivals, flex & LFG posts", self.open_social_board),
@@ -202,8 +207,10 @@ class DesktopApp:
         if p.phase != "tutorial":
             if self.hint_label:
                 self.hint_label.configure(
-                    text="Career mode: Terminal for commands, Job Board for contracts, Mail for intel."
+                    text="Career: Terminal to hack · Files for loot · Shop for upgrades · Job Board for contracts."
                 )
+            if p.phase == "career":
+                self.root.after(500, self.open_files)
             return
 
         lesson = self.game.tutorial.current()
@@ -424,6 +431,8 @@ class DesktopApp:
                 shell.pack_forget()
         if key == "terminal" and self._terminal_entry:
             self.root.after(80, self._focus_terminal_input)
+        if key == "files" and "files" in self._built_panels:
+            self._refresh_files()
 
     def _focus_terminal_input(self) -> None:
         if self._terminal_entry and self._terminal_entry.winfo_exists():
@@ -440,8 +449,19 @@ class DesktopApp:
             self._terminal_entry = None
         if key == "mail":
             self._mail_listbox = None
+        if key == "files":
+            self._files_list_frame = None
+            self._files_preview_frame = None
         if not self.open_windows:
             self._show_desktop()
+
+    # ----- terminal command bridge -----
+
+    def _gui_run_command(self, cmd: str) -> None:
+        """Run a game command from a GUI button (opens Terminal if needed)."""
+        self.open_terminal()
+        if self._terminal_run_cmd:
+            self._terminal_run_cmd(cmd)
 
     # ----- apps -----
 
@@ -539,9 +559,28 @@ class DesktopApp:
 
         tk.Label(
             body,
-            text="Click the command line below, then type. Press Enter to run. ↑↓ for history.",
+            text="Click the command line below, or use Quick buttons. Enter runs commands. ↑↓ for history.",
             fg=COLORS["muted"], bg=COLORS["window"], font=F(10),
         ).pack(anchor=tk.W, pady=(0, 4))
+
+        toolbar = tk.Frame(body, bg=COLORS["window"])
+        toolbar.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(toolbar, text="Quick:", fg=COLORS["muted"], bg=COLORS["window"],
+                 font=F(9)).pack(side=tk.LEFT, padx=(0, 6))
+        for label, cmd in (
+            ("probe", "probe"),
+            ("crack", "crack"),
+            ("ls", "ls"),
+            ("download", "download"),
+            ("disconnect", "disconnect"),
+            ("help", "help"),
+        ):
+            tk.Button(
+                toolbar, text=label,
+                command=lambda c=cmd: self._gui_run_command(c),
+                bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT,
+                font=F(9), padx=8, pady=2,
+            ).pack(side=tk.LEFT, padx=2)
 
         output = scrolledtext.ScrolledText(
             body, bg=COLORS["terminal_bg"], fg=COLORS["terminal_fg"],
@@ -573,6 +612,7 @@ class DesktopApp:
         )
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
         self._terminal_entry = entry
+        self._terminal_prompt_lbl = prompt_lbl
 
         def focus_input(_event=None) -> None:
             entry.focus_force()
@@ -626,9 +666,7 @@ class DesktopApp:
                 entry.delete(0, tk.END)
             return "break"
 
-        def run_command(_event=None) -> None:
-            cmd = entry.get().strip()
-            entry.delete(0, tk.END)
+        def execute_command(cmd: str) -> None:
             if not cmd:
                 return
             remember_command(cmd)
@@ -637,14 +675,26 @@ class DesktopApp:
             self.game.close_terminal = False
             self.game.dispatch(cmd)
             self.refresh_taskbar()
+            if self._files_list_frame:
+                self._refresh_files()
+            if "shop" in self._built_panels:
+                self.root.after(100, self._maybe_refresh_shop_after_command)
             if self.game.quit_game:
                 self._on_quit()
                 return
             if self.game.close_terminal:
                 self._close_window("terminal")
                 return
-            prompt_lbl.configure(text=self.game.prompt())
+            if self._terminal_prompt_lbl:
+                self._terminal_prompt_lbl.configure(text=self.game.prompt())
             entry.focus_set()
+
+        def run_command(_event=None) -> None:
+            cmd = entry.get().strip()
+            entry.delete(0, tk.END)
+            execute_command(cmd)
+
+        self._terminal_run_cmd = execute_command
 
         entry.bind("<Return>", run_command)
         entry.bind("<Up>", history_up)
@@ -657,6 +707,170 @@ class DesktopApp:
             self.game.banner()
 
         self._built_panels.add("terminal")
+
+    def _list_vfs_entries(self, files: dict, directory: str) -> tuple[list[str], list[str]]:
+        d = directory.rstrip("/") + "/"
+        subdirs: set[str] = set()
+        names: list[str] = []
+        for path in files:
+            if not path.startswith(d) or path == d:
+                continue
+            rel = path[len(d):]
+            if "/" in rel:
+                subdirs.add(rel.split("/")[0])
+            else:
+                names.append(rel)
+        return sorted(subdirs), sorted(names)
+
+    def _files_locations(self) -> list[tuple[str, str, dict]]:
+        """Return (label, path, files_dict) for each browsable location."""
+        p = self.game.player
+        locs: list[tuple[str, str, dict]] = [
+            ("Home", "/home/hacker", p.files),
+            ("Downloads", "/home/hacker/downloads", p.files),
+        ]
+        if not p.is_local():
+            s = self.game.remote_server()
+            if s and p.has_remote_shell:
+                cwd = p.cwd if p.cwd.startswith("/") else f"/home/{s.hostname}"
+                locs.append((f"Remote ({p.connection})", cwd, s.files))
+        return locs
+
+    def open_files(self) -> None:
+        if "files" in self._built_panels:
+            self._show_app("files")
+            self._refresh_files()
+            return
+        win = self._window("files", "Files — Local & Remote", 760, 520)
+        body: tk.Frame = win._body  # type: ignore[attr-defined]
+
+        tk.Label(body, text="FILE MANAGER", fg=COLORS["accent"], bg=COLORS["window"],
+                 font=F(14, bold=True)).pack(anchor=tk.W)
+        tk.Label(
+            body,
+            text="View downloaded loot and remote files. Hack in Terminal, then download — files appear under Downloads.",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(10), wraplength=700, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(4, 8))
+
+        panes = tk.Frame(body, bg=COLORS["window"])
+        panes.pack(fill=tk.BOTH, expand=True)
+
+        left = tk.Frame(panes, bg=COLORS["window"], width=280)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
+        self._files_list_frame = left
+
+        right = tk.Frame(panes, bg=COLORS["terminal_bg"])
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
+        self._files_preview_frame = right
+
+        btn_row = tk.Frame(body, bg=COLORS["window"])
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        tk.Button(btn_row, text="↻ Refresh", command=self._refresh_files,
+                  bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+        tk.Button(btn_row, text="Open Terminal", command=self.open_terminal,
+                  bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+
+        self._refresh_files()
+        self._built_panels.add("files")
+
+    def _refresh_files(self) -> None:
+        if not self._files_list_frame or not self._files_preview_frame:
+            return
+        for w in self._files_list_frame.winfo_children():
+            w.destroy()
+        for w in self._files_preview_frame.winfo_children():
+            w.destroy()
+
+        locs = self._files_locations()
+        for label, path, files in locs:
+            tk.Label(
+                self._files_list_frame,
+                text=f"📂 {label}  ({path})",
+                fg=COLORS["accent"], bg=COLORS["window"],
+                font=F(10, bold=True), anchor=tk.W,
+            ).pack(fill=tk.X, padx=4, pady=(10, 4))
+
+            subdirs, names = self._list_vfs_entries(files, path)
+            if not subdirs and not names:
+                tk.Label(
+                    self._files_list_frame,
+                    text="  (empty)",
+                    fg=COLORS["muted"], bg=COLORS["window"], font=F(9), anchor=tk.W,
+                ).pack(fill=tk.X, padx=8)
+                continue
+
+            for sub in subdirs:
+                full = f"{path.rstrip('/')}/{sub}"
+                tk.Button(
+                    self._files_list_frame,
+                    text=f"  📁 {sub}/",
+                    anchor=tk.W,
+                    command=lambda f=full, fl=files: self._files_show_dir(f, fl),
+                    bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT,
+                    font=F(9), padx=6, pady=2,
+                ).pack(fill=tk.X, padx=8, pady=1)
+
+            for name in names:
+                full = f"{path.rstrip('/')}/{name}"
+                tk.Button(
+                    self._files_list_frame,
+                    text=f"  📄 {name}",
+                    anchor=tk.W,
+                    command=lambda f=full, fl=files: self._files_show_file(f, fl),
+                    bg=COLORS["window"], fg=COLORS["text"], relief=tk.FLAT,
+                    font=F(9), padx=6, pady=2,
+                ).pack(fill=tk.X, padx=8, pady=1)
+
+        tk.Label(
+            self._files_preview_frame,
+            text="Select a file to preview its contents.",
+            fg=COLORS["muted"], bg=COLORS["terminal_bg"], font=F(10),
+        ).pack(anchor=tk.NW, padx=12, pady=12)
+
+    def _files_show_dir(self, path: str, files: dict) -> None:
+        if not self._files_preview_frame:
+            return
+        for w in self._files_preview_frame.winfo_children():
+            w.destroy()
+        subdirs, names = self._list_vfs_entries(files, path)
+        tk.Label(
+            self._files_preview_frame,
+            text=f"📁 {path}/",
+            fg=COLORS["accent"], bg=COLORS["terminal_bg"], font=F(11, bold=True),
+        ).pack(anchor=tk.NW, padx=12, pady=(12, 6))
+        listing = "\n".join(f"  {d}/" for d in subdirs) + "\n" + "\n".join(f"  {n}" for n in names)
+        tk.Label(
+            self._files_preview_frame,
+            text=listing.strip() or "(empty directory)",
+            fg=COLORS["text"], bg=COLORS["terminal_bg"], font=MONO(10),
+            justify=tk.LEFT, anchor=tk.NW,
+        ).pack(anchor=tk.NW, padx=12)
+
+    def _files_show_file(self, path: str, files: dict) -> None:
+        if not self._files_preview_frame:
+            return
+        for w in self._files_preview_frame.winfo_children():
+            w.destroy()
+        vf = files.get(path)
+        if not vf:
+            tk.Label(self._files_preview_frame, text="File not found.", fg=COLORS["error"],
+                     bg=COLORS["terminal_bg"]).pack(padx=12, pady=12)
+            return
+        content = vf.read()
+        preview = content[:12000] + ("\n\n… (truncated — open in Terminal with cat)" if len(content) > 12000 else "")
+        tk.Label(
+            self._files_preview_frame,
+            text=f"📄 {path}",
+            fg=COLORS["accent"], bg=COLORS["terminal_bg"], font=F(10, bold=True),
+        ).pack(anchor=tk.NW, padx=12, pady=(12, 4))
+        viewer = scrolledtext.ScrolledText(
+            self._files_preview_frame, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=MONO(10), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        viewer.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+        viewer.insert("1.0", preview)
+        viewer.configure(state=tk.DISABLED)
 
     def open_job_board(self) -> None:
         if "jobs" in self._built_panels:
@@ -794,11 +1008,37 @@ class DesktopApp:
                  font=F(14, bold=True)).pack(anchor=tk.W)
         wallet = tk.Label(body, text=p.wallet_label(), fg=COLORS["muted"], bg=COLORS["window"],
                           font=F(10))
-        wallet.pack(anchor=tk.W, pady=(4, 12))
+        wallet.pack(anchor=tk.W, pady=(4, 8))
 
         if not p.is_local():
-            tk.Label(body, text="Return to localhost (disconnect) to purchase upgrades.",
-                     fg=COLORS["warn"], bg=COLORS["window"]).pack(anchor=tk.W)
+            warn_row = tk.Frame(body, bg=COLORS["window"])
+            warn_row.pack(fill=tk.X, pady=(0, 8))
+            tk.Label(
+                warn_row,
+                text=f"Connected to {p.connection} — disconnect to shop safely.",
+                fg=COLORS["warn"], bg=COLORS["window"], font=F(10),
+            ).pack(side=tk.LEFT)
+            tk.Button(
+                warn_row, text="Disconnect (go home)",
+                command=lambda: (self._gui_run_command("disconnect"), self.root.after(300, self._refresh_shop_panel)),
+                bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=12)
+
+        from faction_consumables import ConsumableManager
+        inv_lines = ConsumableManager.inventory_lines(self.game)
+        if inv_lines:
+            tk.Label(body, text="Consumables:", fg=COLORS["muted"], bg=COLORS["window"],
+                     font=F(10, bold=True)).pack(anchor=tk.W)
+            for line in inv_lines:
+                tk.Label(body, text=f"  {line}", fg=COLORS["text"], bg=COLORS["window"],
+                         font=F(9)).pack(anchor=tk.W, padx=8)
+
+        if not p.is_local():
+            tk.Label(
+                body,
+                text="Return home to purchase upgrades (or click Disconnect above).",
+                fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+            ).pack(anchor=tk.W, pady=(8, 0))
             self._built_panels.add("shop")
             return
 
@@ -810,8 +1050,7 @@ class DesktopApp:
             self.refresh_taskbar()
 
         def refresh_shop() -> None:
-            self._close_window("shop")
-            self.open_shop()
+            self._refresh_shop_panel()
 
         def buy_item(key: str) -> None:
             sounds.play("click")
@@ -855,6 +1094,16 @@ class DesktopApp:
                 state=state,
             ).pack(side=tk.RIGHT)
         self._built_panels.add("shop")
+
+    def _refresh_shop_panel(self) -> None:
+        if "shop" not in self._built_panels:
+            return
+        self._close_window("shop")
+        self.open_shop()
+
+    def _maybe_refresh_shop_after_command(self) -> None:
+        if self.game.player.is_local() and "shop" in self._built_panels:
+            self._refresh_shop_panel()
 
     def _request_contract(self) -> None:
         self.game.cmd_contracts([])
