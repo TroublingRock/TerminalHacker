@@ -741,12 +741,18 @@ class RivalCounterManager:
             rep_reward=45, rival_counter=True, procedural=True,
             modifiers=["rival_race"],
         )
+        from llm_content import LLMContentManager
+        LLMContentManager.enrich_briefing(game, m, server)
         game.missions.missions.insert(0, m)
         game.meta.rival_race_prog[mid] = 0
+        mail_ctx = f"Counter-op on {server.hostname} ({trigger_ip})"
+        mail_body = LLMContentManager.enrich_rival_mail(game, rival, mail_ctx)
+        if not mail_body:
+            mail_body = f"I saw your scan on {server.hostname}. Beat me to the loot or eat trace.\n\n— {rival}"
         game.mail.send(
             f"{rival}@rival.net",
             f"COUNTER-OP on {trigger_ip}",
-            f"I saw your scan on {server.hostname}. Beat me to the loot or eat trace.\n\n— {rival}",
+            mail_body,
         )
 
     @staticmethod

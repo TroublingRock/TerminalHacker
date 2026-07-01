@@ -135,6 +135,17 @@ class PuzzleManager:
         return server.ip
 
     @staticmethod
+    def puzzle_ids_for(server: Server) -> list[str]:
+        if getattr(server, "puzzle_ids", None):
+            return list(server.puzzle_ids)
+        pids: list[str] = []
+        if getattr(server, "puzzle_id", ""):
+            pids.append(server.puzzle_id)
+        if getattr(server, "puzzle_secondary", ""):
+            pids.append(server.puzzle_secondary)
+        return pids
+
+    @staticmethod
     def progress(game: Game, server: Server) -> dict[str, Any]:
         k = PuzzleManager._key(server)
         if k not in game.variety.puzzle_progress:
@@ -151,10 +162,16 @@ class PuzzleManager:
         pid = puzzle_id or getattr(server, "puzzle_id", "") or COMPANY_PUZZLE_MAP.get(server.ip, "")
         if not pid or pid not in HOST_PUZZLES:
             return
-        if server.ip in game.variety.hosts_puzzled:
+        if server.ip in game.variety.hosts_puzzled and not puzzle_id:
             return
-        server.puzzle_id = pid
-        game.variety.hosts_puzzled.add(server.ip)
+        if puzzle_id:
+            if pid == getattr(server, "puzzle_id", ""):
+                server.puzzle_id = pid
+            elif not getattr(server, "puzzle_secondary", ""):
+                server.puzzle_secondary = pid
+        else:
+            server.puzzle_id = pid
+            game.variety.hosts_puzzled.add(server.ip)
         spec = HOST_PUZZLES[pid]
         user = server.ssh_user
         pw = server.ssh_password
@@ -198,46 +215,42 @@ class PuzzleManager:
 
     @staticmethod
     def on_probe(game: Game, server: Server) -> None:
-        if not getattr(server, "puzzle_id", ""):
-            return
-        if server.puzzle_id == "staggered_probe":
-            prog = PuzzleManager.progress(game, server)
-            prog["probes"] = prog.get("probes", 0) + 1
+        for pid in PuzzleManager.puzzle_ids_for(server):
+            if pid == "staggered_probe":
+                prog = PuzzleManager.progress(game, server)
+                prog["probes"] = prog.get("probes", 0) + 1
 
     @staticmethod
     def on_curl(game: Game, server: Server, path: str, body: str) -> None:
-        pid = getattr(server, "puzzle_id", "")
-        if not pid:
-            return
         prog = PuzzleManager.progress(game, server)
         flags = prog.setdefault("flags", set())
-        if pid in ("http_intel", "port_hop"):
-            spec = HOST_PUZZLES[pid]
-            if path.rstrip("/") == spec["web_path"].rstrip("/"):
-                flags.add(spec["flag"])
-                game.variety.social_flags.add(f"curl_{server.ip}_{spec['flag']}")
-                from main import teach
-                teach(HOST_PUZZLES[pid]["hint"])
+        for pid in PuzzleManager.puzzle_ids_for(server):
+            if pid in ("http_intel", "port_hop"):
+                spec = HOST_PUZZLES[pid]
+                if path.rstrip("/") == spec["web_path"].rstrip("/"):
+                    flags.add(spec["flag"])
+                    game.variety.social_flags.add(f"curl_{server.ip}_{spec['flag']}")
+                    from main import teach
+                    teach(HOST_PUZZLES[pid]["hint"])
 
     @staticmethod
     def on_cat(game: Game, server: Server, path: str) -> None:
-        pid = getattr(server, "puzzle_id", "")
-        if pid == "spearphish_read":
-            spec = HOST_PUZZLES[pid]
-            expected = spec["file"].format(user=server.ssh_user)
-            if path == expected:
-                PuzzleManager.progress(game, server)["flags"].add(spec["flag"])
-                game.variety.social_flags.add(f"spear_{server.ip}")
-        if pid == "dual_account":
-            spec = HOST_PUZZLES[pid]
-            expected = spec["jump_file"].format(user=server.ssh_user)
-            if path == expected:
-                PuzzleManager.progress(game, server)["flags"].add(spec["flag"])
+        for pid in PuzzleManager.puzzle_ids_for(server):
+            if pid == "spearphish_read":
+                spec = HOST_PUZZLES[pid]
+                expected = spec["file"].format(user=server.ssh_user)
+                if path == expected:
+                    PuzzleManager.progress(game, server)["flags"].add(spec["flag"])
+                    game.variety.social_flags.add(f"spear_{server.ip}")
+            if pid == "dual_account":
+                spec = HOST_PUZZLES[pid]
+                expected = spec["jump_file"].format(user=server.ssh_user)
+                if path == expected:
+                    PuzzleManager.progress(game, server)["flags"].add(spec["flag"])
 
     @staticmethod
-    def can_crack(game: Game, server: Server) -> str | None:
-        pid = getattr(server, "puzzle_id", "")
-        if not pid:
+    def _check_puzzle(game: Game, server: Server, pid: str) -> str | None:
+        if not pid or pid not in HOST_PUZZLES:
             return None
         prog = PuzzleManager.progress(game, server)
         flags = prog.get("flags", set())
@@ -254,7 +267,10 @@ class PuzzleManager:
         if pid == "port_hop":
             if game.player.connected_port != HOST_PUZZLES[pid]["alt_ssh_port"]:
                 if HOST_PUZZLES[pid]["flag"] not in flags:
-                    return f"curl http://{server.ip}{HOST_PUZZLES[pid]['web_path']} then connect port {HOST_PUZZLES[pid]['alt_ssh_port']}."
+                    return (
+                        f"curl http://{server.ip}{HOST_PUZZLES[pid]['web_path']} "
+                        f"then connect port {HOST_PUZZLES[pid]['alt_ssh_port']}."
+                    )
                 return f"Connect to SSH on port {HOST_PUZZLES[pid]['alt_ssh_port']}, not {game.player.connected_port}."
         if pid == "dual_account" and HOST_PUZZLES[pid]["flag"] not in flags:
             return "Read jump_creds.txt on low-priv shell before admin crack."
@@ -265,6 +281,27 @@ class PuzzleManager:
         return None
 
     @staticmethod
+    def puzzles_satisfied(game: Game, server: Server) -> bool:
+        pids = PuzzleManager.puzzle_ids_for(server)
+        if not pids:
+            return True
+        for pid in pids:
+            if PuzzleManager._check_puzzle(game, server, pid):
+                return False
+        return True
+
+    @staticmethod
+    def can_crack(game: Game, server: Server) -> str | None:
+        pids = PuzzleManager.puzzle_ids_for(server)
+        if not pids:
+            return None
+        for pid in pids:
+            err = PuzzleManager._check_puzzle(game, server, pid)
+            if err:
+                return err
+        return None
+
+    @staticmethod
     def exfil_target(server: Server, default: str) -> str:
         if getattr(server, "puzzle_id", "") == "honeypot_decoy":
             return getattr(server, "honeypot_real_file", default)
@@ -272,10 +309,11 @@ class PuzzleManager:
 
     @staticmethod
     def puzzle_hint(server: Server) -> str:
-        pid = getattr(server, "puzzle_id", "")
-        if pid and pid in HOST_PUZZLES:
-            return HOST_PUZZLES[pid]["hint"]
-        return ""
+        hints: list[str] = []
+        for pid in PuzzleManager.puzzle_ids_for(server):
+            if pid in HOST_PUZZLES:
+                hints.append(HOST_PUZZLES[pid]["hint"])
+        return " | ".join(hints)
 
 
 class ProceduralHostGenerator:
@@ -340,6 +378,9 @@ class ProceduralHostGenerator:
         from longevity_content import RivalCounterManager
         RivalCounterManager.on_procedural_spawn(game, ip)
 
+        from llm_content import LLMContentManager
+        LLMContentManager.enrich_host_story(game, server)
+
         game.network.servers[ip] = server
         game.variety.procedural_counter = n
         game.variety.procedural_ips.append(ip)
@@ -373,6 +414,13 @@ class VarietyMissionGenerator:
             server = random.choice(candidates)
             PuzzleManager.apply_to_server(game, server)
 
+        seed = random.randint(1, 99999)
+        if random.random() < 0.4:
+            from llm_struct import LLMStructManager
+            llm_mission = LLMStructManager.try_structured_procedural(game, server, seed)
+            if llm_mission:
+                return VarietyMissionGenerator._finish(game, llm_mission)
+
         archetypes = ["exfil", "ghost", "root_heist", "clean_sweep", "social", "timing", "pivot"]
         weights = [2, 2, 2, 1, 2, 2, 2]
         mtype = random.choices(archetypes, weights=weights)[0]
@@ -396,7 +444,11 @@ class VarietyMissionGenerator:
     @staticmethod
     def _finish(game: Game, mission: "Mission") -> "Mission":
         from depth_systems import ModifierManager
-        ModifierManager.apply_to_mission(mission, game)
+        if not getattr(mission, "llm_source", "") and not mission.modifiers:
+            ModifierManager.apply_to_mission(mission, game)
+        server = game.network.get_server(mission.target_ip)
+        from llm_content import LLMContentManager
+        LLMContentManager.enrich_briefing(game, mission, server)
         return mission
 
     @staticmethod

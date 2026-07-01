@@ -21,6 +21,9 @@ from typing import Callable
 # Output bridge (CLI print or GUI text widget)
 # ---------------------------------------------------------------------------
 
+NOTES_PATH = "/home/hacker/notes.txt"
+
+
 class Console:
     handler: Callable[[str, str], None] | None = None  # (text, tag)
     fast_mode: bool = False
@@ -345,6 +348,9 @@ class TutorialManager:
         if not self.in_tutorial():
             return
         p = self.player
+        if p.tutorial_step >= len(TUTORIAL_CURRICULUM):
+            self.graduate()
+            return
         step = p.tutorial_step
         g = self.game
 
@@ -361,7 +367,7 @@ class TutorialManager:
             9: lambda: "vpn_success" in p.tutorial_flags and p.vpn_active,
             10: lambda: any(ip.startswith("10.0.0.") for ip in p.discovered_ips),
             11: lambda: "/home/hacker/downloads/classified.txt" in p.files and p.remote_was_root,
-            12: lambda: self.defense_survived and p.firewall_level >= 2,
+            12: lambda: p.firewall_level >= 2,
         }
 
         if step >= len(TUTORIAL_CURRICULUM):
@@ -422,9 +428,37 @@ class TutorialManager:
             "Training sandbox disabled. Traces and fines now affect your real balance.\n"
             "Use VPN, upgrade firewall, and read your Mail for contracts.",
         )
-        from retention import RetentionManager
-        RetentionManager.on_career_session(self.game)
+        if self.game.gui_mode:
+            self.game.defer_career_session = True
+        else:
+            from retention import RetentionManager
+            RetentionManager.on_career_session(self.game)
         self.game.autosave(force=True)
+
+    def complete_defense_drill(self) -> None:
+        self.player.tutorial_flags.add("defense_drill_done")
+        if self.defense_survived:
+            return
+        self.defense_attacks_triggered = max(self.defense_attacks_triggered, 1)
+        self.defense_survived = True
+        success("Defense drill passed — firewall holding against rival probes.")
+
+    def reconcile_stuck_lessons(self) -> None:
+        """Fix edge cases e.g. firewall bought via GUI Shop before rival attack fired."""
+        if not self.in_tutorial():
+            return
+        p = self.player
+        if p.tutorial_step >= len(TUTORIAL_CURRICULUM):
+            if p.firewall_level >= 2:
+                self.graduate()
+            else:
+                p.tutorial_step = self.DEFENSE_LESSON
+            return
+        if p.tutorial_step >= self.DEFENSE_LESSON and p.firewall_level >= 2:
+            p.tutorial_flags.add("tutorial_firewall_upgraded")
+            p.tutorial_flags.add("defense_drill_done")
+            self.complete_defense_drill()
+            self.check_advance()
 
     def on_defense_tick(self) -> None:
         if not self.in_tutorial() or self.player.tutorial_step != self.DEFENSE_LESSON:
@@ -434,8 +468,7 @@ class TutorialManager:
         if self.defense_start_tick is not None and self.player.ticks - self.defense_start_tick < 2:
             return
         if self.player.firewall_level >= 2 and self.defense_attacks_triggered >= 1:
-            self.defense_survived = True
-            success("Defense drill passed — firewall blocked rival probes.")
+            self.complete_defense_drill()
             self.check_advance()
 
 
@@ -462,6 +495,7 @@ class MailBox:
 
     def __init__(self) -> None:
         self.messages: list[MailMessage] = []
+        self.trash: list[MailMessage] = []
         self.on_new_mail: Callable[[MailMessage], None] | None = None
         self._counter = 0
 
@@ -482,7 +516,7 @@ class MailBox:
         return sum(1 for m in self.messages if not m.read)
 
     def mark_read(self, mail_id: str) -> None:
-        for m in self.messages:
+        for m in self.messages + self.trash:
             if m.mail_id == mail_id:
                 m.read = True
                 return
@@ -490,6 +524,43 @@ class MailBox:
     def mark_all_read(self) -> None:
         for m in self.messages:
             m.read = True
+
+    def trash_message(self, mail_id: str) -> bool:
+        for i, m in enumerate(self.messages):
+            if m.mail_id == mail_id:
+                self.trash.insert(0, self.messages.pop(i))
+                return True
+        return False
+
+    def trash_all_read(self) -> int:
+        read_msgs = [m for m in self.messages if m.read]
+        self.messages = [m for m in self.messages if not m.read]
+        self.trash = read_msgs + self.trash
+        return len(read_msgs)
+
+    def permanent_delete(self, mail_id: str) -> bool:
+        for i, m in enumerate(self.trash):
+            if m.mail_id == mail_id:
+                self.trash.pop(i)
+                return True
+        return False
+
+    def empty_trash(self) -> int:
+        count = len(self.trash)
+        self.trash.clear()
+        return count
+
+    # Back-compat aliases
+    def delete(self, mail_id: str) -> bool:
+        return self.trash_message(mail_id)
+
+    def delete_all_read(self) -> int:
+        return self.trash_all_read()
+
+    def clear_inbox(self) -> int:
+        count = len(self.messages)
+        self.messages.clear()
+        return count
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +590,7 @@ class Mission:
     grade: str = ""
     endless_floor: bool = False
     puzzle_id: str = ""
+    puzzle_secondary: str = ""
     social_file: str = ""
     pivot_host: str = ""
     timing_limit_ticks: int = 0
@@ -616,6 +688,8 @@ class MissionBoard:
             payout = int(payout * ModifierManager.payout_mult(mission, game))
             from faction_consumables import FactionRepManager
             payout = int(payout * FactionRepManager.payout_mult(game, mission))
+            from llm_struct import LLMStructManager
+            payout = int(payout * LLMStructManager.world_event_bounty_mult(game))
             if mission.hourly_event and mission.reward_multiplier > 1:
                 payout = int(payout * mission.reward_multiplier)
             rep = mission.rep_reward + MasteryGrader.rep_bonus(grade)
@@ -842,7 +916,10 @@ class Player:
             self.files = {
                 "/home/hacker/notes.txt": VirtualFile(
                     "/home/hacker/notes.txt",
-                    "Type 'lesson' at any time for your current training objective.\n",
+                    "Your personal scratchpad — IPs, passwords, targets.\n"
+                    "  note add <text>   append a line\n"
+                    "  note              show all notes\n"
+                    "Or edit in Files app and click Save.\n",
                     owner=self.username,
                 ),
                 "/var/log/syslog": VirtualFile("/var/log/syslog", syslog_line("localhost", "systemd", "boot") + "\n", mode="rw-r-----"),
@@ -1076,7 +1153,12 @@ class ThreatSystem:
             self.game, random.randint(2, 4),
         )
         if not force and p.firewall_level >= power:
-            return
+            in_defense_lesson = (
+                self.game.tutorial.in_tutorial()
+                and p.tutorial_step == TutorialManager.DEFENSE_LESSON
+            )
+            if not in_defense_lesson:
+                return
 
         divider("!!! RIVAL INTRUSION — LOCALHOST !!!")
         warn(f"'{rival}' targeting {p.public_ip} (firewall L{p.firewall_level} vs attack {power})")
@@ -1157,13 +1239,17 @@ class Game:
         self.story = StoryState()
         self.board = SocialBoardState()
         self.variety = VarietyState()
+        from llm_content import LLMState
+        self.llm = LLMState()
         from depth_systems import MetaState
         self.meta = MetaState()
         self.daily = RetentionManager.make_daily_challenge()
         self.blue = BlueTeamState()
         self.running = True
         self.gui_mode = False
+        self.defer_career_session = False
         self.close_terminal = False
+        self.quit_game = False
         self._cmds_since_autosave = 0
         self.last_autosave = ""
         self._seed_mail()
@@ -1241,6 +1327,25 @@ class Game:
             return False
         return True
 
+    def on_shop_purchase(self, item_key: str) -> bool:
+        """Called after any successful shop purchase (terminal or GUI). Returns True if just graduated."""
+        key = item_key.lower()
+        p = self.player
+        phase_before = p.phase
+        if key in ("cpu", "firewall"):
+            p.tutorial_flags.add("daily_buy_done")
+            p.tutorial_flags.add("daily_shop_bought")
+            p.tutorial_flags.add("daily_gear_up_done")
+            if key == "firewall" and self.tutorial.in_tutorial():
+                p.tutorial_flags.add("tutorial_firewall_upgraded")
+            if self.player.phase == "career":
+                from retention import RetentionManager
+                RetentionManager.on_bridge_event(self, "gear")
+        self.tutorial.reconcile_stuck_lessons()
+        self.tutorial.check_advance()
+        self.autosave(force=True)
+        return phase_before == "tutorial" and p.phase == "career"
+
     def post_command(self, cmd: str) -> None:
         from session_content import HourlyManager, MasteryGrader
 
@@ -1258,7 +1363,10 @@ class Game:
         self.tutorial.check_advance()
         self._check_daily(cmd)
         self._check_achievements()
-        self.autosave()
+        if self.player.phase == "tutorial" or cmd in ("save", "exit", "quit", "load"):
+            self.autosave(force=True)
+        else:
+            self.autosave()
         if self.player.phase == "career":
             from retention import RetentionManager
             RetentionManager.check_bridge_triggers(self)
@@ -1305,12 +1413,13 @@ class Game:
             "vpn [connect|disconnect|status]", "scan/nmap [CIDR]", "connect [IP] [port]",
             "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
+            "note [add|clear|set] [text]",
             "shop", "buy [item]", "missions", "contracts", "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
             "phish", "tunnel", "plant", "forge",
-            "use [item]", "factions",
+            "use [item]", "factions", "llm [test|on|off]", "world",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -1457,6 +1566,8 @@ class Game:
                 chance = min(0.95, chance * 2)
             from depth_systems import RivalHeatManager
             chance += RivalHeatManager.trace_bonus(self, server)
+            from llm_struct import LLMStructManager
+            chance += LLMStructManager.world_event_trace_bonus(self)
             from faction_consumables import FactionRepManager
             chance = max(0.05, chance - FactionRepManager.trace_reduction(self, server))
             if self.player.phase == "endless":
@@ -1718,6 +1829,43 @@ class Game:
             self.player.tutorial_flags.add("daily_read_auth_done")
             teach("That IP is forensic evidence tying you to this intrusion.")
 
+    def _local_notes_file(self) -> VirtualFile:
+        if NOTES_PATH not in self.player.files:
+            self.player.files[NOTES_PATH] = VirtualFile(NOTES_PATH, "", owner=self.player.username)
+        return self.player.files[NOTES_PATH]
+
+    def cmd_note(self, args: list[str]) -> None:
+        if not self.player.is_local():
+            error("Notes only editable on localhost — type disconnect first.")
+            return
+        notes = self._local_notes_file()
+        if not args:
+            divider("NOTES")
+            body = notes.read().strip()
+            Console.out(body if body else "(empty — use: note add 192.168.1.10 gateway)")
+            Console.out("\n  note add <text>  |  note clear")
+            return
+        sub = args[0].lower()
+        if sub == "add":
+            line = " ".join(args[1:]).strip()
+            if not line:
+                error("Usage: note add <text>")
+                return
+            notes.append(line)
+            success(f"Saved: {line}")
+            return
+        if sub == "clear":
+            notes.content = ""
+            success("Notes cleared.")
+            return
+        if sub == "set":
+            text = " ".join(args[1:])
+            notes.content = text + ("\n" if text and not text.endswith("\n") else "")
+            success("Notes replaced.")
+            return
+        notes.append(" ".join(args))
+        success("Saved.")
+
     def cmd_rm(self, args: list[str]) -> None:
         if not args:
             return
@@ -1773,12 +1921,9 @@ class Game:
             error("Active no-shop contract — finish it before buying gear.")
             return
         if Shop.buy(self.player, args[0].lower()):
-            self.player.tutorial_flags.add("daily_buy_done")
-            self.player.tutorial_flags.add("daily_shop_bought")
-            if args[0].lower() in ("cpu", "firewall"):
-                self.player.tutorial_flags.add("daily_gear_up_done")
-                from retention import RetentionManager
-                RetentionManager.on_bridge_event(self, "gear")
+            graduated = self.on_shop_purchase(args[0].lower())
+            if graduated:
+                teach("Training complete — career mode unlocked!")
 
     def cmd_missions(self, _a: list[str]) -> None:
         if self.player.phase == "tutorial":
@@ -2221,6 +2366,51 @@ class Game:
             Console.out(line)
         Console.out("\n  Shift rep via story choices, contracts, and board posts.")
 
+    def cmd_llm(self, args: list[str]) -> None:
+        from llm_content import LLMContentManager
+
+        if not args:
+            divider("LLM DYNAMIC CONTENT")
+            for line in LLMContentManager.status_lines(self):
+                Console.out(line)
+            Console.out("\n  llm test | llm on | llm off")
+            return
+        action = args[0].lower()
+        if action == "test":
+            LLMContentManager.test_generation(self)
+            return
+        if action == "on":
+            self.llm.user_enabled = True
+            success("LLM flavor + structural generation enabled.")
+            return
+        if action == "off":
+            self.llm.user_enabled = False
+            success("LLM disabled (templates only).")
+            return
+        error("Usage: llm [test|on|off]")
+
+    def cmd_world(self, _args: list[str]) -> None:
+        from llm_struct import LLMStructManager
+
+        divider("WEEKLY WORLD EVENT")
+        ev = self.llm.world_event
+        if not ev:
+            ev = LLMStructManager.refresh_world_event(self)
+        if not ev:
+            Console.out("  No world event yet. Configure LLM (llm test) for dynamic weekly events.")
+            Console.out("  Template bounties and rival heat still apply from retention.py.")
+            return
+        Console.out(f"  Week: {self.llm.world_event_week}")
+        Console.out(f"  {ev.get('title', 'Unknown')}")
+        if ev.get("briefing"):
+            Console.out(f"\n  {ev['briefing']}")
+        Console.out(
+            f"\n  Heat Δ: {ev.get('heat_delta', 0)} | "
+            f"Rival aggression Δ: {ev.get('rival_aggression_delta', 0)} | "
+            f"Bounty mult: {ev.get('bounty_multiplier', 1.0)}x | "
+            f"Trace bonus: {ev.get('trace_bonus', 0)}"
+        )
+
     def cmd_save(self, _a: list[str]) -> None:
         from progression import SaveManager
         SaveManager.save(self)
@@ -2232,11 +2422,22 @@ class Game:
 
     def cmd_exit(self, _a: list[str]) -> None:
         if self.gui_mode:
+            self.autosave(force=True)
             self.close_terminal = True
-            Console.out("Terminal minimized to desktop.")
+            Console.out("Back to desktop — progress saved. (Use quit to leave the game.)")
             return
         self.running = False
         self.autosave(force=True)
+        Console.out("Goodbye.")
+
+    def cmd_quit(self, _a: list[str]) -> None:
+        self.autosave(force=True)
+        if self.gui_mode:
+            self.quit_game = True
+            self.close_terminal = True
+            Console.out("Saving and quitting...")
+            return
+        self.running = False
         Console.out("Goodbye.")
 
     def dispatch(self, raw: str) -> None:
@@ -2260,6 +2461,7 @@ class Game:
             "connect": self.cmd_connect, "disconnect": self.cmd_disconnect,
             "probe": self.cmd_probe, "crack": self.cmd_crack, "curl": self.cmd_curl, "privesc": self.cmd_privesc,
             "download": self.cmd_download, "ls": self.cmd_ls, "cat": self.cmd_cat,
+            "note": self.cmd_note, "notes": self.cmd_note,
             "rm": self.cmd_rm, "pwd": self.cmd_pwd, "whoami": self.cmd_whoami,
             "uname": self.cmd_uname, "shop": self.cmd_shop, "buy": self.cmd_buy,
             "missions": self.cmd_missions, "contracts": self.cmd_contracts,
@@ -2273,8 +2475,10 @@ class Game:
             "spec": self.cmd_spec, "heist": self.cmd_heist, "heat": self.cmd_heat,
             "phish": self.cmd_phish, "tunnel": self.cmd_tunnel, "plant": self.cmd_plant,
             "forge": self.cmd_forge, "use": self.cmd_use, "factions": self.cmd_factions,
+            "llm": self.cmd_llm,
+            "world": self.cmd_world,
             "save": self.cmd_save, "load": self.cmd_load,
-            "exit": self.cmd_exit, "quit": self.cmd_exit,
+            "exit": self.cmd_exit, "quit": self.cmd_quit,
         }
         if cmd in handlers:
             handlers[cmd](args)
@@ -2283,6 +2487,10 @@ class Game:
             error("Unknown command. Try lesson or help.")
 
     def run(self) -> None:
+        try:
+            import readline  # noqa: F401 — enables arrow-key history in CLI mode
+        except ImportError:
+            pass
         self.banner()
         while self.running:
             try:

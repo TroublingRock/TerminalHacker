@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from main import Game, Player, Server
 
 SAVE_PATH = Path.home() / ".terminalhacker" / "save.json"
+BACKUP_PATH = SAVE_PATH.with_suffix(".json.bak")
 
 # ---------------------------------------------------------------------------
 # Ranks & subnet unlocks
@@ -258,11 +259,144 @@ class SaveManager:
     AUTOSAVE_EVERY = 5
 
     @staticmethod
-    def save(game: Game, *, quiet: bool = False) -> bool:
-        from main import error, success
+    def _progress_key(data: dict) -> tuple[int, int, int, int]:
+        """Higher = more progress. Used to detect accidental save overwrites."""
+        p = data.get("player", {})
+        phase_rank = {"tutorial": 0, "endless": 1, "career": 2}.get(p.get("phase", "tutorial"), 0)
+        return (
+            phase_rank,
+            int(p.get("tutorial_step", 0)),
+            int(p.get("money", 0)),
+            int(p.get("reputation", 0)),
+        )
+
+    @staticmethod
+    def _would_regress(existing: dict, new_data: dict) -> bool:
+        old = SaveManager._progress_key(existing)
+        new = SaveManager._progress_key(new_data)
+        if new < old:
+            return True
+        # Career save wiped back to fresh tutorial
+        if old[0] >= 2 and new[0] == 0 and new[1] <= 1:
+            return True
+        return False
+
+    @staticmethod
+    def _normalize_player_state(game: Game) -> None:
+        """Clamp inconsistent tutorial_step values from older or partial saves."""
+        from main import TUTORIAL_CURRICULUM
+
+        p = game.player
+        max_step = len(TUTORIAL_CURRICULUM) - 1
+        if p.phase == "career":
+            if p.tutorial_step > max_step:
+                p.tutorial_step = max_step + 1
+        elif p.phase == "tutorial" and p.tutorial_step > max_step:
+            p.tutorial_step = max_step
+
+    @staticmethod
+    def _read_save_file(path: Path) -> dict | None:
         try:
+            return json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def backup_is_better(path: Path, game: Game) -> bool:
+        data = SaveManager._read_save_file(path)
+        if not data:
+            return False
+        current = SaveManager._serialize(game)
+        return SaveManager._progress_key(data) > SaveManager._progress_key(current)
+
+    @staticmethod
+    def load_from_path(game: Game, path: Path, *, quiet: bool = False) -> bool:
+        from main import error, success
+
+        data = SaveManager._read_save_file(path)
+        if not data:
+            if not quiet:
+                error(f"Could not read {path}")
+            return False
+        try:
+            SaveManager._deserialize(game, data)
+            if not quiet:
+                success(f"Loaded from {path}")
+            return True
+        except (KeyError, TypeError, ValueError) as exc:
+            if not quiet:
+                error(f"Load failed: {exc}")
+            return False
+
+    @staticmethod
+    def restore_backup(game: Game, *, quiet: bool = False) -> bool:
+        if not BACKUP_PATH.exists():
+            return False
+        if not SaveManager.load_from_path(game, BACKUP_PATH, quiet=quiet):
+            return False
+        return SaveManager.save(game, quiet=quiet)
+
+    @staticmethod
+    def _load_primary(game: Game, *, quiet: bool = False) -> bool:
+        from main import error
+
+        if not SAVE_PATH.exists():
+            return False
+        try:
+            SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()))
+            return True
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            if not quiet:
+                error(f"Load failed: {exc}")
+            return False
+
+    @staticmethod
+    def load_best_available(game: Game, *, quiet: bool = False) -> bool:
+        """Load primary save; auto-restore from backup if primary is an accidental reset."""
+        from main import error, success, warn
+
+        loaded = SaveManager._load_primary(game, quiet=True)
+        if loaded and BACKUP_PATH.exists() and SaveManager.backup_is_better(BACKUP_PATH, game):
+            if SaveManager.load_from_path(game, BACKUP_PATH, quiet=True):
+                SaveManager.save(game, quiet=True)
+                if not quiet:
+                    warn("Restored your progress from save backup (primary save had regressed).")
+                return True
+        if loaded:
+            if not quiet:
+                success(f"Loaded from {SAVE_PATH}")
+            return True
+        if BACKUP_PATH.exists() and SaveManager.load_from_path(game, BACKUP_PATH, quiet=quiet):
+            SaveManager.save(game, quiet=True)
+            if not quiet:
+                warn("Primary save missing or corrupt — restored from backup.")
+            return True
+        if not quiet:
+            error("No save file found.")
+        return False
+
+    @staticmethod
+    def save(game: Game, *, quiet: bool = False, allow_regression: bool = False) -> bool:
+        from main import error, success, warn
+
+        try:
+            new_data = SaveManager._serialize(game)
             SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            SAVE_PATH.write_text(json.dumps(SaveManager._serialize(game), indent=2))
+            if SAVE_PATH.exists() and not allow_regression:
+                existing = SaveManager._read_save_file(SAVE_PATH)
+                if existing and SaveManager._would_regress(existing, new_data):
+                    blocked = SAVE_PATH.with_suffix(".json.blocked")
+                    blocked.write_text(json.dumps(new_data, indent=2))
+                    if not quiet:
+                        warn(
+                            "Save blocked — would reset your progress. "
+                            f"Backup kept at {BACKUP_PATH}. "
+                            "Use System Status → Restore Backup, or type 'load' in Terminal."
+                        )
+                    return False
+            if SAVE_PATH.exists():
+                BACKUP_PATH.write_text(SAVE_PATH.read_text())
+            SAVE_PATH.write_text(json.dumps(new_data, indent=2))
             if not quiet:
                 success(f"Saved to {SAVE_PATH}")
             return True
@@ -286,23 +420,11 @@ class SaveManager:
 
     @staticmethod
     def load(game: Game, *, quiet: bool = False) -> bool:
-        from main import error, success
-        if not SAVE_PATH.exists():
-            if not quiet:
-                error("No save file found.")
-            return False
-        try:
-            SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()))
-            if not quiet:
-                success(f"Loaded from {SAVE_PATH}")
-            return True
-        except (OSError, json.JSONDecodeError, KeyError) as exc:
-            if not quiet:
-                error(f"Load failed: {exc}")
-            return False
+        return SaveManager.load_best_available(game, quiet=quiet)
 
     @staticmethod
     def _serialize(game: Game) -> dict:
+        from main import NOTES_PATH
         p = game.player
         return {
             "player": {
@@ -321,6 +443,7 @@ class SaveManager:
                 "subnets_scanned": list(p.subnets_scanned),
                 "privesc_hosts": list(p.privesc_hosts),
                 "downloads": [k for k in p.files if "/downloads/" in k],
+                "notes_content": p.files[NOTES_PATH].content if NOTES_PATH in p.files else "",
                 "daily": {
                     "challenge_id": game.daily.challenge_id,
                     "description": game.daily.description,
@@ -346,6 +469,7 @@ class SaveManager:
                  "grade": getattr(m, "grade", ""),
                  "endless_floor": getattr(m, "endless_floor", False),
                  "puzzle_id": getattr(m, "puzzle_id", ""),
+                 "puzzle_secondary": getattr(m, "puzzle_secondary", ""),
                  "social_file": getattr(m, "social_file", ""),
                  "pivot_host": getattr(m, "pivot_host", ""),
                  "timing_limit_ticks": getattr(m, "timing_limit_ticks", 0),
@@ -360,6 +484,9 @@ class SaveManager:
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
                       "body": m.body, "read": m.read, "timestamp": m.timestamp}
                      for m in game.mail.messages],
+            "mail_trash": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
+                            "body": m.body, "read": m.read, "timestamp": m.timestamp}
+                           for m in game.mail.trash],
             "servers": {ip: {"cracked": s.cracked, "ids": s.ids_alert_level}
                         for ip, s in game.network.servers.items()},
             "achievements": list(game.achievements.unlocked),
@@ -471,6 +598,18 @@ class SaveManager:
                 "pivot_completions": game.variety.pivot_completions,
                 "puzzle_completions": game.variety.puzzle_completions,
             },
+            "llm": {
+                "user_enabled": game.llm.user_enabled,
+                "cache": game.llm.cache,
+                "struct_cache": game.llm.struct_cache,
+                "session_calls": game.llm.session_calls,
+                "session_struct_calls": game.llm.session_struct_calls,
+                "total_calls": game.llm.total_calls,
+                "total_struct_calls": game.llm.total_struct_calls,
+                "last_error": game.llm.last_error,
+                "world_event": game.llm.world_event,
+                "world_event_week": game.llm.world_event_week,
+            },
             "meta": {
                 "specialization": game.meta.specialization,
                 "spec_unlock_pending": game.meta.spec_unlock_pending,
@@ -507,7 +646,7 @@ class SaveManager:
 
     @staticmethod
     def _deserialize(game: Game, data: dict) -> None:
-        from main import MailMessage, Mission, Route, VirtualFile
+        from main import MailMessage, Mission, Route, VirtualFile, NOTES_PATH
         from retention import RetentionManager, RetentionState
         from session_content import LateralManager, SessionState
         from endless_mode import EndlessManager, EndlessState
@@ -534,6 +673,11 @@ class SaveManager:
                 for path in v:
                     if path not in p.files:
                         p.files[path] = VirtualFile(path, "restored\n")
+            elif k == "notes_content":
+                if NOTES_PATH in p.files:
+                    p.files[NOTES_PATH].content = v
+                else:
+                    p.files[NOTES_PATH] = VirtualFile(NOTES_PATH, v, owner=p.username)
             elif k == "subnets_scanned":
                 p.subnets_scanned = set(v)
             elif k == "privesc_hosts":
@@ -570,6 +714,7 @@ class SaveManager:
                 grade=md.get("grade", ""),
                 endless_floor=md.get("endless_floor", False),
                 puzzle_id=md.get("puzzle_id", ""),
+                puzzle_secondary=md.get("puzzle_secondary", ""),
                 social_file=md.get("social_file", ""),
                 pivot_host=md.get("pivot_host", ""),
                 timing_limit_ticks=md.get("timing_limit_ticks", 0),
@@ -582,6 +727,7 @@ class SaveManager:
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
+        game.mail.trash = [MailMessage(**md) for md in data.get("mail_trash", [])]
         game.mail._counter = data.get("mail_counter", 0)
         for ip, sd in data.get("servers", {}).items():
             if ip in game.network.servers:
@@ -705,6 +851,21 @@ class SaveManager:
                 pivot_completions=vd.get("pivot_completions", 0),
                 puzzle_completions=vd.get("puzzle_completions", 0),
             )
+        from llm_content import LLMState
+        ld = data.get("llm", {})
+        if ld:
+            game.llm = LLMState(
+                user_enabled=ld.get("user_enabled", True),
+                cache=ld.get("cache", {}),
+                struct_cache=ld.get("struct_cache", {}),
+                session_calls=ld.get("session_calls", 0),
+                session_struct_calls=ld.get("session_struct_calls", 0),
+                total_calls=ld.get("total_calls", 0),
+                total_struct_calls=ld.get("total_struct_calls", 0),
+                last_error=ld.get("last_error", ""),
+                world_event=ld.get("world_event", {}),
+                world_event_week=ld.get("world_event_week", ""),
+            )
         md = data.get("meta", {})
         if md:
             tunnels = {int(k): tuple(v) for k, v in md.get("tunnels", {}).items()}
@@ -744,15 +905,22 @@ class SaveManager:
             for ip in game.endless.floor_hosts:
                 if ip in game.network.servers:
                     game.network.servers[ip].endless_only = True
+        SaveManager._normalize_player_state(game)
         if p.phase == "career":
             game.network.deploy_company_hosts_with_puzzles(game, p.reputation, p.chaos_unlocked)
-            RetentionManager.on_career_session(game)
+            if getattr(game, "gui_mode", False):
+                game.defer_career_session = True
+            else:
+                RetentionManager.on_career_session(game)
             from session_content import HourlyManager
             HourlyManager.refresh(game)
             from depth_systems import WeeklyHeistManager
             WeeklyHeistManager.refresh(game)
         elif p.phase == "endless" and game.endless.active and not game.endless.floor_hosts:
             EndlessManager._spawn_floor(game)
+
+        game.player._game_ref = game
+        game.tutorial.reconcile_stuck_lessons()
 
 
 def build_company_server(spec: dict) -> Server:

@@ -1049,6 +1049,9 @@ class RetentionManager:
 
         r = game.retention
         today = RetentionManager.today()
+        if r.last_login != today:
+            game.llm.session_calls = 0
+            game.llm.session_struct_calls = 0
         RetentionManager._reset_daily_counters(r, today)
         RetentionManager._process_login(game, today)
         RetentionManager._refresh_weekly(game)
@@ -1071,6 +1074,12 @@ class RetentionManager:
         SocialBoardManager.on_career_session(game)
         from longevity_content import SeasonCycleManager
         SeasonCycleManager.on_career_session(game)
+        from llm_content import LLMContentManager
+        LLMContentManager.maybe_rival_taunt(game)
+        from llm_struct import LLMStructManager
+        for line in LLMStructManager.apply_world_event_login(game):
+            from main import Console
+            Console.out(f"  {line}")
 
         if r.last_login == today and r.streak > 0:
             teach(
@@ -1225,7 +1234,12 @@ class RetentionManager:
         rival_body = rival["body"]
         if addendum:
             rival_body += f"\n\n--- Based on your ops ---\n{addendum}"
-        game.mail.send(story["sender"], story["subject"], story["body"])
+        story_body = story["body"]
+        from llm_content import LLMContentManager
+        llm_story = LLMContentManager.enrich_weekly_flavor(game, story["subject"], story_body)
+        if llm_story:
+            story_body = llm_story
+        game.mail.send(story["sender"], story["subject"], story_body)
         game.mail.send(rival["sender"], rival["subject"], rival_body)
 
     @staticmethod
@@ -1798,6 +1812,12 @@ class RetentionManager:
             return True
 
         if mtype in ("exfil", "root_heist", "clean_sweep"):
+            server = game.network.get_server(mission.target_ip)
+            if server:
+                from variety_content import PuzzleManager
+                sec = getattr(mission, "puzzle_secondary", "")
+                if sec and not PuzzleManager.puzzles_satisfied(game, server):
+                    return False
             if not mission.target_file:
                 return False
             fname = mission.target_file.rsplit("/", 1)[-1]

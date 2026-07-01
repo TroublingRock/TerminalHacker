@@ -121,6 +121,34 @@ Faction rep shifts from story choices, contract targets, and board posts. Perks 
 | Endless depth | 6 floor archetypes, 5 modifiers, boss floors every 5 with tool puzzles |
 | Heist retention | First-clear consumable + faction rep; branch mastery bonuses; repeat payout scales down |
 
+### LLM dynamic content (v1.9, optional)
+
+Use **OpenAI** (recommended) or **Groq** for flavor text **and** structured generation.
+
+```bash
+mkdir -p ~/.terminalhacker
+cp llm.json.example ~/.terminalhacker/llm.json
+# Edit api_key in the file, OR export env vars:
+export OPENAI_API_KEY="sk-..."
+# optional: export LLM_PROVIDER=openai
+```
+
+Never commit API keys to the repo — `llm.json` and `.env` are gitignored.
+
+| Command | Purpose |
+|---------|---------|
+| `llm` | Status — provider, flavor + struct call budgets, caches |
+| `llm test` | Verify flavor + JSON struct layer |
+| `llm on` / `llm off` | Toggle without deleting config |
+| `world` | Current weekly world event (heat, bounties, trace) |
+| `board post lfg <title> \| <body>` | Spawns a real LLM-authored contract from your post |
+
+**Call budgets (per calendar day):** 12 flavor calls + 3 structural calls. All responses cached in your save.
+
+**Structural hooks:** AI picks mission type + dual puzzle combo + modifiers + loot path (validated against real hosts/files); LFG board posts become contracts; weekly world-event JSON tweaks heat, bounties, and rival aggression.
+
+Defaults: OpenAI `gpt-4o-mini`, 12 flavor + 3 struct calls/session. Falls back to templates if no key.
+
 ### Balance notes (v1.2)
 
 - Trace chance tuned for fair early career (~28% base)

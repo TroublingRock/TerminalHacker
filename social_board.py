@@ -196,6 +196,10 @@ class SocialBoardManager:
         author = broker if "@" not in broker else broker.split("@")[0]
         if broker.endswith("_broker") or broker in ("ghost_broker", "cipher7", "shade_runner", "packet_queen", "nullbyte"):
             author = broker
+        from llm_content import LLMContentManager
+        llm_body = LLMContentManager.enrich_board_reply(game, author, body)
+        if llm_body:
+            body = llm_body
         SocialBoardManager._add_post(
             game, board, author,
             f"RE: your contract",
@@ -220,6 +224,17 @@ class SocialBoardManager:
             game, board, game.player.username, title[:80], body[:500], player_post=True,
         )
         game.board.karma += 3
+        if board == "lfg":
+            from llm_struct import LLMStructManager
+            mission = LLMStructManager.spawn_lfg_contract(game, title, body)
+            if mission:
+                game.missions.missions.insert(0, mission)
+                success(f"LFG contract live: {mission.briefing[:72]}...")
+                game.mail.send(
+                    f"{mission.broker}@darknet",
+                    f"LFG CONTRACT: {title[:40]}",
+                    f"{mission.briefing}\n\nTarget: {mission.target_ip}\nReward: ${mission.reward}",
+                )
         from faction_consumables import FactionRepManager
         FactionRepManager.on_board_post(game, board)
         success(f"Posted to /{board}/")
