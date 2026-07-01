@@ -428,8 +428,11 @@ class TutorialManager:
             "Training sandbox disabled. Traces and fines now affect your real balance.\n"
             "Use VPN, upgrade firewall, and read your Mail for contracts.",
         )
-        from retention import RetentionManager
-        RetentionManager.on_career_session(self.game)
+        if self.game.gui_mode:
+            self.game.defer_career_session = True
+        else:
+            from retention import RetentionManager
+            RetentionManager.on_career_session(self.game)
         self.game.autosave(force=True)
 
     def complete_defense_drill(self) -> None:
@@ -446,7 +449,10 @@ class TutorialManager:
             return
         p = self.player
         if p.tutorial_step >= len(TUTORIAL_CURRICULUM):
-            self.graduate()
+            if p.firewall_level >= 2:
+                self.graduate()
+            else:
+                p.tutorial_step = self.DEFENSE_LESSON
             return
         if p.tutorial_step >= self.DEFENSE_LESSON and p.firewall_level >= 2:
             p.tutorial_flags.add("tutorial_firewall_upgraded")
@@ -1241,6 +1247,7 @@ class Game:
         self.blue = BlueTeamState()
         self.running = True
         self.gui_mode = False
+        self.defer_career_session = False
         self.close_terminal = False
         self.quit_game = False
         self._cmds_since_autosave = 0

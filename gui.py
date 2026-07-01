@@ -105,7 +105,9 @@ class DesktopApp:
         self._terminal_input_frame: tk.Frame | None = None
         self._terminal_focus_job: str | None = None
         self._terminal_key_catcher: str | None = None
+        self._terminal_key_catcher_active = False
         self._terminal_run_cmd: object | None = None
+        self._terminal_submit_cmd: object | None = None
         self._terminal_prompt_lbl: tk.Label | None = None
         self._files_list_frame: tk.Frame | None = None
         self._files_preview_frame: tk.Frame | None = None
@@ -113,6 +115,7 @@ class DesktopApp:
         self._terminal_history_pos: int = 0
         self._terminal_log: list[tuple[str, str]] = []
         self._terminal_output_widget: scrolledtext.ScrolledText | None = None
+        self._taskbar_refresh_job: str | None = None
         self._save_loaded = False
         self._save_restore_notice: str = ""
 
@@ -122,6 +125,25 @@ class DesktopApp:
         self._run_onboarding()
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self._schedule_autosave()
+        self.refresh_taskbar()
+        if self.game.defer_career_session:
+            self.root.after(200, self._run_deferred_career_session)
+
+    def _schedule_taskbar_refresh(self) -> None:
+        if self._taskbar_refresh_job:
+            return
+        self._taskbar_refresh_job = self.root.after(80, self._flush_taskbar_refresh)
+
+    def _flush_taskbar_refresh(self) -> None:
+        self._taskbar_refresh_job = None
+        self.refresh_taskbar()
+
+    def _run_deferred_career_session(self) -> None:
+        if not self.game.defer_career_session:
+            return
+        self.game.defer_career_session = False
+        from retention import RetentionManager
+        RetentionManager.on_career_session(self.game)
         self.refresh_taskbar()
 
     def _install_global_console_handler(self) -> None:
@@ -138,13 +160,24 @@ class DesktopApp:
                     self._terminal_log.append((line, tag))
             if len(self._terminal_log) > 4000:
                 self._terminal_log = self._terminal_log[-3000:]
-            out = self._terminal_output_widget
-            if out and out.winfo_exists():
-                out.configure(state=tk.NORMAL)
-                out.insert(tk.END, text + ("\n" if not text.endswith("\n") else ""), tag)
-                out.see(tk.END)
-                out.configure(state=tk.DISABLED)
-            self.refresh_taskbar()
+
+            def paint() -> None:
+                out = self._terminal_output_widget
+                if out and out.winfo_exists():
+                    out.configure(state=tk.NORMAL)
+                    out.insert(tk.END, text + ("\n" if not text.endswith("\n") else ""), tag)
+                    out.see(tk.END)
+                    out.configure(state=tk.DISABLED)
+
+            try:
+                if self.root.winfo_exists():
+                    self.root.after_idle(paint)
+                else:
+                    paint()
+            except tk.TclError:
+                pass
+
+            self._schedule_taskbar_refresh()
             if tag == "error":
                 sounds.play("error")
             elif tag == "warn" and "INTRUSION" in text:
@@ -460,7 +493,10 @@ class DesktopApp:
 
         for other in list(self.open_windows.keys()):
             if other != key:
-                self._close_window(other)
+                if other == "terminal":
+                    self._hide_app(other, show_desktop=False)
+                else:
+                    self._close_window(other)
 
         if self.desktop_view:
             self.desktop_view.pack_forget()
@@ -506,20 +542,25 @@ class DesktopApp:
                 shell.pack_forget()
         if key == "terminal" and (self._terminal_entry or self._terminal_input):
             self._arm_terminal_focus()
+            self._ensure_terminal_key_catcher()
         if key == "files" and "files" in self._built_panels:
             self._refresh_files()
 
     def _uninstall_terminal_key_catcher(self) -> None:
-        if self._terminal_key_catcher:
-            try:
-                self.root.unbind_all("<KeyPress>")
-            except tk.TclError:
-                pass
-            self._terminal_key_catcher = None
+        self._terminal_key_catcher_active = False
+
+    def _ensure_terminal_key_catcher(self) -> None:
+        entry = self._terminal_entry
+        submit = self._terminal_submit_cmd or self._terminal_run_cmd
+        if entry and entry.winfo_exists() and submit:
+            self._install_terminal_key_catcher(entry, submit)
 
     def _install_terminal_key_catcher(self, entry: tk.Entry, run_command) -> None:
         """Route keyboard to command line when Terminal is open (Cursor Desktop fix)."""
-        self._uninstall_terminal_key_catcher()
+        self._terminal_key_catcher_active = True
+
+        if self._terminal_key_catcher is not None:
+            return
 
         def _focus_is_other_editor() -> bool:
             focus = self.root.focus_get()
@@ -536,6 +577,8 @@ class DesktopApp:
             return True
 
         def catcher(event) -> str | None:
+            if not self._terminal_key_catcher_active:
+                return None
             if "terminal" not in self.open_windows or not entry.winfo_exists():
                 return None
             # Entry already has focus — let it handle keys (prevents double-typing).
@@ -631,20 +674,37 @@ class DesktopApp:
         elif self._terminal_entry and self._terminal_entry.winfo_exists():
             self._terminal_entry.delete(0, tk.END)
 
+    def _any_app_visible(self) -> bool:
+        for panel in self.open_windows.values():
+            shell = panel._shell  # type: ignore[attr-defined]
+            try:
+                if shell.winfo_ismapped():
+                    return True
+            except tk.TclError:
+                continue
+        return False
+
+    def _hide_app(self, key: str, *, show_desktop: bool = True) -> None:
+        if key not in self.open_windows:
+            return
+        sounds.play("close")
+        self.open_windows[key]._shell.pack_forget()  # type: ignore[attr-defined]
+        if key == "terminal":
+            self.game.close_terminal = False
+            self._uninstall_terminal_key_catcher()
+            self._cancel_terminal_focus()
+        if show_desktop and not self._any_app_visible():
+            self._show_desktop()
+
     def _close_window(self, key: str) -> None:
+        if key == "terminal":
+            self._hide_app(key)
+            return
         if key in self.open_windows:
             sounds.play("close")
             self.open_windows[key]._shell.destroy()
             del self.open_windows[key]
             self._built_panels.discard(key)
-        if key == "terminal":
-            self.game.close_terminal = False
-            self._uninstall_terminal_key_catcher()
-            self._terminal_entry = None
-            self._terminal_input = None
-            self._terminal_input_frame = None
-            self._terminal_output_widget = None
-            self._cancel_terminal_focus()
         if key == "mail":
             self._mail_listbox = None
             self._mail_viewer = None
@@ -657,7 +717,7 @@ class DesktopApp:
         if key == "files":
             self._files_list_frame = None
             self._files_preview_frame = None
-        if not self.open_windows:
+        if not self.open_windows or not self._any_app_visible():
             self._show_desktop()
 
     # ----- terminal command bridge -----
@@ -907,6 +967,7 @@ class DesktopApp:
         if "terminal" in self._built_panels:
             self._show_app("terminal")
             self._arm_terminal_focus()
+            self._ensure_terminal_key_catcher()
             return
         win = self._window("terminal", "Terminal — hacker@localhost", 780, 560)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
@@ -1023,10 +1084,16 @@ class DesktopApp:
                 return
             remember_command(cmd)
             sounds.play("click")
+            phase_before = self.game.player.phase
             Console.out(self.game.prompt() + cmd, "prompt")
+            self.root.update_idletasks()
             self.game.close_terminal = False
             self.game.dispatch(cmd)
-            self.refresh_taskbar()
+            self._flush_taskbar_refresh()
+            if phase_before == "tutorial" and self.game.player.phase == "career":
+                self.root.after(150, self._show_graduation_popup)
+            elif self.game.defer_career_session:
+                self.root.after(50, self._run_deferred_career_session)
             if self._files_list_frame:
                 self._refresh_files()
             if "shop" in self._built_panels:
@@ -1048,6 +1115,7 @@ class DesktopApp:
             return "break"
 
         self._terminal_run_cmd = execute_command
+        self._terminal_submit_cmd = run_command
 
         def paste_clip(_event=None) -> str:
             try:
@@ -1719,11 +1787,14 @@ class DesktopApp:
         self.open_job_board()
 
     def _finish_training_from_shop(self) -> None:
+        phase_before = self.game.player.phase
         self.game.tutorial.reconcile_stuck_lessons()
         self.game.tutorial.check_advance()
         self.game.autosave(force=True)
         self.refresh_taskbar()
-        if self.game.player.phase == "career":
+        if phase_before == "tutorial" and self.game.player.phase == "career":
+            if self.game.defer_career_session:
+                self._run_deferred_career_session()
             self._show_graduation_popup()
         else:
             from tkinter import messagebox

@@ -282,6 +282,19 @@ class SaveManager:
         return False
 
     @staticmethod
+    def _normalize_player_state(game: Game) -> None:
+        """Clamp inconsistent tutorial_step values from older or partial saves."""
+        from main import TUTORIAL_CURRICULUM
+
+        p = game.player
+        max_step = len(TUTORIAL_CURRICULUM) - 1
+        if p.phase == "career":
+            if p.tutorial_step > max_step:
+                p.tutorial_step = max_step + 1
+        elif p.phase == "tutorial" and p.tutorial_step > max_step:
+            p.tutorial_step = max_step
+
+    @staticmethod
     def _read_save_file(path: Path) -> dict | None:
         try:
             return json.loads(path.read_text())
@@ -892,9 +905,13 @@ class SaveManager:
             for ip in game.endless.floor_hosts:
                 if ip in game.network.servers:
                     game.network.servers[ip].endless_only = True
+        SaveManager._normalize_player_state(game)
         if p.phase == "career":
             game.network.deploy_company_hosts_with_puzzles(game, p.reputation, p.chaos_unlocked)
-            RetentionManager.on_career_session(game)
+            if getattr(game, "gui_mode", False):
+                game.defer_career_session = True
+            else:
+                RetentionManager.on_career_session(game)
             from session_content import HourlyManager
             HourlyManager.refresh(game)
             from depth_systems import WeeklyHeistManager
