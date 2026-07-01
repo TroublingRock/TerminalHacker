@@ -61,11 +61,14 @@ class DesktopApp:
         Console.fast_mode = True
         self.game.mail.on_new_mail = self._on_new_mail
 
-        self.open_windows: dict[str, tk.Toplevel] = {}
+        self.open_windows: dict[str, object] = {}
         self.terminal_booted = False
         self.mail_badge: tk.Label | None = None
         self._mail_listbox: tk.Listbox | None = None
         self.taskbar_label: tk.Label | None = None
+        self.desktop_view: tk.Frame | None = None
+        self.app_shell: tk.Frame | None = None
+        self._built_panels: set[str] = set()
 
         self._build_desktop()
         self._build_taskbar()
@@ -121,12 +124,20 @@ class DesktopApp:
             bg=COLORS["desktop"], font=title_font,
         ).pack(side=tk.LEFT)
         tk.Label(
-            header, text="  v1.6 — Cybersecurity Training Environment",
+            header, text="  v1.9 — Cybersecurity Training Environment",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 11),
         ).pack(side=tk.LEFT, padx=(8, 0))
 
-        icons = tk.Frame(self.root, bg=COLORS["desktop"])
+        self.content = tk.Frame(self.root, bg=COLORS["desktop"])
+        self.content.pack(fill=tk.BOTH, expand=True)
+
+        self.desktop_view = tk.Frame(self.content, bg=COLORS["desktop"])
+        self.desktop_view.pack(fill=tk.BOTH, expand=True)
+
+        icons = tk.Frame(self.desktop_view, bg=COLORS["desktop"])
         icons.pack(fill=tk.BOTH, expand=True, padx=32, pady=16)
+
+        self.app_shell = tk.Frame(self.content, bg=COLORS["window"])
 
         apps = [
             ("terminal", ">_", "Terminal", "SSH shell & hacking commands", self.open_terminal),
@@ -144,8 +155,8 @@ class DesktopApp:
             self._desktop_icon(icons, *app, row=row, col=col)
 
         hint = tk.Label(
-            self.root,
-            text="Double-click an icon to launch. New Mail arrives from brokers and trainers.",
+            self.desktop_view,
+            text="Click an icon to launch. Use ← Desktop to return from any app.",
             fg=COLORS["muted"], bg=COLORS["desktop"], font=("Helvetica", 10),
         )
         hint.pack(pady=(0, 12))
@@ -183,10 +194,19 @@ class DesktopApp:
             sounds.play("click")
             command()
 
-        for widget in (frame, box, icon_wrap):
-            widget.bind("<Double-Button-1>", launch)
-            widget.bind("<Enter>", lambda _e, b=box: b.configure(bg=COLORS["border"]))
-            widget.bind("<Leave>", lambda _e, b=box: b.configure(bg=COLORS["window"]))
+        widgets: list[tk.Widget] = []
+
+        def collect(w: tk.Widget) -> None:
+            widgets.append(w)
+            for child in w.winfo_children():
+                collect(child)
+
+        collect(frame)
+        for widget in widgets:
+            widget.bind("<Button-1>", launch)
+            widget.configure(cursor="hand2")
+        box.bind("<Enter>", lambda _e, b=box: b.configure(bg=COLORS["border"]))
+        box.bind("<Leave>", lambda _e, b=box: b.configure(bg=COLORS["window"]))
 
     def _build_taskbar(self) -> None:
         bar = tk.Frame(self.root, bg=COLORS["taskbar"], height=36)
@@ -227,70 +247,85 @@ class DesktopApp:
             )
         )
 
-    def _window(self, key: str, title: str, width: int, height: int) -> tk.Toplevel:
-        if key in self.open_windows and self.open_windows[key].winfo_exists():
-            win = self.open_windows[key]
-            win.lift()
-            win.focus_force()
+    def _show_desktop(self) -> None:
+        if self.app_shell:
+            self.app_shell.pack_forget()
+        if self.desktop_view:
+            self.desktop_view.pack(fill=tk.BOTH, expand=True)
+
+    def _window(self, key: str, title: str, width: int, height: int) -> object:
+        if key in self.open_windows:
+            panel = self.open_windows[key]
+            self._show_app(key)
             sounds.play("click")
-            return win
+            return panel
 
-        win = tk.Toplevel(self.root)
-        win.title(title)
-        win.configure(bg=COLORS["window"])
-        win.protocol("WM_DELETE_WINDOW", lambda k=key: self._close_window(k))
+        for other in list(self.open_windows.keys()):
+            if other != key:
+                self._close_window(other)
 
-        titlebar = tk.Frame(win, bg=COLORS["border"], height=32)
+        if self.desktop_view:
+            self.desktop_view.pack_forget()
+        assert self.app_shell is not None
+
+        shell = tk.Frame(self.app_shell, bg=COLORS["window"])
+        shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+
+        titlebar = tk.Frame(shell, bg=COLORS["border"], height=36)
         titlebar.pack(fill=tk.X)
-        tk.Label(titlebar, text=f"  {title}", fg=COLORS["text"], bg=COLORS["border"],
-                 font=("Helvetica", 10, "bold")).pack(side=tk.LEFT, pady=4)
+        tk.Label(
+            titlebar, text=f"  {title}", fg=COLORS["text"], bg=COLORS["border"],
+            font=("Helvetica", 10, "bold"),
+        ).pack(side=tk.LEFT, pady=6)
+        tk.Button(
+            titlebar, text="← Desktop", command=lambda: self._close_window(key),
+            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
+        ).pack(side=tk.RIGHT, padx=8, pady=4)
 
-        body = tk.Frame(win, bg=COLORS["window"])
+        body = tk.Frame(shell, bg=COLORS["window"])
         body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        win._body = body  # type: ignore[attr-defined]
-        self.open_windows[key] = win
 
-        self._animate_window_open(win, width, height)
+        panel = type("Panel", (), {})()
+        panel._body = body
+        panel._shell = shell
+        panel._key = key
+        self.open_windows[key] = panel
+
+        self.app_shell.pack(fill=tk.BOTH, expand=True)
         sounds.play("open")
-        return win
+        return panel
 
-    def _animate_window_open(self, win: tk.Toplevel, width: int, height: int) -> None:
-        self.root.update_idletasks()
-        base_x = self.root.winfo_x() + 60 + len(self.open_windows) * 18
-        base_y = self.root.winfo_y() + 50 + len(self.open_windows) * 14
-        state = {"step": 0}
-
-        def tick() -> None:
-            step = state["step"]
-            if step > self.ANIM_STEPS:
-                win.geometry(f"{width}x{height}+{base_x}+{base_y}")
-                return
-            progress = step / self.ANIM_STEPS
-            eased = 1 - (1 - progress) ** 3
-            cur_w = max(80, int(width * eased))
-            cur_h = max(40, int(height * eased))
-            off_x = (width - cur_w) // 2
-            off_y = height - cur_h
-            win.geometry(f"{cur_w}x{cur_h}+{base_x + off_x}+{base_y + off_y}")
-            state["step"] += 1
-            win.after(self.ANIM_MS, tick)
-
-        win.geometry(f"80x40+{base_x}+{base_y + height - 40}")
-        win.after(self.ANIM_MS, tick)
+    def _show_app(self, key: str) -> None:
+        if self.desktop_view:
+            self.desktop_view.pack_forget()
+        if self.app_shell:
+            self.app_shell.pack(fill=tk.BOTH, expand=True)
+        for k, panel in self.open_windows.items():
+            shell = panel._shell
+            if k == key:
+                shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+            else:
+                shell.pack_forget()
 
     def _close_window(self, key: str) -> None:
         if key in self.open_windows:
             sounds.play("close")
-            self.open_windows[key].destroy()
+            self.open_windows[key]._shell.destroy()
             del self.open_windows[key]
+            self._built_panels.discard(key)
         if key == "terminal":
             self.game.close_terminal = False
         if key == "mail":
             self._mail_listbox = None
+        if not self.open_windows:
+            self._show_desktop()
 
     # ----- apps -----
 
     def open_mail(self) -> None:
+        if "mail" in self._built_panels:
+            self._show_app("mail")
+            return
         win = self._window("mail", "Mail — Secure Inbox", 720, 500)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
@@ -356,6 +391,7 @@ class DesktopApp:
         if self.game.mail.messages:
             listbox.selection_set(0)
             show_message()
+        self._built_panels.add("mail")
 
     def _populate_mail_list(self, listbox: tk.Listbox) -> None:
         listbox.delete(0, tk.END)
@@ -371,6 +407,9 @@ class DesktopApp:
             self._populate_mail_list(self._mail_listbox)
 
     def open_terminal(self) -> None:
+        if "terminal" in self._built_panels:
+            self._show_app("terminal")
+            return
         win = self._window("terminal", "Terminal — hacker@localhost", 780, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
@@ -441,9 +480,13 @@ class DesktopApp:
             self.terminal_booted = True
             self.game.banner()
 
-        win.after(120, entry.focus_set)
+        self.root.after(120, entry.focus_set)
+        self._built_panels.add("terminal")
 
     def open_job_board(self) -> None:
+        if "jobs" in self._built_panels:
+            self._show_app("jobs")
+            return
         win = self._window("jobs", "Job Board — Secure Contracts", 620, 480)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         p = self.game.player
@@ -527,10 +570,14 @@ class DesktopApp:
         btn_row.pack(fill=tk.X, pady=(10, 0))
         tk.Button(btn_row, text="Request New Contract", command=self._request_contract,
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4).pack(side=tk.LEFT)
+        self._built_panels.add("jobs")
 
     def open_social_board(self) -> None:
         from social_board import BOARD_NAMES, SocialBoardManager
 
+        if "board" in self._built_panels:
+            self._show_app("board")
+            return
         win = self._window("board", "Darknet Board — Social Channels", 680, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         p = self.game.player
@@ -558,8 +605,12 @@ class DesktopApp:
 
         tk.Label(body, text="Terminal: board post flex Title | body  |  board upvote post-0001",
                  fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 9)).pack(anchor=tk.W, pady=(8, 0))
+        self._built_panels.add("board")
 
     def open_shop(self) -> None:
+        if "shop" in self._built_panels:
+            self._show_app("shop")
+            return
         win = self._window("shop", "Black Market — Upgrades", 640, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         p = self.game.player
@@ -573,6 +624,7 @@ class DesktopApp:
         if not p.is_local():
             tk.Label(body, text="Return to localhost (disconnect) to purchase upgrades.",
                      fg=COLORS["warn"], bg=COLORS["window"]).pack(anchor=tk.W)
+            self._built_panels.add("shop")
             return
 
         list_frame = tk.Frame(body, bg=COLORS["window"])
@@ -627,6 +679,7 @@ class DesktopApp:
                 bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
                 state=state,
             ).pack(side=tk.RIGHT)
+        self._built_panels.add("shop")
 
     def _request_contract(self) -> None:
         self.game.cmd_contracts([])
@@ -635,6 +688,9 @@ class DesktopApp:
         self.open_job_board()
 
     def open_achievements(self) -> None:
+        if "achieve" in self._built_panels:
+            self._show_app("achieve")
+            return
         win = self._window("achieve", "Achievements & Daily", 560, 440)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
@@ -655,8 +711,12 @@ class DesktopApp:
                  bg=COLORS["window"], font=("Helvetica", 10), wraplength=520).pack(anchor=tk.W)
         tk.Label(body, text=f"Streak: {r.streak} days (best {r.longest_streak}) | Season tier {r.season_tier}/{len(SEASON_TIERS)}",
                  fg=COLORS["muted"], bg=COLORS["window"], font=("Helvetica", 10)).pack(anchor=tk.W, pady=(4, 0))
+        self._built_panels.add("achieve")
 
     def open_training(self) -> None:
+        if "training" in self._built_panels:
+            self._show_app("training")
+            return
         win = self._window("training", "Training Center", 640, 500)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
@@ -689,12 +749,16 @@ class DesktopApp:
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4).pack(side=tk.LEFT)
         tk.Button(btn_row, text="Open Terminal", command=self.open_terminal,
                   bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12, pady=4).pack(side=tk.LEFT, padx=8)
+        self._built_panels.add("training")
 
     def _lesson_to_terminal(self) -> None:
         self.open_terminal()
         self.game.cmd_lesson([])
 
     def open_status(self) -> None:
+        if "status" in self._built_panels:
+            self._show_app("status")
+            return
         win = self._window("status", "System Status", 480, 360)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         p = self.game.player
@@ -752,6 +816,7 @@ class DesktopApp:
         if p.phase == "career":
             tk.Button(btn_row, text="Endless Run (endless start)", command=self.open_terminal,
                       bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
+        self._built_panels.add("status")
 
     def run(self) -> None:
         self.root.mainloop()
