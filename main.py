@@ -1264,7 +1264,10 @@ class Game:
         self.tutorial.check_advance()
         self._check_daily(cmd)
         self._check_achievements()
-        self.autosave()
+        if self.player.phase == "tutorial" or cmd in ("save", "exit", "quit", "load"):
+            self.autosave(force=True)
+        else:
+            self.autosave()
         if self.player.phase == "career":
             from retention import RetentionManager
             RetentionManager.check_bridge_triggers(self)

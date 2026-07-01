@@ -260,8 +260,12 @@ class SaveManager:
     @staticmethod
     def save(game: Game, *, quiet: bool = False) -> bool:
         from main import error, success
+
         try:
             SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            if SAVE_PATH.exists():
+                backup = SAVE_PATH.with_suffix(".json.bak")
+                backup.write_text(SAVE_PATH.read_text())
             SAVE_PATH.write_text(json.dumps(SaveManager._serialize(game), indent=2))
             if not quiet:
                 success(f"Saved to {SAVE_PATH}")

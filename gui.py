@@ -91,6 +91,7 @@ class DesktopApp:
         self.hint_label: tk.Label | None = None
         self.onboarding_banner: tk.Frame | None = None
         self._terminal_entry: tk.Entry | None = None
+        self._save_loaded = False
 
         self._try_resume_save()
         self._build_desktop()
@@ -102,17 +103,25 @@ class DesktopApp:
 
     def _try_resume_save(self) -> None:
         from progression import SAVE_PATH, SaveManager
+
         if SAVE_PATH.exists():
-            SaveManager.load(self.game, quiet=True)
+            self._save_loaded = SaveManager.load(self.game, quiet=True)
+        else:
+            self._save_loaded = False
 
     def _on_quit(self) -> None:
         self.game.autosave(force=True)
         self.root.destroy()
 
     def _schedule_autosave(self) -> None:
+        # Do not autosave immediately on startup — that can overwrite a good save
+        # if load failed and left a fresh Game() in memory.
+        self.root.after(120_000, self._periodic_autosave)
+
+    def _periodic_autosave(self) -> None:
         self.game.autosave(force=True)
         self.refresh_taskbar()
-        self.root.after(120_000, self._schedule_autosave)
+        self.root.after(120_000, self._periodic_autosave)
 
     # ----- mail notifications -----
 
@@ -251,9 +260,14 @@ class DesktopApp:
         ).pack(side=tk.LEFT)
 
         if self.hint_label:
-            self.hint_label.configure(
-                text=f"Tutorial lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)} — progress auto-saves."
-            )
+            if self._save_loaded:
+                self.hint_label.configure(
+                    text=f"Tutorial lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)} — progress auto-saves after each command."
+                )
+            else:
+                self.hint_label.configure(
+                    text="New game — progress saves after each command. Type save anytime in Terminal."
+                )
         if auto_open:
             self.root.after(400, self.open_training)
         else:
