@@ -1390,6 +1390,15 @@ class DesktopApp:
     def open_shop(self) -> None:
         if "shop" in self._built_panels:
             self._show_app("shop")
+            p = self.game.player
+            if (
+                p.phase == "tutorial"
+                and p.tutorial_step >= len(TUTORIAL_CURRICULUM) - 1
+                and p.firewall_level >= 2
+            ):
+                self.game.tutorial.reconcile_stuck_lessons()
+                if self.game.player.phase == "career":
+                    self.root.after(200, self._show_graduation_popup)
             return
         win = self._window("shop", "Black Market — Upgrades", 640, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
@@ -1433,6 +1442,24 @@ class DesktopApp:
             self._built_panels.add("shop")
             return
 
+        if (
+            p.phase == "tutorial"
+            and p.tutorial_step >= len(TUTORIAL_CURRICULUM) - 1
+            and p.firewall_level >= 2
+        ):
+            grad_row = tk.Frame(body, bg=COLORS["window"])
+            grad_row.pack(fill=tk.X, pady=(0, 8))
+            tk.Label(
+                grad_row,
+                text="Final lesson: firewall L2+ ready — click to finish training.",
+                fg=COLORS["success"], bg=COLORS["window"], font=F(10, bold=True),
+            ).pack(side=tk.LEFT)
+            tk.Button(
+                grad_row, text="Finish Training",
+                command=self._finish_training_from_shop,
+                bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=12, pady=4,
+            ).pack(side=tk.LEFT, padx=12)
+
         list_frame = tk.Frame(body, bg=COLORS["window"])
         list_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -1447,10 +1474,20 @@ class DesktopApp:
             sounds.play("click")
             if Shop.buy(p, key):
                 sounds.play("success")
-                self.game.on_shop_purchase(key)
+                graduated = self.game.on_shop_purchase(key)
                 refresh_wallet()
                 refresh_shop()
                 self.refresh_taskbar()
+                if graduated:
+                    self._show_graduation_popup()
+            elif (
+                key == "firewall"
+                and p.phase == "tutorial"
+                and p.tutorial_step >= len(TUTORIAL_CURRICULUM) - 1
+                and p.firewall_level >= 2
+            ):
+                # Already have firewall L2+ but buy failed (maxed / low credits) — still graduate
+                self._finish_training_from_shop()
 
         for item in SHOP_CATALOG:
             row = tk.Frame(list_frame, bg=COLORS["border"], pady=6, padx=8)
@@ -1637,6 +1674,35 @@ class DesktopApp:
             tk.Button(btn_row, text="Endless Run (endless start)", command=self.open_terminal,
                       bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         self._built_panels.add("status")
+
+    def _show_graduation_popup(self) -> None:
+        from tkinter import messagebox
+        messagebox.showinfo(
+            "Training Complete",
+            "Career mode unlocked!\n\n"
+            "Open Job Board for contracts, Terminal to hack, Files for loot.",
+        )
+        self._save_restore_notice = ""
+        self._run_onboarding()
+        self._close_window("shop")
+        self.open_job_board()
+
+    def _finish_training_from_shop(self) -> None:
+        self.game.tutorial.reconcile_stuck_lessons()
+        self.game.tutorial.check_advance()
+        self.game.autosave(force=True)
+        self.refresh_taskbar()
+        if self.game.player.phase == "career":
+            self._show_graduation_popup()
+        else:
+            from tkinter import messagebox
+            p = self.game.player
+            messagebox.showwarning(
+                "Not quite yet",
+                f"Need firewall level 2+ to graduate.\n"
+                f"Current: firewall L{p.firewall_level}\n"
+                f"Tutorial budget: ${p.tutorial_credits}",
+            )
 
     def _gui_load_game(self) -> None:
         from progression import SaveManager

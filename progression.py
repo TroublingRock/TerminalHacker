@@ -902,6 +902,9 @@ class SaveManager:
         elif p.phase == "endless" and game.endless.active and not game.endless.floor_hosts:
             EndlessManager._spawn_floor(game)
 
+        game.player._game_ref = game
+        game.tutorial.reconcile_stuck_lessons()
+
 
 def build_company_server(spec: dict) -> Server:
     from main import Server

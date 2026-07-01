@@ -348,6 +348,9 @@ class TutorialManager:
         if not self.in_tutorial():
             return
         p = self.player
+        if p.tutorial_step >= len(TUTORIAL_CURRICULUM):
+            self.graduate()
+            return
         step = p.tutorial_step
         g = self.game
 
@@ -364,10 +367,7 @@ class TutorialManager:
             9: lambda: "vpn_success" in p.tutorial_flags and p.vpn_active,
             10: lambda: any(ip.startswith("10.0.0.") for ip in p.discovered_ips),
             11: lambda: "/home/hacker/downloads/classified.txt" in p.files and p.remote_was_root,
-            12: lambda: p.firewall_level >= 2 and (
-                self.defense_survived
-                or "tutorial_firewall_upgraded" in p.tutorial_flags
-            ),
+            12: lambda: p.firewall_level >= 2,
         }
 
         if step >= len(TUTORIAL_CURRICULUM):
@@ -433,6 +433,7 @@ class TutorialManager:
         self.game.autosave(force=True)
 
     def complete_defense_drill(self) -> None:
+        self.player.tutorial_flags.add("defense_drill_done")
         if self.defense_survived:
             return
         self.defense_attacks_triggered = max(self.defense_attacks_triggered, 1)
@@ -444,8 +445,12 @@ class TutorialManager:
         if not self.in_tutorial():
             return
         p = self.player
-        if p.tutorial_step == self.DEFENSE_LESSON and p.firewall_level >= 2:
+        if p.tutorial_step >= len(TUTORIAL_CURRICULUM):
+            self.graduate()
+            return
+        if p.tutorial_step >= self.DEFENSE_LESSON and p.firewall_level >= 2:
             p.tutorial_flags.add("tutorial_firewall_upgraded")
+            p.tutorial_flags.add("defense_drill_done")
             self.complete_defense_drill()
             self.check_advance()
 
@@ -821,8 +826,6 @@ class Shop:
                 MasteryGrader.on_shop_spend(player._game_ref, cost)
             player.cpu_level += 1
             success(f"CPU level {player.cpu_level}")
-            if player._game_ref:
-                player._game_ref.on_shop_purchase("cpu")
             return True
         if item.key == "firewall":
             if player.firewall_level >= item.max_level:
@@ -836,8 +839,6 @@ class Shop:
                 MasteryGrader.on_shop_spend(player._game_ref, cost)
             player.firewall_level += 1
             success(f"Firewall level {player.firewall_level}")
-            if player._game_ref:
-                player._game_ref.on_shop_purchase("firewall")
             return True
         if item.key in player.owned_tools:
             warn("Already owned.")
@@ -1319,23 +1320,24 @@ class Game:
             return False
         return True
 
-    def on_shop_purchase(self, item_key: str) -> None:
-        """Called after any successful shop purchase (terminal or GUI)."""
+    def on_shop_purchase(self, item_key: str) -> bool:
+        """Called after any successful shop purchase (terminal or GUI). Returns True if just graduated."""
         key = item_key.lower()
         p = self.player
+        phase_before = p.phase
         if key in ("cpu", "firewall"):
             p.tutorial_flags.add("daily_buy_done")
             p.tutorial_flags.add("daily_shop_bought")
             p.tutorial_flags.add("daily_gear_up_done")
             if key == "firewall" and self.tutorial.in_tutorial():
                 p.tutorial_flags.add("tutorial_firewall_upgraded")
-                if p.tutorial_step == TutorialManager.DEFENSE_LESSON and p.firewall_level >= 2:
-                    self.tutorial.complete_defense_drill()
             if self.player.phase == "career":
                 from retention import RetentionManager
                 RetentionManager.on_bridge_event(self, "gear")
+        self.tutorial.reconcile_stuck_lessons()
         self.tutorial.check_advance()
         self.autosave(force=True)
+        return phase_before == "tutorial" and p.phase == "career"
 
     def post_command(self, cmd: str) -> None:
         from session_content import HourlyManager, MasteryGrader
@@ -1912,7 +1914,9 @@ class Game:
             error("Active no-shop contract — finish it before buying gear.")
             return
         if Shop.buy(self.player, args[0].lower()):
-            self.on_shop_purchase(args[0].lower())
+            graduated = self.on_shop_purchase(args[0].lower())
+            if graduated:
+                teach("Training complete — career mode unlocked!")
 
     def cmd_missions(self, _a: list[str]) -> None:
         if self.player.phase == "tutorial":
