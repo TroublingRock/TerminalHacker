@@ -1376,6 +1376,7 @@ class ThreatSystem:
 
         if p.firewall_level >= power:
             success(f"Firewall blocked {rival}.")
+            self.game.retention.last_rival = rival
             if self.game.tutorial.in_tutorial():
                 self.game.tutorial.defense_attacks_triggered += 1
             else:
@@ -1400,22 +1401,23 @@ class ThreatSystem:
                 self.game.player.tutorial_flags.add("daily_survive_done")
                 from retention import RetentionManager
                 RetentionManager.on_defense_block(self.game)
+                from rival_ai import RivalAIManager
+                RivalAIManager.send_block_taunt(self.game, rival, p.firewall_level)
             return
 
         loss = random.randint(40, 100) * max(1, power - p.firewall_level)
         if p.phase == "career" and p.money < 1200:
             loss = min(loss, max(35, p.money // 3))
         p.penalize(loss, f"{rival} breached your defenses")
+        self.game.retention.last_rival = rival
+        self.game.retention.rival_aggression = min(
+            10, self.game.retention.rival_aggression + 1,
+        )
         if p.phase == "endless" and self.game.endless.active:
             from endless_mode import EndlessManager
             EndlessManager.on_death(self.game, f"{rival} breach")
-        self.game.mail.send(
-            f"{rival}@rival.net",
-            "We found your box",
-            f"Your firewall is weak (L{p.firewall_level}).\n"
-            "I skimmed your wallet. Patch your defenses or stay offline.\n\n"
-            f"— {rival}",
-        )
+        from rival_ai import RivalAIManager
+        RivalAIManager.send_breach_mail(self.game, rival, p.firewall_level, loss)
         if self.game.tutorial.in_tutorial():
             self.game.tutorial.defense_attacks_triggered += 1
 
@@ -2203,8 +2205,10 @@ class Game:
             warn("Missions unlock after tutorial graduation.")
             return
         divider("MISSIONS")
+        from rival_ai import RivalAIManager
         for m in self.missions.missions:
-            Console.out(f"  {m.status_line()}")
+            line = m.status_line() + RivalAIManager.race_progress_line(self, m)
+            Console.out(f"  {line}")
 
     def cmd_status(self, _a: list[str]) -> None:
         p = self.player
@@ -2447,15 +2451,23 @@ class Game:
 
     def cmd_rivals(self, _a: list[str]) -> None:
         from retention import RetentionManager, OPERATIONS
+        from rival_ai import RivalAIManager
 
         divider("RIVAL DOSSIER")
         r = self.retention
+        Console.out(f"  Threat level: {r.rival_aggression}/10")
+        Console.out(f"  Primary rival: {r.last_rival or 'none (territory-weighted picks)'}")
+        for line in RivalAIManager.dossier_extra_lines(self):
+            Console.out(line)
         if not r.completed_operations:
-            Console.out("  No operation history yet — rivals consider you unknown.")
-            Console.out("  Complete multi-day ops to trigger rival reactions.")
+            Console.out("\n  No operation history yet — rivals still probe and race you.")
+            Console.out("  Complete multi-day ops to unlock deeper dossier intel.")
             return
         for line in RetentionManager.rival_dossier_lines(self):
             Console.out(f"  {line}")
+        from rival_ai import RivalAIManager
+        for line in RivalAIManager.dossier_extra_lines(self):
+            Console.out(line)
         Console.out("\n  Completed ops:")
         for op_id in r.completed_operations:
             Console.out(f"    [x] {op_id}")

@@ -19,8 +19,8 @@ NOTORIETY_THRESHOLDS: tuple[tuple[int, str, str], ...] = (
 
 HEAT_EVENT_THRESHOLDS: tuple[tuple[int, str], ...] = (
     (6, "lockdown"),
-    (9, "bounty"),
-    (12, "raid"),
+    (8, "bounty"),
+    (10, "raid"),
 )
 
 
@@ -392,9 +392,11 @@ class RivalReactionManager:
 
     @staticmethod
     def _react(game: Game, chance: float, subject: str, body: str, notoriety: int = 1) -> None:
+        from rival_ai import RivalAIManager
+
         if game.player.phase not in ("career", "endless"):
             return
-        if not (game.meta.chaos_mode or game.meta.notoriety > 5):
+        if not (game.meta.chaos_mode or RivalAIManager.should_react_in_career(game)):
             return
         if random.random() > chance:
             return
@@ -832,10 +834,17 @@ class ChaosCommandManager:
             game.threat._maybe_attack(force=True)
             from retention import RetentionManager
             rival = RetentionManager.pick_rival_attacker(game)
+            provoke_lines = {
+                "acid_k": "Provoke logged on corp wire. I'm billing NovaDyne for your IP.",
+                "phantom_pkt": "You pinged me? I'm already halfway through your next contract.",
+                "nyx_root": "Loud provoke. I ghost into boxes — you'll never see the breach coming.",
+                "zero_cool": "You WANT heat? Chaos subnet is watching. Enjoy the raid.",
+            }
+            body = provoke_lines.get(rival, "Saw your provoke ping. Enjoy the probe.")
             game.mail.send(
                 f"{rival}@rival.net",
                 "you asked for this",
-                f"Saw your provoke ping. Enjoy the probe.\n\n— {rival}",
+                f"{body}\n\n— {rival}",
             )
             ChaosNewsManager.push(game, f"Operator provoked {rival} — localhost probe incoming")
             success("Rival provoked — check localhost defenses.")

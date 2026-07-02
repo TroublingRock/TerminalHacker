@@ -2083,7 +2083,7 @@ class DesktopApp:
                                            fg=COLORS["text"], font=F(11), relief=tk.FLAT)
         scroll.pack(fill=tk.BOTH, expand=True)
         for m in self.game.missions.missions:
-            scroll.insert(tk.END, f"{m.status_line()}\n\n")
+            scroll.insert(tk.END, f"{m.status_line()}{__import__('rival_ai', fromlist=['RivalAIManager']).RivalAIManager.race_progress_line(self.game, m)}\n\n")
         scroll.configure(state=tk.DISABLED)
 
         d = self.game.daily

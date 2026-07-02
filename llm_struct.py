@@ -272,7 +272,8 @@ class LLMStructManager:
             mission.timing_limit_ticks = random.randint(14, 24)
             mission.timing_start_tick = game.player.ticks
         if "rival_race" in mods_out:
-            game.meta.rival_race_prog[mission.mission_id] = 0
+            from rival_ai import RivalAIManager
+            RivalAIManager.assign_race_rival(game, mission)
         mission.llm_source = source_tag  # type: ignore[attr-defined]
         return mission
 
