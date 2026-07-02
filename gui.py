@@ -18,6 +18,7 @@ from main import (
     MailMessage,
     Shop,
     TUTORIAL_CURRICULUM,
+    defense_firewall_help,
 )
 from progression import ACHIEVEMENTS, RANKS, ReputationSystem, SaveManager
 from retention import SEASON_TIERS, RetentionManager
@@ -2097,7 +2098,7 @@ class DesktopApp:
                 if self.game.player.phase == "career":
                     self.root.after(200, self._show_graduation_popup)
             return
-        win = self._window("shop", "Black Market — Upgrades", 640, 520)
+        win = self._window("shop", "Black Market — Upgrades", 680, 580)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         p = self.game.player
 
@@ -2105,7 +2106,28 @@ class DesktopApp:
                  font=F(14, bold=True)).pack(anchor=tk.W)
         wallet = tk.Label(body, text=p.wallet_label(), fg=COLORS["muted"], bg=COLORS["window"],
                           font=F(10))
-        wallet.pack(anchor=tk.W, pady=(4, 8))
+        wallet.pack(anchor=tk.W, pady=(4, 4))
+
+        tk.Label(
+            body,
+            text=(
+                "Upgrades (cpu, firewall) level your gear. Tools (hydra, hashcat, vpn_pro) are permanent. "
+                "Consumables are bought into inventory — activate with use <item> in Terminal "
+                "(botnet payloads use infect miner / infect ddos instead)."
+            ),
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9), wraplength=620, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 6))
+
+        if p.phase == "career":
+            help_frame = tk.Frame(body, bg=COLORS["terminal_bg"], padx=8, pady=6)
+            help_frame.pack(fill=tk.X, pady=(0, 8))
+            for line in defense_firewall_help(self.game):
+                fg = COLORS["accent"] if line.startswith("FIREWALL") else COLORS["text"]
+                tk.Label(
+                    help_frame, text=line, fg=fg, bg=COLORS["terminal_bg"],
+                    font=F(9, bold=True) if line.startswith("FIREWALL") else F(9),
+                    anchor=tk.W, justify=tk.LEFT, wraplength=600,
+                ).pack(anchor=tk.W)
 
         if not p.is_local():
             warn_row = tk.Frame(body, bg=COLORS["window"])
@@ -2160,6 +2182,16 @@ class DesktopApp:
         list_frame = tk.Frame(body, bg=COLORS["window"])
         list_frame.pack(fill=tk.BOTH, expand=True)
 
+        scroll = tk.Canvas(list_frame, bg=COLORS["window"], highlightthickness=0, bd=0)
+        scroll_sb = tk.Scrollbar(list_frame, orient=tk.VERTICAL, command=scroll.yview)
+        scroll_inner = tk.Frame(scroll, bg=COLORS["window"])
+        scroll_inner.bind("<Configure>", lambda _e: scroll.configure(scrollregion=scroll.bbox("all")))
+        scroll.create_window((0, 0), window=scroll_inner, anchor=tk.NW)
+        scroll.configure(yscrollcommand=scroll_sb.set)
+        scroll.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        list_frame = scroll_inner
+
         def refresh_wallet() -> None:
             wallet.configure(text=p.wallet_label())
             self.refresh_taskbar()
@@ -2211,8 +2243,13 @@ class DesktopApp:
 
             tk.Label(row, text=item.name, fg=COLORS["text"], bg=COLORS["border"],
                      font=F(11, bold=True), width=16, anchor=tk.W).pack(side=tk.LEFT)
-            tk.Label(row, text=item.description, fg=COLORS["muted"], bg=COLORS["border"],
-                     font=F(9), wraplength=280, justify=tk.LEFT).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+            text_col = tk.Frame(row, bg=COLORS["border"])
+            text_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+            tk.Label(text_col, text=item.description, fg=COLORS["text"], bg=COLORS["border"],
+                     font=F(9), wraplength=340, justify=tk.LEFT, anchor=tk.W).pack(anchor=tk.W)
+            if item.detail:
+                tk.Label(text_col, text=item.detail, fg=COLORS["muted"], bg=COLORS["border"],
+                         font=F(8), wraplength=340, justify=tk.LEFT, anchor=tk.W).pack(anchor=tk.W, pady=(2, 0))
             tk.Label(row, text=price_text, fg=COLORS["accent"], bg=COLORS["border"],
                      font=F(10, bold=True), width=8).pack(side=tk.RIGHT, padx=(4, 8))
             tk.Button(
@@ -2399,15 +2436,9 @@ class DesktopApp:
         self._built_panels.add("botnet")
         self._refresh_botnet_panel()
 
-    def open_status(self) -> None:
-        if "status" in self._built_panels:
-            self._show_app("status")
-            return
-        win = self._window("status", "System Status", 480, 360)
-        body: tk.Frame = win._body  # type: ignore[attr-defined]
+    def _status_lines(self) -> list[str]:
         p = self.game.player
-
-        lines = []
+        lines: list[str] = []
         if p.phase == "endless":
             lines.append("Phase:       endless (roguelike run)")
         elif p.phase == "career":
@@ -2416,7 +2447,7 @@ class DesktopApp:
             lines.append(f"Phase:       tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
         lines.append(p.wallet_label())
         lines.append(f"CPU level:   {p.cpu_level}")
-        lines.append(f"Firewall:    {p.firewall_level}")
+        lines.append(f"Firewall:    {p.firewall_level}  (always on — blocks rivals passively)")
         lines.append(f"Cracker:     tier {p.cracker_tier}")
         lines.append(f"LAN IP:      {p.lan_ip}")
         lines.append(f"Public IP:   {p.public_ip}")
@@ -2433,28 +2464,50 @@ class DesktopApp:
             from endless_mode import EndlessManager
             lines.extend(EndlessManager.status_lines(self.game)[1:])
         if p.phase == "career":
+            lines.append("")
+            lines.extend(defense_firewall_help(self.game))
+            lines.append(f"IDS level:   {self.game.blue.ids_level}")
+            lines.append(f"Blocks:      {self.game.blue.attacks_blocked} rival attacks stopped")
+            lines.append("Tip: defend on in Terminal for active mode (+rep on blocks)")
+            lines.append("")
             lines.append(f"Rank:        {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
             lines.append(f"Streak:      {self.game.retention.streak} days (best {self.game.retention.longest_streak})")
             lines.append(f"Season:      tier {self.game.retention.season_tier}/{len(SEASON_TIERS)} ({self.game.retention.season_xp} XP)")
             lines.append(f"Story flags: {', '.join(sorted(self.game.story.flags)) or 'none'}")
             lines.append(f"Board karma: {self.game.board.karma}")
             lines.append(f"Rival threat: {self.game.retention.rival_aggression}/10 ({self.game.retention.last_rival or 'none'})")
-            lines.append(f"IDS level:   {self.game.blue.ids_level}")
-            lines.append(f"Defense:     {'ON' if self.game.blue.defense_mode else 'off'}")
             nxt = RANKS[min(p.rank_index + 1, len(RANKS) - 1)]
             if p.rank_index < len(RANKS) - 1:
                 lines.append(f"Next rank:   {nxt.name} at {nxt.rep_required} rep")
         elif p.phase == "endless":
             lines.append(f"Best floor:  {self.game.endless.best_floor} (meta)")
+        return lines
+
+    def _refresh_status_panel(self) -> None:
+        viewer = getattr(self, "_status_viewer", None)
+        if viewer and viewer.winfo_exists():
+            viewer.configure(state=tk.NORMAL)
+            viewer.delete("1.0", tk.END)
+            viewer.insert("1.0", "\n".join(self._status_lines()))
+            viewer.configure(state=tk.DISABLED)
+
+    def open_status(self) -> None:
+        if "status" in self._built_panels:
+            self._refresh_status_panel()
+            self._show_app("status")
+            return
+        win = self._window("status", "System Status", 520, 420)
+        body: tk.Frame = win._body  # type: ignore[attr-defined]
 
         viewer = scrolledtext.ScrolledText(
             body, bg=COLORS["window"], fg=COLORS["text"],
             font=MONO(12), relief=tk.FLAT, wrap=tk.WORD,
         )
         viewer.pack(fill=tk.BOTH, expand=True)
-        viewer.insert("1.0", "\n".join(lines))
-        viewer.configure(state=tk.DISABLED)
+        self._status_viewer = viewer
+        self._refresh_status_panel()
 
+        p = self.game.player
         btn_row = tk.Frame(body, bg=COLORS["window"])
         btn_row.pack(fill=tk.X, pady=(8, 0))
         tk.Button(btn_row, text="Save Game", command=lambda: (SaveManager.save(self.game), sounds.play("success")),
@@ -2463,8 +2516,23 @@ class DesktopApp:
                   bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         tk.Button(btn_row, text="Restore Backup", command=self._gui_restore_backup,
                   bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
+        if p.phase == "career":
+            tk.Button(
+                btn_row, text="Defend ON", command=lambda: (
+                    self._gui_run_command("defend on"),
+                    self.root.after(100, self._refresh_status_panel),
+                ),
+                bg=COLORS["border"], fg=COLORS["success"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=(8, 2))
+            tk.Button(
+                btn_row, text="Defend OFF", command=lambda: (
+                    self._gui_run_command("defend off"),
+                    self.root.after(100, self._refresh_status_panel),
+                ),
+                bg=COLORS["border"], fg=COLORS["muted"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=2)
         tk.Button(btn_row, text="Chaos Mode (terminal: chaos)", command=self.open_terminal,
-                  bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT)
+                  bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         if p.phase == "career":
             tk.Button(btn_row, text="Endless Run (endless start)", command=self.open_terminal,
                       bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
@@ -2480,8 +2548,10 @@ class DesktopApp:
             f"Starting balance: ${p.money}\n\n"
             "• Check Mail — your first contracts are waiting\n"
             "• Open Job Board for live paid ops\n"
-            "• Shop: buy miner_payload later for passive botnet income\n"
-            "• Rivals will probe your firewall — upgrade and run defend on\n\n"
+            "• Shop: buy gear and consumables (read each item's description)\n"
+            "• Firewall is ALWAYS on — Defense off only means passive mode\n"
+            "• defend on in Terminal for active defense (+rep on blocks)\n"
+            "• Rivals probe weak firewalls — upgrade FW in Shop\n\n"
             "Traces and fines now hit your real wallet. Wipe your logs.",
         )
         self._save_restore_notice = ""

@@ -852,21 +852,85 @@ class ShopItem:
     name: str
     description: str
     base_cost: int
+    detail: str = ""
     max_level: int = 6
     consumable: bool = False
 
 
+def defense_firewall_help(game: "Game") -> list[str]:
+    """Explain passive firewall vs optional defense mode."""
+    p = game.player
+    mode = "ON — rivals probe more; blocks earn rep" if game.blue.defense_mode else "off — passive (fewer probes)"
+    return [
+        "FIREWALL vs DEFENSE MODE",
+        f"  Firewall L{p.firewall_level} — ALWAYS ON. Blocks rivals when your level ≥ attack power.",
+        "  Defense mode is separate — optional. Type: defend on | defend off",
+        f"  Defense now: {mode}",
+        "  'Defense off' does NOT mean you are unprotected — your firewall still blocks attacks.",
+    ]
+
+
 SHOP_CATALOG = [
-    ShopItem("cpu", "CPU Upgrade", "Faster brute-force attacks.", 200, 6),
-    ShopItem("firewall", "Firewall Upgrade", "Blocks rival hackers & reduces trace risk.", 175, 5),
-    ShopItem("vpn_pro", "VPN Pro License", "Permanent VPN access in career mode.", 300, 1),
-    ShopItem("hydra", "Hydra Lite", "Smarter password wordlist ordering.", 350, 1),
-    ShopItem("hashcat", "Hashcat Pro", "Cuts failed crack attempts ~40%.", 800, 1),
-    ShopItem("burner_ip", "Burner IP Kit", "Mask egress IP for 8 commands.", 120, 1, consumable=True),
-    ShopItem("zero_day", "Zero-day Exploit", "Auto-crack current SSH target once.", 450, 1, consumable=True),
-    ShopItem("decoy_log", "Decoy Log Pack", "6 commands of full trace immunity.", 200, 1, consumable=True),
-    ShopItem("miner_payload", "Miner Payload", "Deploy passive miner via infect miner.", 140, 1, consumable=True),
-    ShopItem("ddos_payload", "DDoS Payload", "Flood a target via infect ddos <IP>.", 220, 1, consumable=True),
+    ShopItem(
+        "cpu", "CPU Upgrade", "Faster brute-force attacks.", 200,
+        detail="Upgrade gear. Higher CPU = fewer crack attempts and faster guesses on SSH targets.",
+        max_level=6,
+    ),
+    ShopItem(
+        "firewall", "Firewall Upgrade",
+        "Passive protection — blocks rival attacks automatically.", 175,
+        detail="Always active (no toggle). Rivals compare attack power vs your firewall level. "
+        "Upgrade if you keep getting breached. Separate from 'Defense mode' (defend on).",
+        max_level=5,
+    ),
+    ShopItem(
+        "vpn_pro", "VPN Pro License", "Permanent VPN in career mode.", 300,
+        detail="Tutorial VPN is free. Career needs this license for vpn connect. "
+        "Victims log the VPN exit IP instead of your real public IP.",
+        max_level=1,
+    ),
+    ShopItem(
+        "hydra", "Hydra Lite", "Smarter password wordlist ordering.", 350,
+        detail="Permanent tool. Tries the real password earlier during crack — fewer failed attempts.",
+        max_level=1,
+    ),
+    ShopItem(
+        "hashcat", "Hashcat Pro", "Cuts failed crack attempts ~40%.", 800,
+        detail="Permanent tool. Requires Hydra Lite first. Greatly speeds up brute-force on tough hosts.",
+        max_level=1,
+    ),
+    ShopItem(
+        "burner_ip", "Burner IP Kit", "Mask egress IP for 8 commands.", 120,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. After buying: use burner_ip in Terminal. Masks the IP written to remote logs "
+        "for 8 commands. Stacks with VPN.",
+    ),
+    ShopItem(
+        "zero_day", "Zero-day Exploit", "Instant crack on current SSH target.", 450,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. connect to a host, then: use zero_day — skips brute-force once.",
+    ),
+    ShopItem(
+        "decoy_log", "Decoy Log Pack", "6 commands of full trace immunity.", 200,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. use decoy_log — disconnect without leaving trace evidence for 6 commands.",
+    ),
+    ShopItem(
+        "miner_payload", "Miner Payload", "Passive income via botnet.", 140,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. On a cracked host: infect miner. Run botnet / botnet collect in Terminal. "
+        "Raises heat on that subnet.",
+    ),
+    ShopItem(
+        "ddos_payload", "DDoS Payload", "Softens a rival target.", 220,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. On a cracked host: infect ddos <target IP>. Slows rival races and weakens FW on target.",
+    ),
 ]
 
 
@@ -894,7 +958,9 @@ class Shop:
                 owned = item.key in player.owned_tools
                 Console.out(f"  {item.key:<10} {item.name:<18} {'OWNED' if owned else '$' + str(item.base_cost)}")
             Console.out(f"             {item.description}")
-        Console.out("\n  buy [item]  |  use [consumable]\n")
+            if item.detail:
+                Console.out(f"             → {item.detail}")
+        Console.out("\n  buy [item]  |  use [consumable]  |  defend (firewall vs defense mode)\n")
 
     @staticmethod
     def buy(player: Player, key: str) -> bool:
@@ -2085,8 +2151,10 @@ class Game:
             Console.out(f"  Rank:       {ReputationSystem.rank_name(p)} ({p.reputation} rep)")
             Console.out(f"  Streak:     {self.retention.streak} days (best {self.retention.longest_streak})")
             Console.out(f"  Season:     tier {self.retention.season_tier}/30 ({self.retention.season_xp} XP)")
-            Console.out(f"  IDS/FW:     L{p.firewall_level} / IDS L{self.blue.ids_level}")
-            Console.out(f"  Defense:    {'ON' if self.blue.defense_mode else 'off'}")
+            Console.out("")
+            for line in defense_firewall_help(self):
+                Console.out(f"  {line}" if not line.startswith("FIREWALL") else f"\n  {line}")
+            Console.out(f"  IDS level:  {self.blue.ids_level}  |  Blocks total: {self.blue.attacks_blocked}")
             d = "DONE" if self.daily.completed else self.daily.description
             Console.out(f"  Daily:      {d}")
             from faction_consumables import ConsumableManager
@@ -2145,10 +2213,11 @@ class Game:
     def cmd_defend(self, args: list[str]) -> None:
         if not args:
             divider("BLUE TEAM — DEFENSE")
+            for line in defense_firewall_help(self):
+                Console.out(f"  {line}")
             Console.out(f"  IDS level:    {self.blue.ids_level}")
-            Console.out(f"  Mode:         {'ACTIVE (+rep on blocks)' if self.blue.defense_mode else 'passive'}")
             Console.out(f"  Blocks total: {self.blue.attacks_blocked}")
-            Console.out("  Usage: defend on | defend upgrade | defend block [IP]")
+            Console.out("  Usage: defend on | defend off | defend upgrade | defend block [IP]")
             return
         action = args[0].lower()
         if action == "on":
