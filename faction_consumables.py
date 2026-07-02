@@ -75,6 +75,26 @@ CONSUMABLES: dict[str, dict[str, Any]] = {
         "desc": "Mirror host files — infect leak, then chaos leak.",
         "cost": 160,
     },
+    "ransom_payload": {
+        "name": "Ransom Locker",
+        "desc": "Encrypt files for high passive payout (infect ransom).",
+        "cost": 200,
+    },
+    "deface_payload": {
+        "name": "Web Defacer",
+        "desc": "Tag public pages — infect deface or chaos deface.",
+        "cost": 175,
+    },
+    "frame_payload": {
+        "name": "Frame Kit",
+        "desc": "Blame a rival via forged logs — infect frame <rival>.",
+        "cost": 240,
+    },
+    "virus_payload": {
+        "name": "Autonomous Virus",
+        "desc": "Cross-subnet spreader — infect virus on cracked hosts.",
+        "cost": 190,
+    },
 }
 
 BROKER_NAMES = frozenset({

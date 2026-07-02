@@ -65,6 +65,57 @@ class ChaosSystemTests(unittest.TestCase):
         self.assertTrue(_teach_suppressed())
         set_teach_suppress_chaos(False)
 
+    def test_deface_adds_notoriety(self) -> None:
+        from botnet_system import BotnetManager, PAYLOAD_DEFACE
+        from depth_systems import MetaState
+
+        game = Game()
+        game.player.phase = "career"
+        game.meta = MetaState()
+        game.meta.chaos_mode = True
+        game.meta.inventory["deface_payload"] = 1
+        ip = "192.168.1.50"
+        game.player.discovered_ips.add(ip)
+        srv = game.network.get_server(ip)
+        assert srv is not None
+        srv.cracked = True
+        game.player.connection = ip
+        game.player.has_remote_shell = True
+        BotnetManager.cmd_infect(game, ["deface"])
+        self.assertIn(ip, game.meta.defaced_hosts)
+        self.assertEqual(game.meta.infections.get(ip), PAYLOAD_DEFACE)
+        self.assertGreater(game.meta.notoriety, 0)
+
+    def test_botnet_map_lines(self) -> None:
+        from botnet_system import BotnetMapRenderer, PAYLOAD_MINER
+        from depth_systems import MetaState
+
+        game = Game()
+        game.player.phase = "career"
+        game.meta = MetaState()
+        game.meta.infections["192.168.1.50"] = PAYLOAD_MINER
+        game.player.discovered_ips.add("192.168.1.50")
+        lines = BotnetMapRenderer.map_lines(game)
+        self.assertTrue(any("BOTNET MAP" in ln for ln in lines))
+        self.assertTrue(any("192.168.1.50" in ln for ln in lines))
+
+    def test_veteran_profile(self) -> None:
+        from progression import PROFILE_PATH, PlayerProfile
+        import json
+
+        backup = PROFILE_PATH.read_text() if PROFILE_PATH.exists() else None
+        try:
+            if PROFILE_PATH.exists():
+                PROFILE_PATH.unlink()
+            self.assertFalse(PlayerProfile.is_veteran())
+            PlayerProfile.mark_veteran()
+            self.assertTrue(PlayerProfile.is_veteran())
+        finally:
+            if backup is not None:
+                PROFILE_PATH.write_text(backup)
+            elif PROFILE_PATH.exists():
+                PROFILE_PATH.unlink()
+
 
 if __name__ == "__main__":
     unittest.main()

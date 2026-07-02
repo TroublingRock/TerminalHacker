@@ -416,6 +416,8 @@ class TutorialManager:
         p.tutorial_credits = 0
         p.reputation = 100
         p.rank_index = 1
+        from progression import PlayerProfile
+        PlayerProfile.mark_veteran()
         if not any(r.destination == "10.0.0.0/24" for r in p.routes):
             p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
         self.game.network.deploy_company_hosts_with_puzzles(self.game, p.reputation, False)
@@ -956,6 +958,30 @@ SHOP_CATALOG = [
         consumable=True,
         max_level=1,
         detail="Consumable. infect leak on cracked host, then chaos leak while connected. Triggers meltdown chains.",
+    ),
+    ShopItem(
+        "ransom_payload", "Ransom Locker", "High-yield encrypted hostage income.", 200,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. infect ransom on cracked host. Accrues ~2x miner income to botnet bank. Very loud.",
+    ),
+    ShopItem(
+        "deface_payload", "Web Defacer", "Tag victim pages for notoriety.", 175,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. infect deface or chaos deface from shell. Posts to flex board, spikes heat.",
+    ),
+    ShopItem(
+        "frame_payload", "Frame Kit", "Plant forged logs blaming a rival.", 240,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. infect frame <rival> [IP] — rivals: acid_k, phantom_pkt, nyx_root, zero_cool.",
+    ),
+    ShopItem(
+        "virus_payload", "Autonomous Virus", "Cross-subnet worm spreader.", 190,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. infect virus — autospreads to discovered hosts on routed subnets when heat rises.",
     ),
 ]
 

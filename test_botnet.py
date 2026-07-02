@@ -56,6 +56,16 @@ class BotnetTests(unittest.TestCase):
         BotnetManager.cmd_infect(self.game, ["miner"])
         self.assertEqual(len(self.game.meta.infections), 0)
 
+    def test_infect_virus(self) -> None:
+        self.game.meta.inventory["virus_payload"] = 1
+        BotnetManager.cmd_infect(self.game, ["virus"])
+        self.assertEqual(self.game.meta.infections.get("192.168.1.50"), "virus")
+
+    def test_infect_frame(self) -> None:
+        self.game.meta.inventory["frame_payload"] = 1
+        BotnetManager.cmd_infect(self.game, ["frame", "zero_cool"])
+        self.assertEqual(self.game.meta.framed_rivals.get("192.168.1.50"), "zero_cool")
+
 
 if __name__ == "__main__":
     unittest.main()

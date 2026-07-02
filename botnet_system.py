@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 PAYLOAD_MINER = "miner"
 PAYLOAD_DDOS = "ddos"
 PAYLOAD_LEAK = "leak"
+PAYLOAD_RANSOM = "ransom"
+PAYLOAD_DEFACE = "deface"
+PAYLOAD_FRAME = "frame"
+PAYLOAD_VIRUS = "virus"
 
 PAYLOAD_SPECS: dict[str, dict[str, Any]] = {
     PAYLOAD_MINER: {
@@ -34,13 +38,131 @@ PAYLOAD_SPECS: dict[str, dict[str, Any]] = {
         "shop_key": "leak_payload",
         "desc": "Silently mirrors files — use chaos leak on that host to dump to the board.",
     },
+    PAYLOAD_RANSOM: {
+        "label": "Ransom locker",
+        "heat": 5,
+        "shop_key": "ransom_payload",
+        "desc": "Encrypts user files — high passive ransom accrual, loud heat.",
+    },
+    PAYLOAD_DEFACE: {
+        "label": "Web defacer",
+        "heat": 4,
+        "shop_key": "deface_payload",
+        "desc": "Replaces public pages — instant notoriety and flex-board post.",
+    },
+    PAYLOAD_FRAME: {
+        "label": "Frame kit",
+        "heat": 6,
+        "shop_key": "frame_payload",
+        "desc": "Plant forged logs blaming a rival — infect frame <rival> [IP].",
+    },
+    PAYLOAD_VIRUS: {
+        "label": "Autonomous virus",
+        "heat": 3,
+        "shop_key": "virus_payload",
+        "desc": "Pure spreader — worms across subnets when heat is high.",
+    },
 }
+
+PAYLOAD_COLORS: dict[str, str] = {
+    PAYLOAD_MINER: "#3ddc84",
+    PAYLOAD_DDOS: "#ff4444",
+    PAYLOAD_LEAK: "#ffcc00",
+    PAYLOAD_RANSOM: "#ff66cc",
+    PAYLOAD_DEFACE: "#ff8800",
+    PAYLOAD_FRAME: "#aa66ff",
+    PAYLOAD_VIRUS: "#00cccc",
+}
+
+SUBNET_MAP_ORDER: tuple[str, ...] = (
+    "192.168.1.0/24", "10.0.0.0/24", "172.16.0.0/24",
+    "203.0.113.0/24", "198.18.0.0/24",
+)
 
 # Income scales with host security but stays modest vs contracts.
 MINER_BASE_INCOME = 4
 DDOS_DURATION = 14
 PURGE_NODE_THRESHOLD = 3
 COUNTER_ATTACK_THRESHOLD = 4
+
+
+class BotnetMapRenderer:
+    """ASCII + canvas data for infected-node subnet map."""
+
+    @staticmethod
+    def _subnet_hosts(game: Game, cidr: str) -> list[str]:
+        ips: list[str] = []
+        for ip in sorted(game.player.discovered_ips):
+            server = game.network.get_server(ip)
+            if server and server.subnet == cidr:
+                ips.append(ip)
+            elif not server and cidr == "192.168.1.0/24" and ip.startswith("192.168.1."):
+                ips.append(ip)
+        for ip, server in game.network.servers.items():
+            if server.subnet == cidr and ip in game.player.discovered_ips and ip not in ips:
+                ips.append(ip)
+        return sorted(ips)[:12]
+
+    @staticmethod
+    def map_lines(game: Game) -> list[str]:
+        lines = ["  BOTNET MAP (discovered hosts)",]
+        if not game.meta.infections and not game.meta.ddos_targets:
+            lines.append("    (no payloads — infect a cracked host)")
+            return lines
+        for cidr in SUBNET_MAP_ORDER:
+            hosts = BotnetMapRenderer._subnet_hosts(game, cidr)
+            if not hosts and cidr not in game.meta.subnet_heat:
+                continue
+            heat = game.meta.subnet_heat.get(cidr, 0)
+            row = f"    {cidr:<18} heat {heat}/10"
+            lines.append(row)
+            for ip in hosts:
+                kind = game.meta.infections.get(ip, "")
+                ddos = "⚡" if ip in game.meta.ddos_targets else " "
+                defaced = "☠" if ip in game.meta.defaced_hosts else " "
+                framed = game.meta.framed_rivals.get(ip, "")
+                tag = kind[:6] if kind else "clean"
+                extra = f" frame→{framed}" if framed else ""
+                lines.append(f"      {ip:<16} {tag:<6}{ddos}{defaced}{extra}")
+        lines.append("    Legend: miner leak ransom deface frame virus | ⚡=DDoS ☠=defaced")
+        return lines
+
+    @staticmethod
+    def draw_tk(canvas: Any, game: Game, width: int, height: int) -> None:
+        canvas.delete("all")
+        canvas.configure(bg="#1a1a2e", highlightthickness=0)
+        pad = 8
+        cols = len(SUBNET_MAP_ORDER)
+        if cols == 0:
+            return
+        col_w = max(60, (width - pad * 2) // cols)
+        for i, cidr in enumerate(SUBNET_MAP_ORDER):
+            x0 = pad + i * col_w
+            short = cidr.split(".")[0] + "." + cidr.split(".")[1]
+            heat = game.meta.subnet_heat.get(cidr, 0)
+            canvas.create_text(
+                x0 + col_w // 2, 12, text=short, fill="#8888aa", font=("DejaVu Sans Mono", 8),
+            )
+            canvas.create_text(
+                x0 + col_w // 2, 24, text=f"h{heat}", fill="#ff6644" if heat >= 6 else "#666688",
+                font=("DejaVu Sans Mono", 7),
+            )
+            hosts = BotnetMapRenderer._subnet_hosts(game, cidr)
+            y = 36
+            for ip in hosts[:8]:
+                kind = game.meta.infections.get(ip, "")
+                color = PAYLOAD_COLORS.get(kind, "#334455")
+                if ip in game.meta.defaced_hosts:
+                    color = "#ff8800"
+                canvas.create_oval(x0 + 4, y, x0 + 14, y + 10, fill=color, outline="#ffffff")
+                tail = ip.rsplit(".", 1)[-1]
+                canvas.create_text(
+                    x0 + 18, y + 5, text=tail, anchor="w", fill="#ccccdd",
+                    font=("DejaVu Sans Mono", 8),
+                )
+                y += 14
+            if not hosts:
+                canvas.create_text(x0 + col_w // 2, 50, text="—", fill="#444466", font=("DejaVu Sans Mono", 9))
 
 
 class BotnetManager:
@@ -112,17 +234,32 @@ class BotnetManager:
         if not args:
             divider("INFECT")
             Console.out("  Usage: infect miner [IP]  |  infect ddos <IP>  |  infect leak [IP]")
+            Console.out("          infect ransom [IP]  |  infect deface [IP]  |  infect frame <rival> [IP]")
+            Console.out("          infect virus [IP]")
             Console.out("  Requires: active shell or backdoor on target.")
-            Console.out("  Shop: buy miner_payload | buy ddos_payload")
+            Console.out("  Shop: buy miner_payload | ddos_payload | leak_payload | ransom_payload | ...")
             return
 
         kind = args[0].lower()
         if kind not in PAYLOAD_SPECS:
-            error("Usage: infect miner [IP]  |  infect ddos <IP>")
+            error("Usage: infect miner|ddos|leak|ransom|deface|frame|virus [IP]")
             return
 
         spec = PAYLOAD_SPECS[kind]
-        ip_arg = args[1] if len(args) > 1 else None
+        ip_arg: str | None = None
+        frame_rival = ""
+        if kind == PAYLOAD_FRAME:
+            if len(args) < 2:
+                error("Usage: infect frame <rival> [IP]  — rivals: acid_k, phantom_pkt, nyx_root, zero_cool")
+                return
+            frame_rival = args[1].lower()
+            from depth_systems import RIVAL_PROFILES
+            if frame_rival not in RIVAL_PROFILES:
+                error(f"Unknown rival. Pick: {', '.join(RIVAL_PROFILES)}")
+                return
+            ip_arg = args[2] if len(args) > 2 else None
+        else:
+            ip_arg = args[1] if len(args) > 1 else None
         if kind == PAYLOAD_DDOS and not ip_arg:
             error("Usage: infect ddos <IP>")
             return
@@ -135,10 +272,11 @@ class BotnetManager:
             from main import error as _err
             _err(f"{server.ip} already running {game.meta.infections[server.ip]}.")
             return
-        if kind == PAYLOAD_LEAK and server.ip in game.meta.infections:
-            from main import error as _err
-            _err(f"{server.ip} already infected.")
-            return
+        if kind in (PAYLOAD_LEAK, PAYLOAD_RANSOM, PAYLOAD_DEFACE, PAYLOAD_FRAME, PAYLOAD_VIRUS):
+            if server.ip in game.meta.infections:
+                from main import error as _err
+                _err(f"{server.ip} already infected.")
+                return
 
         if not BotnetManager._consume_payload(game, spec["shop_key"]):
             return
@@ -153,6 +291,23 @@ class BotnetManager:
         elif kind == PAYLOAD_LEAK:
             game.meta.infections[server.ip] = PAYLOAD_LEAK
             success(f"Leak worm on {server.ip} — connect and run: chaos leak")
+            game.meta.backdoors.add(server.ip)
+        elif kind == PAYLOAD_RANSOM:
+            game.meta.infections[server.ip] = PAYLOAD_RANSOM
+            game.meta.ransom_accrual[server.ip] = 0
+            success(f"Ransom locker on {server.ip} — files encrypted, botnet collect cashes out.")
+            game.meta.backdoors.add(server.ip)
+        elif kind == PAYLOAD_DEFACE:
+            game.meta.infections[server.ip] = PAYLOAD_DEFACE
+            BotnetManager._apply_deface(game, server)
+            game.meta.backdoors.add(server.ip)
+        elif kind == PAYLOAD_FRAME:
+            game.meta.infections[server.ip] = PAYLOAD_FRAME
+            BotnetManager._apply_frame(game, server, frame_rival)
+            game.meta.backdoors.add(server.ip)
+        elif kind == PAYLOAD_VIRUS:
+            game.meta.infections[server.ip] = PAYLOAD_VIRUS
+            success(f"Virus seeded on {server.ip} — will autospread across routed subnets.")
             game.meta.backdoors.add(server.ip)
         else:
             duration = spec.get("duration_ticks", DDOS_DURATION)
@@ -173,6 +328,60 @@ class BotnetManager:
         return max(3, int(base * BotnetManager._income_mult(game)))
 
     @staticmethod
+    def _ransom_tick_income(game: Game, server: Server) -> int:
+        base = MINER_BASE_INCOME + server.security_level * 2
+        return max(6, int(base * 1.8 * BotnetManager._income_mult(game)))
+
+    @staticmethod
+    def _apply_deface(game: Game, server: Server) -> None:
+        from main import success, warn
+        from social_board import SocialBoardManager
+        from chaos_system import ChaosNewsManager, NotorietyManager
+
+        tag = f"HACKED BY {game.player.username.upper()}"
+        server.extra_files["/var/www/index.html"] = (
+            f"<html><body><h1>{tag}</h1><p>Your security is a joke.</p></body></html>\n"
+        )
+        game.meta.defaced_hosts.add(server.ip)
+        SocialBoardManager.seed_if_needed(game)
+        SocialBoardManager.player_post(
+            game, "flex", f"DEFACED: {server.hostname}",
+            f"{server.ip} now serves: {tag}",
+        )
+        NotorietyManager.add(game, 6, f"deface {server.ip}")
+        ChaosNewsManager.push(game, f"WEB DEFACE: {server.hostname} ({server.ip}) tagged by operator")
+        success(f"Defaced {server.hostname} — {tag}")
+        warn("Corp SOC will notice. Heat rising.")
+
+    @staticmethod
+    def _apply_frame(game: Game, server: Server, rival: str) -> None:
+        from depth_systems import RIVAL_PROFILES
+        from faction_consumables import FactionRepManager
+        from main import success, warn
+        from chaos_system import ChaosNewsManager, NotorietyManager
+
+        profile = RIVAL_PROFILES[rival]
+        game.meta.forged_servers.add(server.ip)
+        game.meta.framed_rivals[server.ip] = rival
+        server.extra_files["/var/log/auth.log"] = (
+            server.extra_files.get("/var/log/auth.log", "")
+            + f"\nFAILED: brute-force from {rival}@rival.net on sshd\n"
+        )
+        FactionRepManager.shift(game, {"rivals": 12, "corps": -6})
+        NotorietyManager.add(game, 8, f"frame {rival} on {server.ip}")
+        ChaosNewsManager.push(
+            game, f"FRAME JOB: forged logs on {server.ip} blame {rival}",
+        )
+        game.mail.send(
+            f"{rival}@rival.net",
+            "someone framed me on your subnet",
+            f"Your logs on {server.hostname} say I hit it. I didn't.\n"
+            f"I'm coming for the real operator.\n\n— {rival}",
+        )
+        success(f"Framed {rival} on {server.hostname} — forged logs planted.")
+        warn(f"{profile['label']} faction heat spiked — expect counter-probes.")
+
+    @staticmethod
     def on_tick(game: Game) -> None:
         """Accrue miner revenue and decay DDoS timers (called from threat tick)."""
         if game.player.phase not in ("career", "endless") or not game.player.is_local():
@@ -184,6 +393,9 @@ class BotnetManager:
                 game.meta.infections.pop(ip, None)
                 continue
             if game.meta.infections.get(ip) != PAYLOAD_MINER:
+                if game.meta.infections.get(ip) == PAYLOAD_RANSOM:
+                    game.meta.botnet_bank += BotnetManager._ransom_tick_income(game, server)
+                    game.meta.ransom_accrual[ip] = game.meta.ransom_accrual.get(ip, 0) + 1
                 continue
             game.meta.botnet_bank += BotnetManager._miner_tick_income(game, server)
 
@@ -280,9 +492,16 @@ class BotnetManager:
         divider("BOTNET STATUS")
         bank = game.meta.botnet_bank
         Console.out(f"  Uncollected revenue: ${bank}  (botnet collect)")
-        Console.out(f"  Active miners:       {sum(1 for v in game.meta.infections.values() if v == PAYLOAD_MINER)}")
+        miners = sum(1 for v in game.meta.infections.values() if v == PAYLOAD_MINER)
+        ransoms = sum(1 for v in game.meta.infections.values() if v == PAYLOAD_RANSOM)
+        Console.out(f"  Active miners:       {miners}")
+        Console.out(f"  Ransom lockers:      {ransoms}")
         Console.out(f"  DDoS floods:         {len(game.meta.ddos_targets)}")
+        Console.out(f"  Defaced hosts:       {len(game.meta.defaced_hosts)}")
+        Console.out(f"  Framed hosts:        {len(game.meta.framed_rivals)}")
         Console.out(f"  Rival purges:        {game.meta.botnet_purges}")
+        for line in BotnetMapRenderer.map_lines(game):
+            Console.out(line)
         if not game.meta.infections and not game.meta.ddos_targets:
             Console.out("\n  No payloads deployed.")
             teach("Crack a host, buy miner_payload, then: infect miner")
@@ -298,7 +517,7 @@ class BotnetManager:
             Console.out("\n  Active DDoS:")
             for ip, ticks in sorted(game.meta.ddos_targets.items()):
                 Console.out(f"    {ip} — {ticks} commands remaining (FW -1)")
-        Console.out("\n  infect miner [IP] | infect ddos <IP> | botnet collect")
+        Console.out("\n  infect miner|ransom|deface|frame|virus|leak|ddos  |  botnet collect")
 
     @staticmethod
     def status_lines(game: Game) -> list[str]:

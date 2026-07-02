@@ -174,6 +174,7 @@ class DesktopApp:
         self._notes_editor: scrolledtext.ScrolledText | None = None
         self._notes_save_job: str | None = None
         self._botnet_text: scrolledtext.ScrolledText | None = None
+        self._botnet_map_canvas: tk.Canvas | None = None
         self._terminal_history: list[str] = []
         self._terminal_history_pos: int = 0
         self._terminal_log: list[tuple[str, str]] = []
@@ -712,8 +713,10 @@ class DesktopApp:
         if p.phase != "tutorial":
             if p.phase == "career":
                 self.root.after(500, self.open_files)
+                self._maybe_show_returning_chaos_cta()
             return
 
+        from progression import PlayerProfile
         lesson = self.game.tutorial.current()
         if self.onboarding_banner:
             self.onboarding_banner.destroy()
@@ -727,7 +730,15 @@ class DesktopApp:
                           highlightthickness=1, highlightbackground=COLORS["border"])
         self.onboarding_banner = banner
 
-        if p.tutorial_step == 0:
+        if PlayerProfile.is_veteran():
+            headline = "WELCOME BACK — SKIP THE SANDBOX?"
+            steps = (
+                "You've cleared training before.\n\n"
+                "☠ CHAOS CAREER — loud ops, botnet spread, rival heat (recommended)\n"
+                "Or resume tutorial if you want a refresher."
+            )
+            auto_open = False
+        elif p.tutorial_step == 0:
             headline = "TRAINING MODE — START HERE"
             steps = (
                 "Goal today: crack training-node and capture the flag (~30 min).\n\n"
@@ -805,6 +816,34 @@ class DesktopApp:
             self.root.after(400, self.open_training)
         else:
             self.root.after(400, self.open_terminal)
+
+    def _maybe_show_returning_chaos_cta(self) -> None:
+        """Nudge returning players toward chaos dock / endless run."""
+        from progression import PlayerProfile
+        from tkinter import messagebox
+
+        p = self.game.player
+        if p.phase != "career" or not PlayerProfile.suggest_chaos_on_career_load():
+            return
+        if self.game.meta.chaos_mode:
+            return
+        data = PlayerProfile._read()
+        data["chaos_cta_shown"] = True
+        from progression import PROFILE_PATH
+        import json
+        try:
+            PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            PROFILE_PATH.write_text(json.dumps(data, indent=2))
+        except OSError:
+            pass
+        self.root.after(1200, lambda: messagebox.showinfo(
+            "RETURNING OPERATOR",
+            "Welcome back. Training's behind you.\n\n"
+            "• Open ☠ Chaos dock — provoke rivals, ghost raids, faction wars\n"
+            "• Type chaos run for roguelike endless floors\n"
+            "• Botnet dock now shows a live infection map",
+        ))
+        self.root.after(1600, self.open_chaos)
 
     def _build_top_panel(self) -> None:
         bar = tk.Frame(self.root, bg=COLORS["taskbar"], height=30)
@@ -1226,6 +1265,7 @@ class DesktopApp:
                 self._notes_save_job = None
         if key == "botnet":
             self._botnet_text = None
+            self._botnet_map_canvas = None
         if self._active_app == key:
             self._active_app = None
         self._update_dock_highlight()
@@ -2388,7 +2428,7 @@ class DesktopApp:
         viewer = self._botnet_text
         if not viewer or not viewer.winfo_exists():
             return
-        from botnet_system import BotnetManager
+        from botnet_system import BotnetManager, BotnetMapRenderer
         from io import StringIO
         import contextlib
         from main import Console
@@ -2408,13 +2448,18 @@ class DesktopApp:
         viewer.delete("1.0", tk.END)
         viewer.insert("1.0", buf.getvalue() or "(no output)")
         viewer.configure(state=tk.DISABLED)
+        map_canvas = self._botnet_map_canvas
+        if map_canvas and map_canvas.winfo_exists():
+            w = max(map_canvas.winfo_width(), 480)
+            h = max(map_canvas.winfo_height(), 100)
+            BotnetMapRenderer.draw_tk(map_canvas, self.game, w, h)
 
     def open_botnet(self) -> None:
         if "botnet" in self._built_panels:
             self._show_app("botnet")
             self._refresh_botnet_panel()
             return
-        win = self._window("botnet", "Botnet — payloads & income", 520, 460)
+        win = self._window("botnet", "Botnet — payloads & income", 560, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
 
         tk.Label(
@@ -2423,13 +2468,19 @@ class DesktopApp:
         ).pack(anchor=tk.W)
         tk.Label(
             body,
-            text="Deploy miners for passive income or DDoS floods for tactical debuffs. Rivals purge loud nets.",
-            fg=COLORS["muted"], bg=COLORS["window"], font=F(10), wraplength=480, justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(4, 8))
+            text="Subnet map shows infected nodes. Deploy miners, ransom, virus, deface, or frame kits.",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(10), wraplength=520, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(4, 4))
+
+        map_canvas = tk.Canvas(body, bg="#1a1a2e", height=110, highlightthickness=1,
+                               highlightbackground=COLORS["border"])
+        map_canvas.pack(fill=tk.X, pady=(0, 6))
+        self._botnet_map_canvas = map_canvas
+        map_canvas.bind("<Configure>", lambda _e: self._refresh_botnet_panel())
 
         viewer = scrolledtext.ScrolledText(
             body, bg=COLORS["terminal_bg"], fg=COLORS["text"],
-            font=MONO(10), relief=tk.FLAT, wrap=tk.WORD, height=16,
+            font=MONO(10), relief=tk.FLAT, wrap=tk.WORD, height=14,
         )
         viewer.pack(fill=tk.BOTH, expand=True)
         self._botnet_text = viewer
@@ -2551,6 +2602,14 @@ class DesktopApp:
             tk.Button(
                 btn_row2, text="Strike Rival", command=lambda: self._gui_run_command("chaos strike"),
                 bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+            tk.Button(
+                btn_row2, text="Deface", command=lambda: self._gui_run_command("chaos deface"),
+                bg=COLORS["border"], fg=COLORS["error"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+            tk.Button(
+                btn_row2, text="Frame Rival", command=lambda: self._gui_run_command("chaos frame"),
+                bg=COLORS["border"], fg="#aa66ff", relief=tk.FLAT, padx=10,
             ).pack(side=tk.LEFT, padx=6)
             tk.Button(
                 btn_row2, text="Field Manual", command=self.open_training,
@@ -2700,7 +2759,9 @@ class DesktopApp:
             f"Starting balance: ${p.money}\n\n"
             "• Check Mail — your first contracts are waiting\n"
             "• Open Job Board for live paid ops\n"
-            "• Shop: buy gear and consumables (read each item's description)\n"
+            "• ☠ Chaos dock — loud runs, botnet map, ghost raids (type: chaos status)\n"
+            "• chaos run — roguelike endless floors when you want pure mayhem\n"
+            "• Shop: buy gear and payloads (ransom, deface, frame, virus)\n"
             "• Firewall is ALWAYS on — Defense off only means passive mode\n"
             "• defend on in Terminal for active defense (+rep on blocks)\n"
             "• Rivals probe weak firewalls — upgrade FW in Shop\n\n"

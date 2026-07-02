@@ -231,6 +231,9 @@ class MetaState:
     meltdown: dict[str, Any] = field(default_factory=dict)
     ghost_raid_cd: int = 0
     faction_war_cd: int = 0
+    defaced_hosts: set[str] = field(default_factory=set)
+    framed_rivals: dict[str, str] = field(default_factory=dict)
+    ransom_accrual: dict[str, int] = field(default_factory=dict)
 
 
 class ModifierManager:

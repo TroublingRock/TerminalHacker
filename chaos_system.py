@@ -51,12 +51,16 @@ class ChaosCareerManager:
         p.chaos_unlocked = True
         p.tutorial_flags.add("tutorial_v2")
         p.tutorial_flags.add("chaos_career")
+        from progression import PlayerProfile
+        PlayerProfile.mark_veteran()
 
         game.meta.chaos_mode = True
         game.meta.notoriety = 8
         game.meta.inventory["miner_payload"] = game.meta.inventory.get("miner_payload", 0) + 2
         game.meta.inventory["ddos_payload"] = game.meta.inventory.get("ddos_payload", 0) + 1
         game.meta.inventory["leak_payload"] = game.meta.inventory.get("leak_payload", 0) + 1
+        game.meta.inventory["virus_payload"] = game.meta.inventory.get("virus_payload", 0) + 1
+        game.meta.inventory["deface_payload"] = game.meta.inventory.get("deface_payload", 0) + 1
 
         if not any(r.destination == "10.0.0.0/24" for r in p.routes):
             p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
@@ -212,9 +216,10 @@ class ChaosEventManager:
 
 
 class BotnetSpreadManager:
-    """Infections worm to neighbors on hot subnets."""
+    """Infections worm to neighbors on hot subnets; virus jumps routed subnets."""
 
     SPREAD_BASE = 0.06
+    CROSS_SUBNET_BASE = 0.03
 
     @staticmethod
     def try_spread(game: Game) -> None:
@@ -222,15 +227,31 @@ class BotnetSpreadManager:
             return
         if not game.meta.infections:
             return
+        BotnetSpreadManager._try_neighbor_spread(game)
+        virus_count = sum(1 for v in game.meta.infections.values() if v == "virus")
+        if virus_count or game.meta.notoriety >= 20 or game.meta.chaos_mode:
+            BotnetSpreadManager._try_cross_subnet_spread(game)
+
+    @staticmethod
+    def _spread_chance(game: Game, source_ip: str) -> float:
         heat_total = sum(game.meta.subnet_heat.values())
         chance = BotnetSpreadManager.SPREAD_BASE + len(game.meta.infections) * 0.012
         chance += heat_total * 0.004
+        kind = game.meta.infections.get(source_ip, "")
+        if kind == "virus":
+            chance *= 2.2
+        elif kind in ("leak", "ransom"):
+            chance *= 1.15
         if game.meta.chaos_mode:
             chance *= 1.35
-        if random.random() >= chance:
+        return chance
+
+    @staticmethod
+    def _try_neighbor_spread(game: Game) -> None:
+        source_ip = random.choice(list(game.meta.infections.keys()))
+        if random.random() >= BotnetSpreadManager._spread_chance(game, source_ip):
             return
 
-        source_ip = random.choice(list(game.meta.infections.keys()))
         source = game.network.get_server(source_ip)
         if not source:
             return
@@ -251,23 +272,78 @@ class BotnetSpreadManager:
             return
 
         target = random.choice(candidates)
-        game.meta.infections[target.ip] = game.meta.infections[source_ip]
+        payload = game.meta.infections[source_ip]
+        if payload == "virus":
+            payload = random.choice(["virus", "miner", "leak"])
+        game.meta.infections[target.ip] = payload
         game.meta.backdoors.add(target.ip)
+        BotnetSpreadManager._announce_spread(game, source_ip, target, payload, "worm")
+
+    @staticmethod
+    def _routed_subnets(game: Game) -> set[str]:
+        return {r.destination for r in game.player.routes}
+
+    @staticmethod
+    def _try_cross_subnet_spread(game: Game) -> None:
+        virus_nodes = [ip for ip, k in game.meta.infections.items() if k == "virus"]
+        sources = virus_nodes or list(game.meta.infections.keys())
+        if not sources:
+            return
+        source_ip = random.choice(sources)
+        chance = BotnetSpreadManager.CROSS_SUBNET_BASE
+        if game.meta.infections.get(source_ip) == "virus":
+            chance *= 2.5
+        chance += game.meta.notoriety * 0.001
+        if random.random() >= chance:
+            return
+
+        source = game.network.get_server(source_ip)
+        if not source:
+            return
+
+        routed = BotnetSpreadManager._routed_subnets(game)
+        candidates: list[Server] = []
+        for s in game.network.servers.values():
+            if s.ip == source_ip or s.ip in game.meta.infections:
+                continue
+            if s.subnet == source.subnet:
+                continue
+            if s.subnet not in routed and s.subnet != "198.18.0.0/24":
+                continue
+            if s.ip not in game.player.discovered_ips:
+                continue
+            if s.security_level > game.player.cpu_level + 3:
+                continue
+            candidates.append(s)
+
+        if not candidates:
+            return
+
+        target = random.choice(candidates)
+        src_kind = game.meta.infections[source_ip]
+        payload = "virus" if src_kind == "virus" else random.choice(["virus", "miner", "leak"])
+        game.meta.infections[target.ip] = payload
+        game.meta.backdoors.add(target.ip)
+        BotnetSpreadManager._announce_spread(game, source_ip, target, payload, "cross-subnet virus")
+
+    @staticmethod
+    def _announce_spread(game: Game, source_ip: str, target: Server, payload: str, tag: str) -> None:
         from depth_systems import RivalHeatManager
         from main import success, warn
 
-        RivalHeatManager.spike(game, target.subnet, 3)
-        NotorietyManager.add(game, 3, f"worm spread {source_ip} → {target.ip}")
-        success(f"WORM SPREAD: {game.meta.infections[target.ip]} jumped {source_ip} → {target.hostname}")
-        warn(f"{target.ip} auto-infected — rivals will notice the subnet.")
+        RivalHeatManager.spike(game, target.subnet, 4 if tag == "cross-subnet virus" else 3)
+        NotorietyManager.add(game, 4 if tag == "cross-subnet virus" else 3, f"{tag} {source_ip} → {target.ip}")
+        success(f"{tag.upper()}: {payload} jumped {source_ip} → {target.hostname}")
+        warn(f"{target.ip} auto-infected on {target.subnet} — rivals will notice.")
         rival = __import__("retention").RetentionManager.pick_rival_attacker(game)
         game.mail.send(
             f"{rival}@rival.net",
             "your worm just lit up my scan",
-            f"Payload copied from {source_ip} to {target.ip} on {target.subnet}.\n"
+            f"Payload ({payload}) copied from {source_ip} to {target.ip} on {target.subnet}.\n"
             f"Cute. I'm coming.\n\n— {rival}",
         )
         RivalReactionManager.on_botnet_spread(game, source_ip, target.ip)
+        ChaosNewsManager.push(game, f"{tag.upper()}: {payload} spread {source_ip} → {target.ip}")
 
 
 class ChaosNewsManager:
@@ -609,6 +685,51 @@ class ChaosStrikeManager:
         game.threat._maybe_attack(force=False)
 
 
+class ChaosDefaceManager:
+    """Deface a host from shell — or trigger deface payload."""
+
+    @staticmethod
+    def deface(game: Game) -> None:
+        from botnet_system import BotnetManager, PAYLOAD_DEFACE
+        from main import error, success
+
+        server = game.remote_server() if hasattr(game, "remote_server") else None
+        if not server or not game.player.has_remote_shell:
+            error("Need shell on target. Or: infect deface on host first.")
+            return
+        if server.ip in game.meta.defaced_hosts:
+            error(f"{server.hostname} already defaced.")
+            return
+        BotnetManager._apply_deface(game, server)
+        if server.ip not in game.meta.infections:
+            game.meta.infections[server.ip] = PAYLOAD_DEFACE
+
+
+class ChaosFrameManager:
+    """Frame a rival — plant forged logs from shell."""
+
+    @staticmethod
+    def frame(game: Game, target: str = "") -> None:
+        from botnet_system import BotnetManager, PAYLOAD_FRAME
+        from depth_systems import RIVAL_PROFILES
+        from main import error
+        from retention import RetentionManager
+
+        server = game.remote_server() if hasattr(game, "remote_server") else None
+        if not server or not game.player.has_remote_shell:
+            error("Need shell on target. Or: infect frame <rival> [IP]")
+            return
+        rival = target.lower() if target else RetentionManager.pick_rival_attacker(game)
+        if rival not in RIVAL_PROFILES:
+            error(f"Unknown rival. Pick: {', '.join(RIVAL_PROFILES)}")
+            return
+        if server.ip in game.meta.framed_rivals:
+            error(f"{server.hostname} already framed ({game.meta.framed_rivals[server.ip]}).")
+            return
+        BotnetManager._apply_frame(game, server, rival)
+        game.meta.infections[server.ip] = PAYLOAD_FRAME
+
+
 class ChaosLeakManager:
     """Leak host data to the board — needs shell on target."""
 
@@ -656,7 +777,7 @@ class ChaosCommandManager:
                 Console.out(line)
             Console.out("  Usage: chaos start | status | provoke | run | unlock")
             Console.out("          chaos leak | war <rivals|corps|brokers> | raid | strike [rival]")
-            Console.out("          chaos news")
+            Console.out("          chaos deface | frame [rival] | news")
             Console.out("  Loud contracts pay +35%. Heat triggers raids. Infections can spread.")
             return
 
@@ -686,6 +807,12 @@ class ChaosCommandManager:
             return
         if action == "leak":
             ChaosLeakManager.leak(game)
+            return
+        if action == "deface":
+            ChaosDefaceManager.deface(game)
+            return
+        if action == "frame":
+            ChaosFrameManager.frame(game, args[1] if len(args) > 1 else "")
             return
         if action == "war":
             FactionWarManager.start(game, args[1] if len(args) > 1 else "")
@@ -723,4 +850,4 @@ class ChaosCommandManager:
             return
         if action == "unlock":
             return  # handled in main.py cmd_chaos
-        error("Usage: chaos [start|status|provoke|run|unlock|leak|war|raid|strike|news]")
+        error("Usage: chaos [start|status|provoke|run|unlock|leak|deface|frame|war|raid|strike|news]")

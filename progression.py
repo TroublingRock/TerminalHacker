@@ -15,6 +15,43 @@ if TYPE_CHECKING:
 
 SAVE_PATH = Path.home() / ".terminalhacker" / "save.json"
 BACKUP_PATH = SAVE_PATH.with_suffix(".json.bak")
+PROFILE_PATH = Path.home() / ".terminalhacker" / "profile.json"
+
+
+class PlayerProfile:
+    """Persistent flags across new games — returning player detection."""
+
+    @staticmethod
+    def _read() -> dict:
+        if not PROFILE_PATH.exists():
+            return {}
+        try:
+            return json.loads(PROFILE_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    @staticmethod
+    def is_veteran() -> bool:
+        return bool(PlayerProfile._read().get("veteran"))
+
+    @staticmethod
+    def mark_veteran() -> None:
+        data = PlayerProfile._read()
+        if data.get("veteran"):
+            return
+        data["veteran"] = True
+        PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            PROFILE_PATH.write_text(json.dumps(data, indent=2))
+        except OSError:
+            pass
+
+    @staticmethod
+    def suggest_chaos_on_career_load() -> bool:
+        data = PlayerProfile._read()
+        if data.get("chaos_cta_shown"):
+            return False
+        return PlayerProfile.is_veteran()
 
 # ---------------------------------------------------------------------------
 # Ranks & subnet unlocks
@@ -651,6 +688,9 @@ class SaveManager:
                 "meltdown": game.meta.meltdown,
                 "ghost_raid_cd": game.meta.ghost_raid_cd,
                 "faction_war_cd": game.meta.faction_war_cd,
+                "defaced_hosts": list(game.meta.defaced_hosts),
+                "framed_rivals": game.meta.framed_rivals,
+                "ransom_accrual": game.meta.ransom_accrual,
                 "infections": game.meta.infections,
                 "botnet_bank": game.meta.botnet_bank,
                 "ddos_targets": game.meta.ddos_targets,
@@ -921,6 +961,9 @@ class SaveManager:
                 meltdown=dict(md.get("meltdown", {})),
                 ghost_raid_cd=md.get("ghost_raid_cd", 0),
                 faction_war_cd=md.get("faction_war_cd", 0),
+                defaced_hosts=set(md.get("defaced_hosts", [])),
+                framed_rivals=dict(md.get("framed_rivals", {})),
+                ransom_accrual=dict(md.get("ransom_accrual", {})),
                 infections=md.get("infections", {}),
                 botnet_bank=md.get("botnet_bank", 0),
                 ddos_targets=md.get("ddos_targets", {}),
@@ -932,6 +975,8 @@ class SaveManager:
                     game.network.servers[ip].endless_only = True
         SaveManager._normalize_player_state(game)
         if p.phase == "career":
+            from progression import PlayerProfile
+            PlayerProfile.mark_veteran()
             game.network.deploy_company_hosts_with_puzzles(game, p.reputation, p.chaos_unlocked)
             if getattr(game, "gui_mode", False):
                 game.defer_career_session = True
