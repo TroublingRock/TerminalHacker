@@ -45,6 +45,25 @@ class ChaosSystemTests(unittest.TestCase):
         before = game.meta.notoriety
         NotorietyManager.add(game, 5, "test")
         self.assertEqual(game.meta.notoriety, before + 5)
+        self.assertTrue(game.meta.chaos_headlines)
+
+    def test_ghost_raid_spawns_mission(self) -> None:
+        from chaos_system import GhostRaidManager
+
+        game = Game()
+        game.player.phase = "career"
+        game.meta.chaos_mode = True
+        GhostRaidManager.launch(game)
+        self.assertTrue(any("ghost" in m.mission_id for m in game.missions.missions))
+
+    def test_teach_suppressed_in_chaos_mode(self) -> None:
+        from main import set_teach_suppress_chaos, _teach_suppressed, teach
+
+        game = Game()
+        game.meta.chaos_mode = True
+        set_teach_suppress_chaos(True)
+        self.assertTrue(_teach_suppressed())
+        set_teach_suppress_chaos(False)
 
 
 if __name__ == "__main__":

@@ -56,11 +56,14 @@ class ChaosCareerManager:
         game.meta.notoriety = 8
         game.meta.inventory["miner_payload"] = game.meta.inventory.get("miner_payload", 0) + 2
         game.meta.inventory["ddos_payload"] = game.meta.inventory.get("ddos_payload", 0) + 1
+        game.meta.inventory["leak_payload"] = game.meta.inventory.get("leak_payload", 0) + 1
 
         if not any(r.destination == "10.0.0.0/24" for r in p.routes):
             p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
         if not any(r.destination == "203.0.113.0/24" for r in p.routes):
             p.routes.append(Route("203.0.113.0/24", "192.168.1.1"))
+        if not any(r.destination == "198.18.0.0/24" for r in p.routes):
+            p.routes.append(Route("198.18.0.0/24", "192.168.1.1"))
 
         game.network.deploy_company_hosts_with_puzzles(game, p.reputation, True)
 
@@ -110,6 +113,8 @@ class NotorietyManager:
             return
         old = game.meta.notoriety
         game.meta.notoriety = min(150, game.meta.notoriety + amount)
+        if amount >= 3:
+            ChaosNewsManager.push(game, f"Notoriety +{amount}: {reason or 'mayhem'}")
         for threshold, flag, blurb in NOTORIETY_THRESHOLDS:
             if old < threshold <= game.meta.notoriety and flag not in game.meta.chaos_flags:
                 game.meta.chaos_flags.add(flag)
@@ -262,20 +267,397 @@ class BotnetSpreadManager:
             f"Payload copied from {source_ip} to {target.ip} on {target.subnet}.\n"
             f"Cute. I'm coming.\n\n— {rival}",
         )
+        RivalReactionManager.on_botnet_spread(game, source_ip, target.ip)
+
+
+class ChaosNewsManager:
+    """Rolling headline feed of your crimes — optional LLM flavor."""
+
+    MAX_HEADLINES = 24
+
+    @staticmethod
+    def push(game: Game, headline: str) -> None:
+        if not headline:
+            return
+        game.meta.chaos_headlines.append(headline[:200])
+        if len(game.meta.chaos_headlines) > ChaosNewsManager.MAX_HEADLINES:
+            game.meta.chaos_headlines = game.meta.chaos_headlines[-ChaosNewsManager.MAX_HEADLINES:]
+
+    @staticmethod
+    def maybe_llm_headline(game: Game, context: str) -> None:
+        try:
+            from llm_content import LLMContentManager, LLMClient
+            if not LLMClient.available() or not game.llm.user_enabled:
+                return
+            text = LLMContentManager.generate(
+                game, "chaos_news", context[:40], context, limit=120,
+            )
+            if text:
+                ChaosNewsManager.push(game, text.strip())
+        except Exception:
+            pass
+
+    @staticmethod
+    def latest(game: Game) -> str:
+        return game.meta.chaos_headlines[-1] if game.meta.chaos_headlines else ""
+
+    @staticmethod
+    def status_lines(game: Game) -> list[str]:
+        if not game.meta.chaos_headlines:
+            return ["  News wire:   (quiet — go make trouble)"]
+        lines = ["  CHAOS NEWS WIRE",]
+        for h in game.meta.chaos_headlines[-8:]:
+            lines.append(f"    • {h}")
+        return lines
+
+
+class RivalReactionManager:
+    """Extra rival mail when you cause trouble — chaos mode only."""
+
+    @staticmethod
+    def _react(game: Game, chance: float, subject: str, body: str, notoriety: int = 1) -> None:
+        if game.player.phase not in ("career", "endless"):
+            return
+        if not (game.meta.chaos_mode or game.meta.notoriety > 5):
+            return
+        if random.random() > chance:
+            return
+        from retention import RetentionManager
+        rival = RetentionManager.pick_rival_attacker(game)
+        game.mail.send(f"{rival}@rival.net", subject, f"{body}\n\n— {rival}")
+        NotorietyManager.add(game, notoriety, subject.lower())
+
+    @staticmethod
+    def on_scan_chaos_subnet(game: Game, cidr: str) -> None:
+        if cidr != "203.0.113.0/24":
+            return
+        RivalReactionManager._react(
+            game, 0.55,
+            "stop scanning chaos edge",
+            "203.0.113.x is not a playground. Back off or burn.",
+            3,
+        )
+        ChaosNewsManager.push(game, f"Operator scanned chaos subnet {cidr} — IDS lit up.")
+
+    @staticmethod
+    def on_crack(game: Game, server: Server) -> None:
+        if server.security_level >= 2:
+            RivalReactionManager._react(
+                game, 0.35,
+                f"saw you crack {server.hostname}",
+                f"{server.ip} just went down. I'm logging your style.",
+                2,
+            )
+            ChaosNewsManager.push(
+                game, f"Breach: {server.hostname} ({server.ip}) cracked by {game.player.effective_egress_ip}",
+            )
+            MeltdownManager.on_crack(game, server)
+
+    @staticmethod
+    def on_dirty_disconnect(game: Game, server: Server) -> None:
+        RivalReactionManager._react(
+            game, 0.45,
+            "sloppy disconnect",
+            f"You left logs on {server.hostname}. Amateur hour.",
+            2,
+        )
+
+    @staticmethod
+    def on_botnet_spread(game: Game, src: str, dst: str) -> None:
+        ChaosNewsManager.push(game, f"WORM: payload spread {src} → {dst}")
+        ChaosNewsManager.maybe_llm_headline(
+            game, f"Breaking: worm spread between {src} and {dst} on the darknet.",
+        )
+
+
+class MeltdownManager:
+    """Corp meltdown chains — crack → leak → flash payout."""
+
+    @staticmethod
+    def on_crack(game: Game, server: Server) -> None:
+        if not game.meta.chaos_mode or server.security_level < 2:
+            return
+        if game.meta.meltdown.get("ip"):
+            return
+        company = server.company or server.hostname
+        game.meta.meltdown = {
+            "ip": server.ip,
+            "company": company,
+            "step": 1,
+            "need": "leak",
+        }
+        from main import info
+        info(f"MELTDOWN CHAIN started — {company}. Leak intel: chaos leak")
+
+    @staticmethod
+    def on_leak(game: Game, server: Server, snippet: str) -> None:
+        md = game.meta.meltdown
+        if not md or md.get("ip") != server.ip:
+            return
+        if md.get("step") != 1:
+            return
+        from social_board import SocialBoardManager
+        SocialBoardManager.seed_if_needed(game)
+        SocialBoardManager.player_post(
+            game, "flex",
+            f"LEAKED: {md.get('company', server.hostname)}",
+            snippet[:400],
+        )
+        md["step"] = 2
+        NotorietyManager.add(game, 8, f"meltdown leak {server.ip}")
+        ChaosNewsManager.push(game, f"DATA LEAK: {md.get('company')} files posted to flex board")
+        ChaosNewsManager.maybe_llm_headline(
+            game, f"Corp meltdown: leaked files from {md.get('company')} hit the darknet boards.",
+        )
+        from main import Mission, success
+        from variety_content import VarietyMissionGenerator
+
+        flash = VarietyMissionGenerator.generate(game)
+        if flash:
+            flash.reward = int(flash.reward * 1.6)
+            flash.briefing = f"FLASH CHAOS — {flash.briefing} (meltdown fallout)"
+            game.missions.missions.insert(0, flash)
+            game.mail.send(
+                "nullbyte@darknet",
+                f"Meltdown bonus contract — {flash.mission_id}",
+                f"{md.get('company')} is bleeding. Cash in while they're panicking.\n\n{flash.briefing}",
+            )
+        success(f"MELTDOWN step 2 — {md.get('company')} leak live. Flash contract dropped.")
+        game.meta.meltdown = {}
+
+    @staticmethod
+    def status_lines(game: Game) -> list[str]:
+        md = game.meta.meltdown
+        if not md:
+            return []
+        return [
+            f"  Meltdown:    {md.get('company', '?')} @ {md.get('ip')} — step {md.get('step')} ({md.get('need', '?')})",
+        ]
+
+
+class FactionWarManager:
+    """Instigate faction wars — heat + rivals + rep shifts."""
+
+    COOLDOWN = 25
+
+    @staticmethod
+    def start(game: Game, faction: str) -> None:
+        from main import error, success, warn
+
+        if game.player.phase not in ("career", "endless"):
+            error("Career only.")
+            return
+        faction = faction.lower()
+        targets = {"rivals": "rivals", "corps": "corps", "brokers": "brokers"}
+        if faction not in targets:
+            error("Usage: chaos war <rivals|corps|brokers>")
+            return
+        if game.meta.faction_war_cd > 0:
+            error(f"Faction war cooling down ({game.meta.faction_war_cd} commands).")
+            return
+
+        from faction_consumables import FactionRepManager
+        deltas = {"rivals": {"rivals": 20, "corps": -8, "brokers": -5},
+                  "corps": {"corps": 20, "rivals": -10, "brokers": 5},
+                  "brokers": {"brokers": 20, "rivals": -5, "corps": -8}}[faction]
+        FactionRepManager.shift(game, deltas)
+
+        from depth_systems import RivalHeatManager, RIVAL_PROFILES
+        subnet = {"rivals": "203.0.113.0/24", "corps": "10.0.0.0/24", "brokers": "172.16.0.0/24"}[faction]
+        RivalHeatManager.spike(game, subnet, 6)
+        NotorietyManager.add(game, 10, f"faction war {faction}")
+        game.meta.faction_war_cd = FactionWarManager.COOLDOWN
+
+        warn(f"FACTION WAR — you stirred up {faction}. Heat spiked on {subnet}.")
+        success("Rivals mobilizing. Expect probes and flash contracts.")
+        ChaosNewsManager.push(game, f"FACTION WAR: operator declared war on {faction} — {subnet} burning")
+        from retention import RetentionManager
+        rival = RetentionManager.pick_rival_attacker(game)
+        game.mail.send(
+            f"{rival}@rival.net",
+            f"war on {faction}",
+            f"You picked a side fight. I'm joining in.\n\n— {rival}",
+        )
+        game.threat._maybe_attack(force=True)
+        game.threat._maybe_attack(force=False)
+
+    @staticmethod
+    def tick_cooldown(game: Game) -> None:
+        if game.meta.faction_war_cd > 0:
+            game.meta.faction_war_cd -= 1
+        if game.meta.ghost_raid_cd > 0:
+            game.meta.ghost_raid_cd -= 1
+
+
+class GhostRaidManager:
+    """Raid abandoned ghost nodes — procedural loot piñatas."""
+
+    COOLDOWN = 18
+
+    @staticmethod
+    def launch(game: Game) -> None:
+        from main import Mission, Route, Server, error, success, warn
+
+        if game.player.phase not in ("career", "endless"):
+            error("Career only.")
+            return
+        if game.meta.ghost_raid_cd > 0:
+            error(f"Ghost raid cooling down ({game.meta.ghost_raid_cd} commands).")
+            return
+
+        p = game.player
+        if not any(r.destination == "198.18.0.0/24" for r in p.routes):
+            p.routes.append(Route("198.18.0.0/24", p.gateway))
+        octet = random.randint(40, 250)
+        ip = f"198.18.{random.randint(1, 254)}.{octet}"
+        loot = random.choice([
+            "/home/ghost/wallet.dat",
+            "/home/ghost/keys.txt",
+            "/var/backups/abandoned.db",
+        ])
+        reward = random.randint(380, 720)
+        if ip not in game.network.servers:
+            game.network.servers[ip] = Server(
+                ip, f"ghost-{octet}", 1,
+                subnet="198.18.0.0/24",
+                ssh_user="ghost",
+                ssh_password=random.choice(["ghost123", "abandoned", "leftbehind"]),
+                extra_files={loot: "ghost loot — grab before purge\n"},
+            )
+        game.player.discovered_ips.add(ip)
+        game.missions.missions.insert(
+            0,
+            Mission(
+                f"ghost-{octet}", "shade_runner",
+                f"GHOST RAID: abandoned node {ip} — crack, download {loot}, traces optional.",
+                ip, loot, reward, rep_reward=40, require_log_wipe=False, procedural=True,
+            ),
+        )
+        game.meta.ghost_raid_cd = GhostRaidManager.COOLDOWN
+        NotorietyManager.add(game, 5, f"ghost raid {ip}")
+        warn(f"GHOST SIGNAL — abandoned host {ip} spotted on darknet.")
+        success("Contract added. Loud run pays extra.")
+        ChaosNewsManager.push(game, f"Ghost raid queued on abandoned node {ip}")
+        game.mail.send(
+            "shade_runner@darknet",
+            f"Ghost raid — {ip}",
+            f"Old operator went dark. Node still pinging.\n"
+            f"Grab {loot} before someone else does.\n\n— shade_runner",
+        )
+
+
+class FlashChaosManager:
+    """Random high-voltage contracts when notoriety is high."""
+
+    @staticmethod
+    def maybe_spawn(game: Game) -> None:
+        if game.player.phase != "career" or game.meta.notoriety < 20:
+            return
+        if random.random() > 0.04:
+            return
+        from variety_content import VarietyMissionGenerator
+        m = VarietyMissionGenerator.generate(game)
+        if not m:
+            return
+        m.reward = int(m.reward * 1.45)
+        m.briefing = f"⚡ CHAOS FLASH — {m.briefing} (loud bonus)"
+        m.require_log_wipe = False
+        game.missions.missions.insert(0, m)
+        from main import info
+        info(f"FLASH CONTRACT: {m.mission_id} — ${m.reward}")
+        ChaosNewsManager.push(game, f"Flash contract {m.mission_id} dropped (${m.reward})")
+        game.mail.send(
+            f"{m.broker}@darknet",
+            f"Flash chaos — {m.mission_id}",
+            f"You're hot right now. Fast money, no rules.\n\n{m.briefing}",
+        )
+
+
+class ChaosStrikeManager:
+    """Offensive strike — hammer a rival's turf."""
+
+    @staticmethod
+    def strike(game: Game, target: str = "") -> None:
+        from depth_systems import RIVAL_PROFILES, RivalHeatManager
+        from main import error, success, warn
+        from retention import RetentionManager
+
+        if game.player.phase not in ("career", "endless"):
+            error("Career only.")
+            return
+
+        rival = target.lower() if target else RetentionManager.pick_rival_attacker(game)
+        if rival not in RIVAL_PROFILES:
+            error(f"Unknown rival. Pick: {', '.join(RIVAL_PROFILES)}")
+            return
+
+        profile = RIVAL_PROFILES[rival]
+        subnet = profile["subnet"]
+        RivalHeatManager.spike(game, subnet, 8)
+        NotorietyManager.add(game, 7, f"strike {rival}")
+        warn(f"CHAOS STRIKE — flooding {rival}'s turf ({subnet}).")
+        success("Rival infrastructure softened. DDoS timers boosted on random targets.")
+        for ip in list(game.network.servers.keys())[:3]:
+            if ip.startswith(subnet.split(".")[0]):
+                game.meta.ddos_targets[ip] = max(game.meta.ddos_targets.get(ip, 0), 10)
+        game.mail.send(
+            f"{rival}@rival.net",
+            "you struck my subnet",
+            f"Heat on {subnet} just spiked. Enjoy the counterattack.\n\n— {rival}",
+        )
+        ChaosNewsManager.push(game, f"Chaos strike on {rival}'s {subnet} by {game.player.username}")
+        game.threat._maybe_attack(force=False)
+
+
+class ChaosLeakManager:
+    """Leak host data to the board — needs shell on target."""
+
+    @staticmethod
+    def leak(game: Game) -> None:
+        from main import error
+
+        server = game.remote_server() if hasattr(game, "remote_server") else None
+        if not server or not game.player.has_remote_shell:
+            error("Need shell on target to leak. Or: infect leak on host first.")
+            return
+        if server.ip in game.meta.infections and game.meta.infections[server.ip] == "leak":
+            snippet = ""
+            for path, f in list(server.files.items())[:4]:
+                if not f.requires_root:
+                    snippet += f"{path}: {f.read()[:80]}...\n"
+            MeltdownManager.on_leak(game, server, snippet or f"Intel dump from {server.hostname}")
+            return
+        files = server.files
+        paths = [p for p in files if "/home/" in p or "/var/log" in p][:3]
+        snippet = "\n".join(f"{p}: {files[p].read()[:60]}..." for p in paths)
+        from social_board import SocialBoardManager
+        SocialBoardManager.seed_if_needed(game)
+        SocialBoardManager.player_post(
+            game, "flex", f"dump from {server.hostname}",
+            snippet or "(empty host)",
+        )
+        NotorietyManager.add(game, 5, f"leak {server.ip}")
+        from main import success
+        success(f"Leaked {server.hostname} intel to flex board.")
+        ChaosNewsManager.push(game, f"Manual leak from {server.ip} posted to flex board")
+        MeltdownManager.on_leak(game, server, snippet)
 
 
 class ChaosCommandManager:
     @staticmethod
     def cmd_chaos(game: Game, args: list[str]) -> None:
-        from main import Console, divider, error, success, teach, warn
+        from main import Console, divider, error, success, warn
 
         if not args:
             divider("CHAOS / MISCHIEF")
             for line in NotorietyManager.status_lines(game):
                 Console.out(line)
-            Console.out("  Usage: chaos start | status | provoke | run")
-            Console.out("  Loud contracts (traces left) pay +35% in chaos mode.")
-            Console.out("  High subnet heat triggers lockdowns, bounties, rival raids.")
+            for line in MeltdownManager.status_lines(game):
+                Console.out(line)
+            Console.out("  Usage: chaos start | status | provoke | run | unlock")
+            Console.out("          chaos leak | war <rivals|corps|brokers> | raid | strike [rival]")
+            Console.out("          chaos news")
+            Console.out("  Loud contracts pay +35%. Heat triggers raids. Infections can spread.")
             return
 
         action = args[0].lower()
@@ -286,12 +668,33 @@ class ChaosCommandManager:
             divider("CHAOS STATUS")
             for line in NotorietyManager.status_lines(game):
                 Console.out(line)
+            for line in MeltdownManager.status_lines(game):
+                Console.out(line)
             from depth_systems import RivalHeatManager
             for line in RivalHeatManager.status_lines(game):
                 Console.out(line)
             from botnet_system import BotnetManager
             for line in BotnetManager.status_lines(game):
                 Console.out(line)
+            for line in ChaosNewsManager.status_lines(game):
+                Console.out(line)
+            return
+        if action == "news":
+            divider("CHAOS NEWS WIRE")
+            for line in ChaosNewsManager.status_lines(game):
+                Console.out(line)
+            return
+        if action == "leak":
+            ChaosLeakManager.leak(game)
+            return
+        if action == "war":
+            FactionWarManager.start(game, args[1] if len(args) > 1 else "")
+            return
+        if action == "raid":
+            GhostRaidManager.launch(game)
+            return
+        if action == "strike":
+            ChaosStrikeManager.strike(game, args[1] if len(args) > 1 else "")
             return
         if action == "provoke":
             if game.player.phase not in ("career", "endless"):
@@ -305,8 +708,9 @@ class ChaosCommandManager:
             game.mail.send(
                 f"{rival}@rival.net",
                 "you asked for this",
-                "Saw your provoke ping. Enjoy the probe.\n\n— {rival}",
+                f"Saw your provoke ping. Enjoy the probe.\n\n— {rival}",
             )
+            ChaosNewsManager.push(game, f"Operator provoked {rival} — localhost probe incoming")
             success("Rival provoked — check localhost defenses.")
             return
         if action == "run":
@@ -315,6 +719,8 @@ class ChaosCommandManager:
                 return
             from endless_mode import EndlessManager
             EndlessManager.start_run(game)
-            teach("Chaos Run = roguelike floors. Die and retry. Go loud.")
+            success("Chaos Run started — roguelike floors. Die and retry.")
             return
-        error("Usage: chaos [start|status|provoke|run]")
+        if action == "unlock":
+            return  # handled in main.py cmd_chaos
+        error("Usage: chaos [start|status|provoke|run|unlock|leak|war|raid|strike|news]")

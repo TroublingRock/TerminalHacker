@@ -20,7 +20,7 @@ from main import (
     TUTORIAL_CURRICULUM,
     defense_firewall_help,
 )
-from chaos_system import ChaosCareerManager, NotorietyManager
+from chaos_system import ChaosCareerManager, NotorietyManager, MeltdownManager, ChaosNewsManager
 from progression import ACHIEVEMENTS, RANKS, ReputationSystem, SaveManager
 from retention import SEASON_TIERS, RetentionManager
 
@@ -829,6 +829,12 @@ class DesktopApp:
         )
         self.taskbar_label.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=8)
 
+        self.chaos_ticker = tk.Label(
+            bar, text="", fg=COLORS["warn"], bg=COLORS["taskbar"],
+            font=F(9), anchor=tk.E, width=42,
+        )
+        self.chaos_ticker.pack(side=tk.RIGHT, padx=(0, 8))
+
         right = tk.Frame(bar, bg=COLORS["taskbar"])
         right.pack(side=tk.RIGHT, padx=8)
         self.clock_label = tk.Label(
@@ -872,6 +878,12 @@ class DesktopApp:
                 f"FW L{p.firewall_level}  |  {vpn}{mail_txt}"
             )
         )
+        if self.chaos_ticker and self.chaos_ticker.winfo_exists():
+            headline = ChaosNewsManager.latest(self.game)
+            if headline and p.phase in ("career", "endless"):
+                self.chaos_ticker.configure(text=headline[:60])
+            else:
+                self.chaos_ticker.configure(text="")
 
     def _show_desktop(self) -> None:
         for key in list(self.open_windows.keys()):
@@ -2522,6 +2534,29 @@ class DesktopApp:
                 bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10,
             ).pack(side=tk.LEFT, padx=6)
             tk.Button(
+                btn_row, text="Ghost Raid", command=lambda: self._gui_run_command("chaos raid"),
+                bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+        btn_row2 = tk.Frame(body, bg=COLORS["window"])
+        btn_row2.pack(fill=tk.X, pady=(4, 0))
+        if p.phase in ("career", "endless"):
+            tk.Button(
+                btn_row2, text="Leak Intel", command=lambda: self._gui_run_command("chaos leak"),
+                bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT)
+            tk.Button(
+                btn_row2, text="War: Rivals", command=lambda: self._gui_run_command("chaos war rivals"),
+                bg=COLORS["border"], fg=COLORS["error"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+            tk.Button(
+                btn_row2, text="Strike Rival", command=lambda: self._gui_run_command("chaos strike"),
+                bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+            tk.Button(
+                btn_row2, text="Field Manual", command=self.open_training,
+                bg=COLORS["border"], fg=COLORS["muted"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+            tk.Button(
                 btn_row, text="Unlock Chaos Subnet", command=lambda: self._gui_run_command("chaos unlock"),
                 bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
             ).pack(side=tk.LEFT, padx=6)
@@ -2540,8 +2575,10 @@ class DesktopApp:
         lines: list[str] = []
         for block in (
             NotorietyManager.status_lines(self.game),
+            MeltdownManager.status_lines(self.game),
             __import__("depth_systems", fromlist=["RivalHeatManager"]).RivalHeatManager.status_lines(self.game),
             __import__("botnet_system", fromlist=["BotnetManager"]).BotnetManager.status_lines(self.game),
+            ChaosNewsManager.status_lines(self.game),
         ):
             lines.extend(block)
             lines.append("")

@@ -227,6 +227,10 @@ class MetaState:
     notoriety: int = 0
     chaos_mode: bool = False
     chaos_flags: set[str] = field(default_factory=set)
+    chaos_headlines: list[str] = field(default_factory=list)
+    meltdown: dict[str, Any] = field(default_factory=dict)
+    ghost_raid_cd: int = 0
+    faction_war_cd: int = 0
 
 
 class ModifierManager:

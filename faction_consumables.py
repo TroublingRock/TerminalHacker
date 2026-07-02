@@ -70,6 +70,11 @@ CONSUMABLES: dict[str, dict[str, Any]] = {
         "desc": "Flood a target host (infect ddos <IP>).",
         "cost": 220,
     },
+    "leak_payload": {
+        "name": "Leak Worm",
+        "desc": "Mirror host files — infect leak, then chaos leak.",
+        "cost": 160,
+    },
 }
 
 BROKER_NAMES = frozenset({

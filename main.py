@@ -73,7 +73,21 @@ def error(message: str) -> None:
 
 
 def teach(message: str) -> None:
+    if _teach_suppressed():
+        return
     Console.out(f"[?] {message}", "teach")
+
+
+_teach_suppress_chaos = False
+
+
+def set_teach_suppress_chaos(on: bool) -> None:
+    global _teach_suppress_chaos
+    _teach_suppress_chaos = on
+
+
+def _teach_suppressed() -> bool:
+    return _teach_suppress_chaos
 
 
 def syslog_line(hostname: str, process: str, message: str, priority: int = 13) -> str:
@@ -937,6 +951,12 @@ SHOP_CATALOG = [
         max_level=1,
         detail="Consumable. On a cracked host: infect ddos <target IP>. Slows rival races and weakens FW on target.",
     ),
+    ShopItem(
+        "leak_payload", "Leak Worm", "Auto-dump host files to the board.", 160,
+        consumable=True,
+        max_level=1,
+        detail="Consumable. infect leak on cracked host, then chaos leak while connected. Triggers meltdown chains.",
+    ),
 ]
 
 
@@ -1534,7 +1554,9 @@ class Game:
 
     def post_command(self, cmd: str) -> None:
         from session_content import HourlyManager, MasteryGrader
+        from main import set_teach_suppress_chaos
 
+        set_teach_suppress_chaos(self.meta.chaos_mode)
         self.tutorial.record_command(cmd)
         MasteryGrader.on_command(self)
         self.threat.on_tick()
@@ -1563,9 +1585,13 @@ class Game:
             ConsumableManager.on_post_command(self)
             from botnet_system import BotnetManager
             BotnetManager.on_post_command(self)
-            from chaos_system import BotnetSpreadManager, ChaosEventManager
+            from chaos_system import (
+                BotnetSpreadManager, ChaosEventManager, FactionWarManager, FlashChaosManager,
+            )
             BotnetSpreadManager.try_spread(self)
             ChaosEventManager.on_post_command(self)
+            FactionWarManager.tick_cooldown(self)
+            FlashChaosManager.maybe_spawn(self)
 
     def try_unlock(self, key: str) -> None:
         from progression import ACHIEVEMENTS
@@ -1610,7 +1636,7 @@ class Game:
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
-            "chaos [start|status|provoke|run|unlock]",
+            "chaos [start|status|provoke|run|unlock|leak|war|raid|strike|news]",
             "phish", "tunnel", "plant", "forge", "infect", "botnet",
             "use [item]", "factions", "llm [test|on|off]", "world",
             "save", "load", "exit",
@@ -1693,6 +1719,8 @@ class Game:
             self.player.tutorial_flags.add("daily_scan_finance_done")
         if cidr == "203.0.113.0/24":
             self.player.tutorial_flags.add("daily_scan_chaos_done")
+            from chaos_system import RivalReactionManager
+            RivalReactionManager.on_scan_chaos_subnet(self, cidr)
         from retention import RetentionManager
         RetentionManager.on_scan_subnet(self, cidr)
         RetentionManager.on_bridge_event(self, "scan")
@@ -1753,9 +1781,10 @@ class Game:
         else:
             clean = not server or not server.player_left_traces(self.player)
         if server and not clean:
-            from chaos_system import NotorietyManager
+            from chaos_system import NotorietyManager, RivalReactionManager
             if self.meta.chaos_mode:
                 NotorietyManager.add(self, 2, f"dirty disconnect {server.ip}")
+                RivalReactionManager.on_dirty_disconnect(self, server)
             from progression import ReputationSystem
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
             if getattr(server, "chaos_only", False):
@@ -1833,6 +1862,8 @@ class Game:
             s.cracked = True
             self.player.has_remote_shell = True
             success(f"Backdoor shell on {s.hostname} — no brute-force needed.")
+            from chaos_system import RivalReactionManager
+            RivalReactionManager.on_crack(self, s)
             return
 
         divider("SSH BRUTE-FORCE")
@@ -1875,6 +1906,8 @@ class Game:
                 self.player.earn(40 + s.security_level * 20, "crack bounty")
                 from progression import ReputationSystem
                 ReputationSystem.add_rep(self, 15 + s.security_level * 5, "intrusion")
+            from chaos_system import RivalReactionManager
+            RivalReactionManager.on_crack(self, s)
             return
         error("Failed — upgrade CPU or buy hydra/hashcat.")
 
@@ -2210,7 +2243,9 @@ class Game:
     def cmd_chaos(self, args: list[str]) -> None:
         from chaos_system import ChaosCommandManager
 
-        if args and args[0].lower() in ("start", "status", "provoke", "run"):
+        if args and args[0].lower() in (
+            "start", "status", "provoke", "run", "leak", "war", "raid", "strike", "news",
+        ):
             ChaosCommandManager.cmd_chaos(self, args)
             return
         if args and args[0].lower() == "unlock":

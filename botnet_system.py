@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 PAYLOAD_MINER = "miner"
 PAYLOAD_DDOS = "ddos"
+PAYLOAD_LEAK = "leak"
 
 PAYLOAD_SPECS: dict[str, dict[str, Any]] = {
     PAYLOAD_MINER: {
@@ -26,6 +27,12 @@ PAYLOAD_SPECS: dict[str, dict[str, Any]] = {
         "duration_ticks": 14,
         "security_drop": 1,
         "desc": "Floods a target — easier cracks and slower rival race NPCs for a short window.",
+    },
+    PAYLOAD_LEAK: {
+        "label": "Auto-leak worm",
+        "heat": 4,
+        "shop_key": "leak_payload",
+        "desc": "Silently mirrors files — use chaos leak on that host to dump to the board.",
     },
 }
 
@@ -104,7 +111,7 @@ class BotnetManager:
             return
         if not args:
             divider("INFECT")
-            Console.out("  Usage: infect miner [IP]  |  infect ddos <IP>")
+            Console.out("  Usage: infect miner [IP]  |  infect ddos <IP>  |  infect leak [IP]")
             Console.out("  Requires: active shell or backdoor on target.")
             Console.out("  Shop: buy miner_payload | buy ddos_payload")
             return
@@ -128,6 +135,10 @@ class BotnetManager:
             from main import error as _err
             _err(f"{server.ip} already running {game.meta.infections[server.ip]}.")
             return
+        if kind == PAYLOAD_LEAK and server.ip in game.meta.infections:
+            from main import error as _err
+            _err(f"{server.ip} already infected.")
+            return
 
         if not BotnetManager._consume_payload(game, spec["shop_key"]):
             return
@@ -138,6 +149,10 @@ class BotnetManager:
             income = BotnetManager._miner_tick_income(game, server)
             success(f"Miner installed on {server.ip} (~${income}/tick when banked).")
             teach("Run botnet to check nodes. botnet collect cashes out. Heat rises on that subnet.")
+            game.meta.backdoors.add(server.ip)
+        elif kind == PAYLOAD_LEAK:
+            game.meta.infections[server.ip] = PAYLOAD_LEAK
+            success(f"Leak worm on {server.ip} — connect and run: chaos leak")
             game.meta.backdoors.add(server.ip)
         else:
             duration = spec.get("duration_ticks", DDOS_DURATION)
