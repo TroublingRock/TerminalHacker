@@ -1907,14 +1907,31 @@ class Game:
         files = self.player.files if self.player.is_local() else (self.require_shell() and self.remote_server().files)
         if not files:
             return
-        d = (args[0] if args else self.player.cwd).rstrip("/") + "/"
-        divider(f"LS {d}")
+        target = args[0] if args else self.player.cwd
+        d = target.rstrip("/") + "/" if target != "/" else "/"
+        label = target.rstrip("/") or "/"
+        divider(f"LS {label}")
+
+        subdirs: set[str] = set()
+        direct_files: list[str] = []
         for p in sorted(files):
-            if p.startswith(d) and p != d:
-                rel = p[len(d):]
-                if "/" not in rel:
-                    tag = " [root-only]" if files[p].requires_root else ""
-                    Console.out(f"  {p}{tag}")
+            if not p.startswith(d) or p == label:
+                continue
+            rel = p[len(d):]
+            if not rel:
+                continue
+            if "/" in rel:
+                subdirs.add(d + rel.split("/")[0] + "/")
+            else:
+                direct_files.append(p)
+
+        for subdir in sorted(subdirs):
+            Console.out(f"  {subdir}")
+        for path in direct_files:
+            tag = " [root-only]" if files[path].requires_root else ""
+            Console.out(f"  {path}{tag}")
+        if not subdirs and not direct_files:
+            muted("  (empty)")
 
     def cmd_cat(self, args: list[str]) -> None:
         if not args:
