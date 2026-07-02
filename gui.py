@@ -20,6 +20,7 @@ from main import (
     TUTORIAL_CURRICULUM,
     defense_firewall_help,
 )
+from chaos_system import ChaosCareerManager, NotorietyManager
 from progression import ACHIEVEMENTS, RANKS, ReputationSystem, SaveManager
 from retention import SEASON_TIERS, RetentionManager
 
@@ -459,6 +460,7 @@ class DesktopApp:
             ("board", "//", "Board", self.open_social_board),
             ("shop", "$", "Shop", self.open_shop),
             ("botnet", "⊛", "Botnet", self.open_botnet),
+            ("chaos", "☠", "Chaos", self.open_chaos),
             ("achieve", "*", "Awards", self.open_achievements),
             ("status", "#", "Settings", self.open_status),
         ]
@@ -785,6 +787,11 @@ class DesktopApp:
             btn_row, text="Read Mail", command=self.open_mail,
             bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=14, pady=4,
         ).pack(side=tk.LEFT)
+        if ChaosCareerManager.can_start(self.game):
+            tk.Button(
+                btn_row, text="☠ CHAOS CAREER", command=self._start_chaos_career,
+                bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=14, pady=4,
+            ).pack(side=tk.LEFT, padx=(12, 0))
 
         canvas.update_idletasks()
         bw = min(int(760 * UI_SCALE), max(canvas.winfo_width() - 80, 420))
@@ -854,6 +861,8 @@ class DesktopApp:
             rank_txt = f" | {ReputationSystem.rank_name(p)} ({p.reputation} rep)"
             rank_txt += f" | Streak {self.game.retention.streak}d"
             rank_txt += f" | S{self.game.retention.season_tier}/{len(SEASON_TIERS)}"
+            if self.game.meta.chaos_mode or self.game.meta.notoriety > 0:
+                rank_txt += f" | Notoriety {self.game.meta.notoriety}"
         save_txt = ""
         if self.game.last_autosave:
             save_txt = f" | Saved {self.game.last_autosave}"
@@ -2435,6 +2444,112 @@ class DesktopApp:
 
         self._built_panels.add("botnet")
         self._refresh_botnet_panel()
+
+    def _start_chaos_career(self) -> None:
+        from tkinter import messagebox
+
+        if not ChaosCareerManager.can_start(self.game):
+            return
+        if not messagebox.askyesno(
+            "Chaos Career",
+            "Skip training and jump into loud career mode?\n\n"
+            "• No tutorial sandbox — real money, rivals, heat\n"
+            "• Loud runs (traces left) pay +35%\n"
+            "• Botnet worms can spread on hot subnets\n\n"
+            "Training will be skipped.",
+        ):
+            return
+        ChaosCareerManager.start(self.game)
+        if self.onboarding_banner:
+            self.onboarding_banner.destroy()
+            self.onboarding_banner = None
+            if self._banner_place_id and self.desktop_canvas:
+                try:
+                    self.desktop_canvas.delete(self._banner_place_id)
+                except tk.TclError:
+                    pass
+                self._banner_place_id = None
+        self.refresh_taskbar()
+        self._run_deferred_career_session()
+        sounds.play("success")
+        messagebox.showinfo(
+            "CHAOS CAREER LIVE",
+            "No training wheels. Scan loud, infect nodes, provoke rivals.\n\n"
+            "Open Chaos dock (☠) or type: chaos status",
+        )
+        self.root.after(400, self.open_mail)
+        self.root.after(900, self.open_chaos)
+
+    def open_chaos(self) -> None:
+        if "chaos" in self._built_panels:
+            self._refresh_chaos_panel()
+            self._show_app("chaos")
+            return
+        win = self._window("chaos", "Chaos — Mischief Console", 560, 480)
+        body: tk.Frame = win._body  # type: ignore[attr-defined]
+        p = self.game.player
+
+        tk.Label(
+            body, text="CHAOS / MISCHIEF", fg=COLORS["error"], bg=COLORS["window"],
+            font=F(14, bold=True),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            body,
+            text="Loud runs pay more. Heat triggers lockdowns and rival raids. Infections can spread.",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9), wraplength=500, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(4, 8))
+
+        self._chaos_viewer = scrolledtext.ScrolledText(
+            body, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=MONO(11), relief=tk.FLAT, wrap=tk.WORD, height=14,
+        )
+        self._chaos_viewer.pack(fill=tk.BOTH, expand=True)
+
+        btn_row = tk.Frame(body, bg=COLORS["window"])
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        if ChaosCareerManager.can_start(self.game):
+            tk.Button(
+                btn_row, text="Start Chaos Career", command=self._start_chaos_career,
+                bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT)
+        if p.phase in ("career", "endless"):
+            tk.Button(
+                btn_row, text="Provoke Rival", command=lambda: self._gui_run_command("chaos provoke"),
+                bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+            tk.Button(
+                btn_row, text="Chaos Run", command=lambda: self._gui_run_command("chaos run"),
+                bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+            tk.Button(
+                btn_row, text="Unlock Chaos Subnet", command=lambda: self._gui_run_command("chaos unlock"),
+                bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+            ).pack(side=tk.LEFT, padx=6)
+        tk.Button(
+            btn_row, text="↻ Refresh", command=self._refresh_chaos_panel,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+        ).pack(side=tk.RIGHT)
+
+        self._built_panels.add("chaos")
+        self._refresh_chaos_panel()
+
+    def _refresh_chaos_panel(self) -> None:
+        viewer = getattr(self, "_chaos_viewer", None)
+        if not viewer or not viewer.winfo_exists():
+            return
+        lines: list[str] = []
+        for block in (
+            NotorietyManager.status_lines(self.game),
+            __import__("depth_systems", fromlist=["RivalHeatManager"]).RivalHeatManager.status_lines(self.game),
+            __import__("botnet_system", fromlist=["BotnetManager"]).BotnetManager.status_lines(self.game),
+        ):
+            lines.extend(block)
+            lines.append("")
+        viewer.configure(state=tk.NORMAL)
+        viewer.delete("1.0", tk.END)
+        viewer.insert("1.0", "\n".join(lines))
+        viewer.configure(state=tk.DISABLED)
+        self.refresh_taskbar()
 
     def _status_lines(self) -> list[str]:
         p = self.game.player

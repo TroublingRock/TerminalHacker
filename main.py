@@ -776,12 +776,18 @@ class MissionBoard:
             payout = int(payout * FactionRepManager.payout_mult(game, mission))
             from llm_struct import LLMStructManager
             payout = int(payout * LLMStructManager.world_event_bounty_mult(game))
+            from chaos_system import NotorietyManager
+            style_mult, style_note = NotorietyManager.contract_style_mult(game, mission)
+            payout = int(payout * style_mult)
             if mission.hourly_event and mission.reward_multiplier > 1:
                 payout = int(payout * mission.reward_multiplier)
             rep = mission.rep_reward + MasteryGrader.rep_bonus(grade)
             mission.completed = True
             game.player.earn(payout, f"contract {mission.broker}")
             success(summary)
+            if style_note:
+                from main import info
+                info(style_note)
             self.complete_mission_hooks(game, mission, payout, rep)
             if game.mail:
                 game.mail.send(
@@ -1557,6 +1563,9 @@ class Game:
             ConsumableManager.on_post_command(self)
             from botnet_system import BotnetManager
             BotnetManager.on_post_command(self)
+            from chaos_system import BotnetSpreadManager, ChaosEventManager
+            BotnetSpreadManager.try_spread(self)
+            ChaosEventManager.on_post_command(self)
 
     def try_unlock(self, key: str) -> None:
         from progression import ACHIEVEMENTS
@@ -1601,6 +1610,7 @@ class Game:
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
+            "chaos [start|status|provoke|run|unlock]",
             "phish", "tunnel", "plant", "forge", "infect", "botnet",
             "use [item]", "factions", "llm [test|on|off]", "world",
             "save", "load", "exit",
@@ -1743,6 +1753,9 @@ class Game:
         else:
             clean = not server or not server.player_left_traces(self.player)
         if server and not clean:
+            from chaos_system import NotorietyManager
+            if self.meta.chaos_mode:
+                NotorietyManager.add(self, 2, f"dirty disconnect {server.ip}")
             from progression import ReputationSystem
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
             if getattr(server, "chaos_only", False):
@@ -2194,21 +2207,35 @@ class Game:
             Console.out(f"  {self.daily.description}")
             Console.out(f"  Reward: ${self.daily.reward}")
 
-    def cmd_chaos(self, _a: list[str]) -> None:
-        from progression import CHAOS_CPU, CHAOS_FW, CHAOS_REP, ReputationSystem
+    def cmd_chaos(self, args: list[str]) -> None:
+        from chaos_system import ChaosCommandManager
 
-        divider("CHAOS MODE — HIGH RISK TARGETS")
-        if not ReputationSystem.chaos_available(self.player, self):
-            from faction_consumables import FactionRepManager
-            need = max(0, CHAOS_REP - FactionRepManager.chaos_rep_reduction(self))
-            warn(f"Requires {need} rep, CPU L{CHAOS_CPU}, FW L{CHAOS_FW}")
+        if args and args[0].lower() in ("start", "status", "provoke", "run"):
+            ChaosCommandManager.cmd_chaos(self, args)
             return
-        self.player.chaos_unlocked = True
-        self.network.deploy_company_hosts_with_puzzles(self, self.player.reputation, True)
-        teach("Trace chance doubled. Rewards are extreme. You asked for chaos.")
-        for s in self.network.servers.values():
-            if s.chaos_only and self.player.has_route_to(s.ip):
-                Console.out(f"  {s.ip} {s.hostname} — FW L{s.security_level} — {s.story}")
+        if args and args[0].lower() == "unlock":
+            from progression import CHAOS_CPU, CHAOS_FW, CHAOS_REP, ReputationSystem
+
+            divider("CHAOS SUBNET UNLOCK")
+            if not ReputationSystem.chaos_available(self.player, self):
+                from faction_consumables import FactionRepManager
+                need = max(0, CHAOS_REP - FactionRepManager.chaos_rep_reduction(self))
+                warn(f"Requires {need} rep, CPU L{CHAOS_CPU}, FW L{CHAOS_FW}")
+                return
+            self.player.chaos_unlocked = True
+            self.network.deploy_company_hosts_with_puzzles(self, self.player.reputation, True)
+            teach("Trace chance doubled. Rewards are extreme. You asked for chaos.")
+            for s in self.network.servers.values():
+                if s.chaos_only and self.player.has_route_to(s.ip):
+                    Console.out(f"  {s.ip} {s.hostname} — FW L{s.security_level} — {s.story}")
+            return
+        ChaosCommandManager.cmd_chaos(self, args)
+        if self.player.phase in ("career", "endless"):
+            divider("CHAOS SUBNET")
+            if self.player.chaos_unlocked:
+                Console.out("  203.0.113.0/24 chaos hosts are live. Trace chance doubled there.")
+            else:
+                Console.out("  Type: chaos unlock  (needs rep + gear — see status)")
 
     def cmd_defend(self, args: list[str]) -> None:
         if not args:

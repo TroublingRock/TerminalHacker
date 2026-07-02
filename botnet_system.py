@@ -146,6 +146,8 @@ class BotnetManager:
             teach("Target firewall softens while flooded. Rival race NPCs slow on that contract IP.")
 
         RivalHeatManager.spike(game, server.subnet, spec["heat"])
+        from chaos_system import NotorietyManager
+        NotorietyManager.add(game, 3 if kind == PAYLOAD_DDOS else 2, f"infect {kind} {server.ip}")
         game.player.tutorial_flags.add("daily_botnet_done")
         if BotnetManager.infection_count(game) >= 5:
             game.achievements.unlock("botnet_herder")

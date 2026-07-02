@@ -224,6 +224,9 @@ class MetaState:
     faction_perks_unlocked: set[str] = field(default_factory=set)
     contracts_since_free_consumable: int = 0
     consumables_used: int = 0
+    notoriety: int = 0
+    chaos_mode: bool = False
+    chaos_flags: set[str] = field(default_factory=set)
 
 
 class ModifierManager:
