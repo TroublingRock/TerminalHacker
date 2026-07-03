@@ -1291,6 +1291,10 @@ class Player:
     def crack_attempt_reduction(self) -> float:
         return {0: 1.0, 1: 0.75, 2: 0.55}[self.cracker_tier]
 
+    def max_crack_security(self) -> int:
+        """Highest remote FW level brute-force can touch with current offensive gear."""
+        return self.cpu_level + 2 + self.cracker_tier
+
     def has_route_to(self, ip: str) -> bool:
         return any(ip_in_subnet(ip, r.destination) for r in self.routes)
 
@@ -1975,6 +1979,17 @@ class Game:
         from variety_content import PuzzleManager
         PuzzleManager.on_probe(self, s)
         Console.out(f"  {s.hostname} | FW L{s.security_level} | cracked={s.cracked}")
+        from botnet_system import BotnetManager
+        eff = BotnetManager.effective_security(self, s)
+        max_sec = self.player.max_crack_security()
+        if eff > max_sec:
+            teach(
+                f"Host FW L{eff} exceeds your crack gear "
+                f"(CPU L{self.player.cpu_level}, cracker tier {self.player.cracker_tier}). "
+                "Shop: buy cpu, hydra, or hashcat — or soften target with infect ddos."
+            )
+        elif eff > self.player.cpu_level + 1:
+            teach("Tough host — expect more crack attempts. CPU and cracker tools speed this up.")
         hint = PuzzleManager.puzzle_hint(s)
         if hint:
             teach(hint)
@@ -2011,6 +2026,16 @@ class Game:
             from chaos_system import CareerPressureManager, RivalReactionManager
             CareerPressureManager.on_first_crack(self, s)
             RivalReactionManager.on_crack(self, s)
+            return
+
+        from botnet_system import BotnetManager
+        eff = BotnetManager.effective_security(self, s)
+        if eff > self.player.max_crack_security():
+            error(
+                f"Target FW L{eff} outpaces your gear "
+                f"(CPU L{self.player.cpu_level}, cracker tier {self.player.cracker_tier}). "
+                "Shop: buy cpu, hydra, or hashcat — or infect ddos on this host first."
+            )
             return
 
         divider("SSH BRUTE-FORCE")

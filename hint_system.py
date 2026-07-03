@@ -264,6 +264,14 @@ class HintManager:
             if not p.has_remote_shell:
                 if server and server.cracked:
                     return "crack", "Host is already cracked — re-open your shell."
+                if server:
+                    from botnet_system import BotnetManager
+                    eff = BotnetManager.effective_security(game, server)
+                    if eff > p.max_crack_security():
+                        return "shop", (
+                            f"Host FW L{eff} beats your crack gear "
+                            f"(CPU L{p.cpu_level}, cracker tier {p.cracker_tier}) — upgrade offense."
+                        )
                 if server and ip not in game.retention.session_probed:
                     return "probe", "Probe services before brute-forcing SSH."
                 if server:
