@@ -339,18 +339,57 @@ class TutorialManager:
     def in_tutorial(self) -> bool:
         return self.player.phase == "tutorial"
 
-    def current(self) -> TutorialLesson:
+    def training_complete(self) -> bool:
+        return self.player.phase in ("career", "endless")
+
+    def skipped_training(self) -> bool:
+        return "chaos_career" in self.player.tutorial_flags
+
+    def current(self) -> TutorialLesson | None:
+        if self.training_complete():
+            return None
         step = min(self.player.tutorial_step, len(TUTORIAL_CURRICULUM) - 1)
         return TUTORIAL_CURRICULUM[step]
 
     def show_lesson(self) -> None:
+        if self.training_complete():
+            self.show_career_training_status()
+            return
         lesson = self.current()
+        if lesson is None:
+            return
         divider(f"TUTORIAL {lesson.step + 1}/{len(TUTORIAL_CURRICULUM)} — {lesson.title}")
         teach(lesson.concept)
         Console.out(f"\n  Objective: {lesson.objective}")
         Console.out(f"  Hint:      {lesson.hint}")
-        if self.in_tutorial():
-            Console.out(f"\n  Tutorial budget: ${self.player.tutorial_credits} (career funds protected)\n")
+        Console.out(f"\n  Tutorial budget: ${self.player.tutorial_credits} (career funds protected)\n")
+
+    def show_career_training_status(self) -> None:
+        p = self.player
+        divider("TRAINING COMPLETE")
+        if self.skipped_training():
+            success("You skipped boot camp via Chaos Career — loud ops, real wallet.")
+            teach("Type chaos status for heat/notoriety. Rival trash talk starts after your first crack.")
+        else:
+            success("Tutorial graduated — you are cleared for live contracts.")
+        Console.out(f"  Wallet: {p.wallet_label()}")
+        Console.out(f"  Gear:   CPU L{p.cpu_level}  |  Firewall L{p.firewall_level}")
+        if p.phase == "career":
+            Console.out("  Type missions for contracts, or hint for your next move.\n")
+        else:
+            Console.out("  Endless run active — type endless status.\n")
+
+    def skip_to_career(self, *, chaos: bool = False) -> bool:
+        """Leave tutorial without completing every lesson."""
+        if not self.in_tutorial():
+            warn("Already past training.")
+            return False
+        if chaos:
+            from chaos_system import ChaosCareerManager
+            ChaosCareerManager.start(self.game)
+            return True
+        self.graduate()
+        return True
 
     def record_command(self, cmd: str) -> None:
         self.player.command_history.add(cmd)
@@ -374,6 +413,8 @@ class TutorialManager:
 
     def _complete_step(self) -> None:
         lesson = self.current()
+        if lesson is None:
+            return
         divider("LESSON COMPLETE")
         success(f"{lesson.title} mastered.")
         if lesson.step == 0:
@@ -1202,7 +1243,8 @@ class Player:
             return False
         if self.money >= amount:
             self.money -= amount
-            success(f"{reason} (-${amount}, balance ${self.money})")
+            success(f"{reason} (-${amount}, career balance ${self.money})")
+            teach("Charged to your career wallet — not the tutorial budget.")
             return True
         error(f"Need ${amount}, have ${self.money}.")
         return False
@@ -1669,6 +1711,17 @@ class Game:
     def cmd_lesson(self, _a: list[str]) -> None:
         self.tutorial.show_lesson()
 
+    def cmd_skip(self, args: list[str]) -> None:
+        if not args or args[0].lower() not in ("tutorial", "training"):
+            error("Usage: skip tutorial   — jump to career (standard or chaos)")
+            teach("Standard skip: skip tutorial")
+            teach("Loud skip: chaos start  (or ☠ CHAOS CAREER on the desktop banner)")
+            return
+        if args[0].lower() == "tutorial":
+            chaos = len(args) > 1 and args[1].lower() in ("chaos", "loud")
+            if self.tutorial.skip_to_career(chaos=chaos):
+                self.autosave(force=True)
+
     def cmd_hint(self, _a: list[str]) -> None:
         from hint_system import HintManager
 
@@ -1680,7 +1733,7 @@ class Game:
     def cmd_help(self, _a: list[str]) -> None:
         divider("COMMANDS")
         cmds = [
-            "lesson", "hint", "help", "ifconfig", "route", "route add [net] via [gw]",
+            "lesson", "hint", "skip tutorial", "help", "ifconfig", "route", "route add [net] via [gw]",
             "vpn [connect|disconnect|status]", "scan/nmap [CIDR]", "connect [IP] [port]",
             "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
@@ -2868,7 +2921,7 @@ class Game:
             return
 
         handlers: dict[str, Callable[[list[str]], None]] = {
-            "lesson": self.cmd_lesson, "hint": self.cmd_hint, "help": self.cmd_help, "ifconfig": self.cmd_ifconfig,
+            "lesson": self.cmd_lesson, "hint": self.cmd_hint, "skip": self.cmd_skip, "help": self.cmd_help, "ifconfig": self.cmd_ifconfig,
             "vpn": self.cmd_vpn, "scan": self.cmd_scan, "nmap": self.cmd_scan,
             "connect": self.cmd_connect, "disconnect": self.cmd_disconnect,
             "probe": self.cmd_probe, "crack": self.cmd_crack, "curl": self.cmd_curl, "privesc": self.cmd_privesc,

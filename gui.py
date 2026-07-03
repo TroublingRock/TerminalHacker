@@ -732,11 +732,12 @@ class DesktopApp:
         self.onboarding_banner = banner
 
         if PlayerProfile.is_veteran():
-            headline = "WELCOME BACK — SKIP THE SANDBOX?"
+            headline = "WELCOME BACK — NEW SAVE (LESSON 1)"
             steps = (
-                "You've cleared training before.\n\n"
-                "☠ CHAOS CAREER — loud ops, botnet spread, rival heat (recommended)\n"
-                "Or resume tutorial if you want a refresher."
+                "This save starts at tutorial lesson 1 unless you skip.\n\n"
+                "☠ CHAOS CAREER — skip all lessons, loud career mode (uses real wallet)\n"
+                "skip tutorial — standard career skip from Terminal\n"
+                "Or open Training and work through lesson 1 normally."
             )
             auto_open = False
         elif p.tutorial_step == 0:
@@ -773,8 +774,8 @@ class DesktopApp:
         tk.Label(
             banner,
             text=(
-                f"{lesson.title}\n"
-                f"{lesson.objective}\n\n"
+                f"{lesson.title if lesson else 'Network Boot'}\n"
+                f"{lesson.objective if lesson else 'Run: ifconfig then route'}\n\n"
                 f"{steps}{save_note}"
             ),
             fg=COLORS["text"], bg=COLORS["window"],
@@ -2411,21 +2412,49 @@ class DesktopApp:
 
         if self.game.player.phase == "tutorial":
             lesson = self.game.tutorial.current()
-            cta = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
-                           highlightthickness=1, highlightbackground=COLORS["accent"])
-            cta.pack(fill=tk.X, pady=(0, 8))
+            if lesson is not None:
+                cta = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
+                               highlightthickness=1, highlightbackground=COLORS["accent"])
+                cta.pack(fill=tk.X, pady=(0, 8))
+                tk.Label(
+                    cta, text="DO THIS NOW", fg=COLORS["accent"], bg=COLORS["window"],
+                    font=F(11, bold=True),
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    cta, text=lesson.objective, fg=COLORS["text"], bg=COLORS["window"],
+                    font=F(12, bold=True), wraplength=560, justify=tk.LEFT,
+                ).pack(anchor=tk.W, pady=(4, 2))
+                tk.Label(
+                    cta, text=f"Hint: {lesson.hint}", fg=COLORS["muted"], bg=COLORS["window"],
+                    font=F(10), wraplength=560, justify=tk.LEFT,
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    cta,
+                    text=f"Tutorial wallet: ${self.game.player.tutorial_credits} (career ${self.game.player.money} locked)",
+                    fg=COLORS["teach"], bg=COLORS["window"], font=F(9),
+                ).pack(anchor=tk.W, pady=(4, 0))
+        else:
+            done = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
+                            highlightthickness=1, highlightbackground=COLORS["success"])
+            done.pack(fill=tk.X, pady=(0, 8))
+            skipped = self.game.tutorial.skipped_training()
             tk.Label(
-                cta, text="DO THIS NOW", fg=COLORS["accent"], bg=COLORS["window"],
-                font=F(11, bold=True),
+                done, text="TRAINING COMPLETE" if not skipped else "CHAOS CAREER — SKIPPED BOOT CAMP",
+                fg=COLORS["success"], bg=COLORS["window"], font=F(11, bold=True),
             ).pack(anchor=tk.W)
             tk.Label(
-                cta, text=lesson.objective, fg=COLORS["text"], bg=COLORS["window"],
-                font=F(12, bold=True), wraplength=560, justify=tk.LEFT,
-            ).pack(anchor=tk.W, pady=(4, 2))
-            tk.Label(
-                cta, text=f"Hint: {lesson.hint}", fg=COLORS["muted"], bg=COLORS["window"],
-                font=F(10), wraplength=560, justify=tk.LEFT,
-            ).pack(anchor=tk.W)
+                done,
+                text=(
+                    f"Wallet: {self.game.player.wallet_label()}\n"
+                    f"Gear: CPU L{self.game.player.cpu_level} | Firewall L{self.game.player.firewall_level}\n"
+                    + (
+                        "Shop purchases use your career balance — not tutorial credits."
+                        if self.game.player.phase == "career"
+                        else "Endless run wallet active."
+                    )
+                ),
+                fg=COLORS["text"], bg=COLORS["window"], font=F(10), wraplength=560, justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(4, 0))
 
         tk.Label(body, text="", bg=COLORS["window"]).pack()  # spacer
 

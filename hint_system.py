@@ -132,12 +132,17 @@ class HintManager:
                 return "download /root/classified.txt", "Exfil the root-only classified file."
             if not p.is_local():
                 return "disconnect", "Disconnect after stealing the root file."
-            return "buy firewall", "Last lesson: harden localhost before rival probes."
+            return "buy firewall", "Next lesson: harden localhost (tutorial wallet)."
 
         if step == 10:
             if p.firewall_level < 2:
-                return "buy firewall", "Upgrade firewall — tutorial credits cover the cost."
-            return "lesson", "Firewall is up — survive rival probes to graduate."
+                return "buy firewall", "Tutorial budget pays — career funds stay locked."
+            return "lesson", "Firewall L2+ ready — survive rival probes to graduate."
+
+        if step >= 11:
+            if p.firewall_level < 2:
+                return "buy firewall", "Tutorial budget pays — career funds stay locked."
+            return "lesson", "Firewall ready — survive rival probes to finish training."
 
         lesson = TUTORIAL_CURRICULUM[step]
         return lesson.hint.split(" then ")[0].replace("Run: ", ""), lesson.hint
