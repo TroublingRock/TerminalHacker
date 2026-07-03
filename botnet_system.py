@@ -317,7 +317,7 @@ class BotnetManager:
 
         RivalHeatManager.spike(game, server.subnet, spec["heat"])
         from chaos_system import NotorietyManager
-        NotorietyManager.add(game, 3 if kind == PAYLOAD_DDOS else 2, f"infect {kind} {server.ip}")
+        NotorietyManager.add(game, 3 if kind == PAYLOAD_DDOS else 2, f"infect {kind} {server.ip}", player_action=True)
         game.player.tutorial_flags.add("daily_botnet_done")
         if BotnetManager.infection_count(game) >= 5:
             game.achievements.unlock("botnet_herder")
@@ -348,7 +348,7 @@ class BotnetManager:
             game, "flex", f"DEFACED: {server.hostname}",
             f"{server.ip} now serves: {tag}",
         )
-        NotorietyManager.add(game, 6, f"deface {server.ip}")
+        NotorietyManager.add(game, 6, f"deface {server.ip}", player_action=True)
         ChaosNewsManager.push(game, f"WEB DEFACE: {server.hostname} ({server.ip}) tagged by operator")
         success(f"Defaced {server.hostname} — {tag}")
         warn("Corp SOC will notice. Heat rising.")
@@ -368,7 +368,7 @@ class BotnetManager:
             + f"\nFAILED: brute-force from {rival}@rival.net on sshd\n"
         )
         FactionRepManager.shift(game, {"rivals": 12, "corps": -6})
-        NotorietyManager.add(game, 8, f"frame {rival} on {server.ip}")
+        NotorietyManager.add(game, 8, f"frame {rival} on {server.ip}", player_action=True)
         ChaosNewsManager.push(
             game, f"FRAME JOB: forged logs on {server.ip} blame {rival}",
         )

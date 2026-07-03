@@ -438,6 +438,9 @@ class LLMStructManager:
 
         hd = int(ev.get("heat_delta", 0))
         if hd:
+            from chaos_system import CareerPressureManager
+            if CareerPressureManager.rookie_grace(game) and hd > 0:
+                hd = min(hd, 2)
             if game.meta.subnet_heat:
                 hottest = max(game.meta.subnet_heat, key=game.meta.subnet_heat.get)
                 game.meta.subnet_heat[hottest] = max(0, min(10, game.meta.subnet_heat[hottest] + hd))

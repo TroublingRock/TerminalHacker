@@ -16,7 +16,7 @@ class ChaosSystemTests(unittest.TestCase):
         ChaosCareerManager.start(game)
         self.assertEqual(game.player.phase, "career")
         self.assertTrue(game.meta.chaos_mode)
-        self.assertGreaterEqual(game.meta.notoriety, 5)
+        self.assertGreaterEqual(game.meta.notoriety, 4)
         self.assertGreater(game.player.money, 1000)
 
     def test_loud_contract_pays_more_in_chaos_mode(self) -> None:
@@ -42,8 +42,9 @@ class ChaosSystemTests(unittest.TestCase):
     def test_notoriety_increases(self) -> None:
         game = Game()
         game.player.phase = "career"
+        game.player.ticks = 25
         before = game.meta.notoriety
-        NotorietyManager.add(game, 5, "test")
+        NotorietyManager.add(game, 5, "test", player_action=True)
         self.assertEqual(game.meta.notoriety, before + 5)
         self.assertTrue(game.meta.chaos_headlines)
 
@@ -115,6 +116,19 @@ class ChaosSystemTests(unittest.TestCase):
                 PROFILE_PATH.write_text(backup)
             elif PROFILE_PATH.exists():
                 PROFILE_PATH.unlink()
+
+    def test_rookie_grace_blocks_heat_lockdown(self) -> None:
+        from chaos_system import CareerPressureManager, ChaosEventManager
+
+        game = Game()
+        game.player.phase = "career"
+        game.player.ticks = 2
+        game.meta.subnet_heat["192.168.1.0/24"] = 8
+        before = game.meta.notoriety
+        ChaosEventManager.on_post_command(game)
+        self.assertTrue(CareerPressureManager.rookie_grace(game))
+        self.assertEqual(game.meta.notoriety, before)
+        self.assertFalse(any("lockdown" in f for f in game.meta.chaos_flags))
 
 
 if __name__ == "__main__":

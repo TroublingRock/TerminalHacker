@@ -224,6 +224,9 @@ class RivalAIManager:
 
     @staticmethod
     def should_react_in_career(game: Game) -> bool:
+        from chaos_system import CareerPressureManager
+        if CareerPressureManager.rookie_grace(game):
+            return False
         if game.meta.chaos_mode:
             return True
         if game.meta.notoriety > 0:

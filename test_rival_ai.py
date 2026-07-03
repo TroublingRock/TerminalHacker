@@ -57,6 +57,7 @@ class RivalAITests(unittest.TestCase):
     def test_career_reactions_enabled_with_heat(self) -> None:
         game = Game()
         game.player.phase = "career"
+        game.player.ticks = 25
         game.meta = MetaState()
         game.meta.subnet_heat["10.0.0.0/24"] = 4
         self.assertTrue(RivalAIManager.should_react_in_career(game))

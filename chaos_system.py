@@ -23,6 +23,34 @@ HEAT_EVENT_THRESHOLDS: tuple[tuple[int, str], ...] = (
     (10, "raid"),
 )
 
+# Commands with no hostile player action — rivals observe but don't punish yet.
+ROOKIE_GRACE_TICKS = 18
+
+
+class CareerPressureManager:
+    """Hold rival heat / notoriety fallout until the player has actually operated."""
+
+    @staticmethod
+    def rookie_grace(game: Game) -> bool:
+        p = game.player
+        if p.phase not in ("career", "endless"):
+            return True
+        if p.ticks >= ROOKIE_GRACE_TICKS:
+            return False
+        if any(m.completed for m in game.missions.missions):
+            return False
+        if game.meta.infections:
+            return False
+        for ip in p.discovered_ips:
+            srv = game.network.get_server(ip)
+            if srv and srv.cracked:
+                return False
+        return True
+
+    @staticmethod
+    def consequences_enabled(game: Game) -> bool:
+        return not CareerPressureManager.rookie_grace(game)
+
 
 class ChaosCareerManager:
     """Skip tutorial — start in loud career mode immediately."""
@@ -55,7 +83,7 @@ class ChaosCareerManager:
         PlayerProfile.mark_veteran()
 
         game.meta.chaos_mode = True
-        game.meta.notoriety = 8
+        game.meta.notoriety = 4
         game.meta.inventory["miner_payload"] = game.meta.inventory.get("miner_payload", 0) + 2
         game.meta.inventory["ddos_payload"] = game.meta.inventory.get("ddos_payload", 0) + 1
         game.meta.inventory["leak_payload"] = game.meta.inventory.get("leak_payload", 0) + 1
@@ -86,6 +114,10 @@ class ChaosCareerManager:
         divider("CHAOS CAREER — NO TRAINING WHEELS")
         success("You skipped the sandbox. Traces, heat, and rivals are live.")
         warn("Loud runs pay more. Ghost runs are for cowards.")
+        from main import info
+        info(
+            f"Rookie window: ~{ROOKIE_GRACE_TICKS} commands before subnet heat and rival lockdowns bite."
+        )
 
         game.mail.send(
             "zero_cool@rival.net",
@@ -112,8 +144,10 @@ class ChaosCareerManager:
 
 class NotorietyManager:
     @staticmethod
-    def add(game: Game, amount: int, reason: str = "") -> None:
+    def add(game: Game, amount: int, reason: str = "", *, player_action: bool = False) -> None:
         if amount <= 0 or game.player.phase not in ("career", "endless"):
+            return
+        if not player_action and CareerPressureManager.rookie_grace(game):
             return
         old = game.meta.notoriety
         game.meta.notoriety = min(150, game.meta.notoriety + amount)
@@ -145,7 +179,7 @@ class NotorietyManager:
 
         if game.meta.chaos_mode or game.player.chaos_unlocked:
             if dirty:
-                NotorietyManager.add(game, 4, f"loud contract {mission.mission_id}")
+                NotorietyManager.add(game, 4, f"loud contract {mission.mission_id}", player_action=True)
                 return 1.35, "LOUD RUN (+35% — traces left)"
             if mission.require_log_wipe:
                 return 0.92, "ghost run (-8% in chaos mode)"
@@ -172,6 +206,8 @@ class ChaosEventManager:
     @staticmethod
     def on_post_command(game: Game) -> None:
         if game.player.phase not in ("career", "endless"):
+            return
+        if CareerPressureManager.rookie_grace(game):
             return
         for subnet, heat in list(game.meta.subnet_heat.items()):
             for threshold, event_id in HEAT_EVENT_THRESHOLDS:
@@ -224,6 +260,8 @@ class BotnetSpreadManager:
     @staticmethod
     def try_spread(game: Game) -> None:
         if game.player.phase not in ("career", "endless"):
+            return
+        if CareerPressureManager.rookie_grace(game):
             return
         if not game.meta.infections:
             return
@@ -398,6 +436,8 @@ class RivalReactionManager:
             return
         if not (game.meta.chaos_mode or RivalAIManager.should_react_in_career(game)):
             return
+        if CareerPressureManager.rookie_grace(game):
+            return
         if random.random() > chance:
             return
         from retention import RetentionManager
@@ -482,7 +522,7 @@ class MeltdownManager:
             snippet[:400],
         )
         md["step"] = 2
-        NotorietyManager.add(game, 8, f"meltdown leak {server.ip}")
+        NotorietyManager.add(game, 8, f"meltdown leak {server.ip}", player_action=True)
         ChaosNewsManager.push(game, f"DATA LEAK: {md.get('company')} files posted to flex board")
         ChaosNewsManager.maybe_llm_headline(
             game, f"Corp meltdown: leaked files from {md.get('company')} hit the darknet boards.",
@@ -543,7 +583,7 @@ class FactionWarManager:
         from depth_systems import RivalHeatManager, RIVAL_PROFILES
         subnet = {"rivals": "203.0.113.0/24", "corps": "10.0.0.0/24", "brokers": "172.16.0.0/24"}[faction]
         RivalHeatManager.spike(game, subnet, 6)
-        NotorietyManager.add(game, 10, f"faction war {faction}")
+        NotorietyManager.add(game, 10, f"faction war {faction}", player_action=True)
         game.meta.faction_war_cd = FactionWarManager.COOLDOWN
 
         warn(f"FACTION WAR — you stirred up {faction}. Heat spiked on {subnet}.")
@@ -612,7 +652,7 @@ class GhostRaidManager:
             ),
         )
         game.meta.ghost_raid_cd = GhostRaidManager.COOLDOWN
-        NotorietyManager.add(game, 5, f"ghost raid {ip}")
+        NotorietyManager.add(game, 5, f"ghost raid {ip}", player_action=True)
         warn(f"GHOST SIGNAL — abandoned host {ip} spotted on darknet.")
         success("Contract added. Loud run pays extra.")
         ChaosNewsManager.push(game, f"Ghost raid queued on abandoned node {ip}")
@@ -629,6 +669,8 @@ class FlashChaosManager:
 
     @staticmethod
     def maybe_spawn(game: Game) -> None:
+        if CareerPressureManager.rookie_grace(game):
+            return
         if game.player.phase != "career" or game.meta.notoriety < 20:
             return
         if random.random() > 0.04:
@@ -672,7 +714,7 @@ class ChaosStrikeManager:
         profile = RIVAL_PROFILES[rival]
         subnet = profile["subnet"]
         RivalHeatManager.spike(game, subnet, 8)
-        NotorietyManager.add(game, 7, f"strike {rival}")
+        NotorietyManager.add(game, 7, f"strike {rival}", player_action=True)
         warn(f"CHAOS STRIKE — flooding {rival}'s turf ({subnet}).")
         success("Rival infrastructure softened. DDoS timers boosted on random targets.")
         for ip in list(game.network.servers.keys())[:3]:
@@ -759,7 +801,7 @@ class ChaosLeakManager:
             game, "flex", f"dump from {server.hostname}",
             snippet or "(empty host)",
         )
-        NotorietyManager.add(game, 5, f"leak {server.ip}")
+        NotorietyManager.add(game, 5, f"leak {server.ip}", player_action=True)
         from main import success
         success(f"Leaked {server.hostname} intel to flex board.")
         ChaosNewsManager.push(game, f"Manual leak from {server.ip} posted to flex board")
@@ -829,7 +871,7 @@ class ChaosCommandManager:
             if game.player.phase not in ("career", "endless"):
                 error("Career only.")
                 return
-            NotorietyManager.add(game, 6, "chaos provoke")
+            NotorietyManager.add(game, 6, "chaos provoke", player_action=True)
             warn("You poked the hornet nest on purpose.")
             game.threat._maybe_attack(force=True)
             from retention import RetentionManager

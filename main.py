@@ -433,9 +433,10 @@ class TutorialManager:
             )
         divider("CAREER MODE UNLOCKED")
         success("Training complete. You are cleared for live contracts.")
+        from chaos_system import ROOKIE_GRACE_TICKS
         teach(
             "Career mode uses REAL money. Traces and rivals hit your wallet. "
-            "Use VPN, wipe logs, upgrade CPU/firewall, and take missions."
+            f"Rivals hold fire for ~{ROOKIE_GRACE_TICKS} commands — then heat and notoriety bite."
         )
         Console.out(f"  Starting career balance: ${p.money}")
         Console.out("  Progress auto-saves. Type 'help' for career commands.\n")
@@ -1825,7 +1826,7 @@ class Game:
         if server and not clean:
             from chaos_system import NotorietyManager, RivalReactionManager
             if self.meta.chaos_mode:
-                NotorietyManager.add(self, 2, f"dirty disconnect {server.ip}")
+                NotorietyManager.add(self, 2, f"dirty disconnect {server.ip}", player_action=True)
                 RivalReactionManager.on_dirty_disconnect(self, server)
             from progression import ReputationSystem
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
