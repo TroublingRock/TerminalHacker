@@ -358,7 +358,7 @@ class BotnetManager:
         from depth_systems import RIVAL_PROFILES
         from faction_consumables import FactionRepManager
         from main import success, warn
-        from chaos_system import ChaosNewsManager, NotorietyManager
+        from chaos_system import CareerPressureManager, ChaosNewsManager, NotorietyManager
 
         profile = RIVAL_PROFILES[rival]
         game.meta.forged_servers.add(server.ip)
