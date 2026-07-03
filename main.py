@@ -953,7 +953,7 @@ def defense_firewall_help(game: "Game") -> list[str]:
 SHOP_CATALOG = [
     ShopItem(
         "cpu", "CPU Upgrade", "Faster brute-force attacks.", 200,
-        detail="Upgrade gear. Higher CPU = fewer crack attempts and faster guesses on SSH targets.",
+        detail="Upgrade gear. Each CPU level adds +1 offensive power (FW L4 needs power ≥4).",
         max_level=6,
     ),
     ShopItem(
@@ -971,12 +971,12 @@ SHOP_CATALOG = [
     ),
     ShopItem(
         "hydra", "Hydra Lite", "Smarter password wordlist ordering.", 350,
-        detail="Permanent tool. Tries the real password earlier during crack — fewer failed attempts.",
+        detail="Permanent tool. +2 offensive power (stacks with CPU). FW L4 needs CPU L2+hydra or CPU L4.",
         max_level=1,
     ),
     ShopItem(
         "hashcat", "Hashcat Pro", "Cuts failed crack attempts ~40%.", 800,
-        detail="Permanent tool. Requires Hydra Lite first. Greatly speeds up brute-force on tough hosts.",
+        detail="Permanent tool. Requires Hydra Lite. +4 offensive power total — cracks FW L6+ hosts.",
         max_level=1,
     ),
     ShopItem(
@@ -1291,9 +1291,17 @@ class Player:
     def crack_attempt_reduction(self) -> float:
         return {0: 1.0, 1: 0.75, 2: 0.55}[self.cracker_tier]
 
+    def offensive_power(self) -> int:
+        """Attack throughput — must meet or exceed remote host FW to crack."""
+        return self.cpu_level + self.cracker_tier * 2
+
     def max_crack_security(self) -> int:
         """Highest remote FW level brute-force can touch with current offensive gear."""
-        return self.cpu_level + 2 + self.cracker_tier
+        return self.offensive_power()
+
+    def crack_gear_label(self) -> str:
+        tier = ("none", "hydra", "hashcat")[self.cracker_tier]
+        return f"power {self.offensive_power()} (CPU L{self.cpu_level}, {tier})"
 
     def has_route_to(self, ip: str) -> bool:
         return any(ip_in_subnet(ip, r.destination) for r in self.routes)
@@ -1981,15 +1989,17 @@ class Game:
         Console.out(f"  {s.hostname} | FW L{s.security_level} | cracked={s.cracked}")
         from botnet_system import BotnetManager
         eff = BotnetManager.effective_security(self, s)
-        max_sec = self.player.max_crack_security()
-        if eff > max_sec:
+        power = self.player.offensive_power()
+        if eff > power:
             teach(
-                f"Host FW L{eff} exceeds your crack gear "
-                f"(CPU L{self.player.cpu_level}, cracker tier {self.player.cracker_tier}). "
-                "Shop: buy cpu, hydra, or hashcat — or soften target with infect ddos."
+                f"Host FW L{eff} needs offensive power ≥{eff} — yours is {self.player.crack_gear_label()}. "
+                "Shop: cpu (+1 power each), hydra (+2), hashcat (+4 total with hydra). "
+                "Or soften with infect ddos on a cracked neighbor."
             )
+        elif eff == power:
+            teach("At your gear ceiling — crack will be slow. More CPU/cracker headroom helps.")
         elif eff > self.player.cpu_level + 1:
-            teach("Tough host — expect more crack attempts. CPU and cracker tools speed this up.")
+            teach("Tough host — upgrade CPU or cracker tools before FW outpaces you.")
         hint = PuzzleManager.puzzle_hint(s)
         if hint:
             teach(hint)
@@ -2030,21 +2040,23 @@ class Game:
 
         from botnet_system import BotnetManager
         eff = BotnetManager.effective_security(self, s)
-        if eff > self.player.max_crack_security():
+        if eff > self.player.offensive_power():
+            need = eff
             error(
-                f"Target FW L{eff} outpaces your gear "
-                f"(CPU L{self.player.cpu_level}, cracker tier {self.player.cracker_tier}). "
-                "Shop: buy cpu, hydra, or hashcat — or infect ddos on this host first."
+                f"Target FW L{eff} needs offensive power ≥{need}. "
+                f"Yours: {self.player.crack_gear_label()}. "
+                "Shop: cpu (+1/level), hydra (+2 power), hashcat (+4 total) — or DDoS the host first."
             )
             return
 
+        power = self.player.offensive_power()
         divider("SSH BRUTE-FORCE")
         words = ["password", "admin", "123456", s.ssh_password]
         if s.ip in self.meta.phished_ips:
             words = [s.ssh_password] + words
         if "hydra" in self.player.owned_tools:
             words = [s.ssh_password] + [w for w in words if w != s.ssh_password]
-        attempts = max(2, int((BotnetManager.effective_security(self, s) - self.player.cpu_level + 2) * 3 * self.player.crack_attempt_reduction()))
+        attempts = max(2, int((eff - power + 3) * 3 * self.player.crack_attempt_reduction()))
 
         for i in range(1, attempts + 1):
             guess = words[i % len(words)]
@@ -2449,6 +2461,7 @@ class Game:
             Console.out(f"  Phase:      tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
         Console.out(f"  {p.wallet_label()}")
         Console.out(f"  CPU/FW:     L{p.cpu_level} / L{p.firewall_level}")
+        Console.out(f"  Offense:    {p.crack_gear_label()} — need power ≥ remote FW to crack")
         Console.out(f"  VPN:        {'on' if p.vpn_active else 'off'} → {p.effective_egress_ip}")
         Console.out(f"  Routes:     {len(p.routes)}")
         Console.out(f"  Tools:      {', '.join(sorted(p.owned_tools)) or 'none'}")

@@ -267,10 +267,10 @@ class HintManager:
                 if server:
                     from botnet_system import BotnetManager
                     eff = BotnetManager.effective_security(game, server)
-                    if eff > p.max_crack_security():
+                    if eff > p.offensive_power():
                         return "shop", (
-                            f"Host FW L{eff} beats your crack gear "
-                            f"(CPU L{p.cpu_level}, cracker tier {p.cracker_tier}) — upgrade offense."
+                            f"Host FW L{eff} needs power ≥{eff} — yours is {p.crack_gear_label()}. "
+                            "Buy cpu, hydra, or hashcat."
                         )
                 if server and ip not in game.retention.session_probed:
                     return "probe", "Probe services before brute-forcing SSH."
