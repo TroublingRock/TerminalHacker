@@ -389,7 +389,7 @@ class SaveManager:
                 error(f"Could not read {path}")
             return False
         try:
-            SaveManager._deserialize(game, data)
+            SaveManager._deserialize(game, data, quiet=quiet)
             if not quiet:
                 success(f"Loaded from {path}")
             return True
@@ -413,7 +413,7 @@ class SaveManager:
         if not SAVE_PATH.exists():
             return False
         try:
-            SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()))
+            SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()), quiet=quiet)
             return True
         except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             if not quiet:
@@ -512,7 +512,11 @@ class SaveManager:
                 "ticks": p.ticks,
                 "subnets_scanned": list(p.subnets_scanned),
                 "privesc_hosts": list(p.privesc_hosts),
-                "downloads": [k for k in p.files if "/downloads/" in k],
+                "downloads": {
+                    k: p.files[k].content
+                    for k in p.files
+                    if "/downloads/" in k
+                },
                 "notes_content": p.files[NOTES_PATH].content if NOTES_PATH in p.files else "",
                 "daily": {
                     "challenge_id": game.daily.challenge_id,
@@ -738,7 +742,54 @@ class SaveManager:
         }
 
     @staticmethod
-    def _deserialize(game: Game, data: dict) -> None:
+    def _recover_download_content(game: Game, local_path: str) -> str:
+        """Best-effort recovery for saves that only stored download paths."""
+        fname = local_path.rsplit("/", 1)[-1]
+        for mission in game.missions.missions:
+            target = mission.target_file
+            if not target or not target.endswith(fname):
+                continue
+            server = game.network.get_server(mission.target_ip)
+            if server and target in server.files:
+                return server.files[target].read()
+        for server in game.network.servers.values():
+            for remote_path, remote_file in server.files.items():
+                if remote_path.endswith(f"/{fname}") or remote_path == fname:
+                    return remote_file.read()
+        return ""
+
+    @staticmethod
+    def _apply_downloads(game: Game, raw: object, *, owner: str) -> None:
+        from main import VirtualFile
+
+        if isinstance(raw, dict):
+            for path, content in raw.items():
+                game.player.files[path] = VirtualFile(path, content or "", owner=owner)
+            return
+        if isinstance(raw, list):
+            game._legacy_download_paths = list(raw)
+
+    @staticmethod
+    def _finalize_downloads(game: Game) -> None:
+        from main import VirtualFile
+
+        pending = getattr(game, "_legacy_download_paths", None)
+        if not pending:
+            return
+        owner = game.player.username
+        for path in pending:
+            if path in game.player.files:
+                existing = game.player.files[path].content.strip()
+                if existing and existing != "restored":
+                    continue
+            content = SaveManager._recover_download_content(game, path)
+            game.player.files[path] = VirtualFile(
+                path, content or "restored\n", owner=owner,
+            )
+        del game._legacy_download_paths
+
+    @staticmethod
+    def _deserialize(game: Game, data: dict, *, quiet: bool = False) -> None:
         from main import MailMessage, Mission, Route, VirtualFile, NOTES_PATH
         from retention import RetentionManager, RetentionState
         from session_content import LateralManager, SessionState
@@ -763,9 +814,7 @@ class SaveManager:
             elif k == "tutorial_flags":
                 p.tutorial_flags = set(v)
             elif k == "downloads":
-                for path in v:
-                    if path not in p.files:
-                        p.files[path] = VirtualFile(path, "restored\n")
+                SaveManager._apply_downloads(game, v, owner=p.username)
             elif k == "notes_content":
                 if NOTES_PATH in p.files:
                     p.files[NOTES_PATH].content = v
@@ -1046,6 +1095,7 @@ class SaveManager:
         elif p.phase == "endless" and game.endless.active and not game.endless.floor_hosts:
             EndlessManager._spawn_floor(game)
 
+        SaveManager._finalize_downloads(game)
         game.player._game_ref = game
         game.tutorial.reconcile_stuck_lessons()
 
