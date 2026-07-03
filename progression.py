@@ -509,6 +509,7 @@ class SaveManager:
                 "cpu_level": p.cpu_level, "firewall_level": p.firewall_level,
                 "cracker_tier": p.cracker_tier, "vpn_licensed": p.vpn_licensed,
                 "reputation": p.reputation, "rank_index": p.rank_index,
+                "handle": p.handle,
                 "chaos_unlocked": p.chaos_unlocked,
                 "routes": [(r.destination, r.gateway, r.iface) for r in p.routes],
                 "discovered_ips": list(p.discovered_ips),

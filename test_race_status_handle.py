@@ -55,6 +55,28 @@ class HandleTests(unittest.TestCase):
         game.cmd_handle(["x"])
         self.assertEqual(game.player.handle, "trainee")
 
+    def test_handle_persists_in_save(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+        from progression import SaveManager
+
+        game = Game()
+        game.player.phase = "career"
+        self.assertTrue(game.apply_handle("ghost_ops"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "save.json"
+            data = SaveManager._serialize(game)
+            path.write_text(json.dumps(data))
+            loaded = json.loads(path.read_text())
+            self.assertEqual(loaded["player"]["handle"], "ghost_ops")
+
+            game2 = Game()
+            SaveManager._deserialize(game2, loaded)
+            self.assertEqual(game2.player.handle, "ghost_ops")
+            self.assertEqual(game2.player.display_name(), "ghost_ops")
+
 
 if __name__ == "__main__":
     unittest.main()

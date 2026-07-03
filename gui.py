@@ -3185,7 +3185,6 @@ class DesktopApp:
 
     def _prompt_set_handle(self) -> None:
         from tkinter import simpledialog, messagebox
-        import re
 
         current = self.game.player.display_name()
         name = simpledialog.askstring(
@@ -3196,15 +3195,11 @@ class DesktopApp:
         )
         if not name:
             return
-        name = name.strip()
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{2,15}", name):
+        if self.game.apply_handle(name):
+            sounds.play("success")
+            messagebox.showinfo("Handle updated", f"You are now: {name.strip()}")
+        else:
             messagebox.showerror("Invalid handle", "Use 3–16 characters: letters, numbers, _ or -")
-            return
-        self.game.player.handle = name
-        sounds.play("success")
-        self.refresh_taskbar()
-        self._refresh_status_panel()
-        messagebox.showinfo("Handle updated", f"You are now: {name}")
 
     def _show_graduation_popup(self) -> None:
         from tkinter import messagebox

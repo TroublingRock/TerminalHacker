@@ -2495,16 +2495,26 @@ class Game:
             teach("3–16 characters: letters, numbers, underscore, hyphen. Example: handle ghost_ops")
             return
         name = args[0].strip()
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{2,15}", name):
+        if self.apply_handle(name):
+            success(f"Handle set to {name}")
+        else:
             error("Invalid handle — use 3–16 chars, start with a letter.")
-            return
+
+    def apply_handle(self, name: str) -> bool:
+        """Set operator handle, refresh GUI, and persist immediately."""
+        name = name.strip()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{2,15}", name):
+            return False
         self.player.handle = name
-        success(f"Handle set to {name}")
+        from progression import SaveManager
+        SaveManager.autosave(self, force=True)
         if hasattr(self, "gui_mode") and self.gui_mode:
             gui = getattr(self, "_gui_ref", None)
             if gui:
                 gui.refresh_taskbar()
                 gui._refresh_status_panel()
+                gui._rebuild_terminal_prompt()
+        return True
 
     def cmd_rank(self, _a: list[str]) -> None:
         from progression import RANKS, ReputationSystem
