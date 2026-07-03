@@ -43,6 +43,7 @@ class ChaosSystemTests(unittest.TestCase):
         game = Game()
         game.player.phase = "career"
         game.player.ticks = 25
+        game.meta.rival_trash_talk_unlocked = True
         before = game.meta.notoriety
         NotorietyManager.add(game, 5, "test", player_action=True)
         self.assertEqual(game.meta.notoriety, before + 5)
@@ -129,6 +130,28 @@ class ChaosSystemTests(unittest.TestCase):
         self.assertTrue(CareerPressureManager.rookie_grace(game))
         self.assertEqual(game.meta.notoriety, before)
         self.assertFalse(any("lockdown" in f for f in game.meta.chaos_flags))
+
+    def test_trash_talk_waits_for_first_crack(self) -> None:
+        from chaos_system import CareerPressureManager
+
+        game = Game()
+        game.player.phase = "career"
+        seed_inbox = len(game.mail.messages)
+        self.assertFalse(CareerPressureManager.can_trash_talk(game))
+        CareerPressureManager.send_or_queue_rival_mail(
+            game, "acid_k@rival.net", "test", "back off",
+        )
+        self.assertEqual(len(game.mail.messages), seed_inbox)
+        self.assertEqual(len(game.meta.pending_rival_mail), 1)
+        ip = "192.168.1.50"
+        srv = game.network.get_server(ip)
+        assert srv is not None
+        srv.cracked = True
+        game.player.discovered_ips.add(ip)
+        CareerPressureManager.on_first_crack(game, srv)
+        self.assertTrue(CareerPressureManager.can_trash_talk(game))
+        self.assertEqual(len(game.meta.pending_rival_mail), 0)
+        self.assertTrue(any("back off" in m.body for m in game.mail.messages))
 
 
 if __name__ == "__main__":

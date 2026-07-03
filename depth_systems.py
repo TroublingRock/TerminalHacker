@@ -236,6 +236,9 @@ class MetaState:
     defaced_hosts: set[str] = field(default_factory=set)
     framed_rivals: dict[str, str] = field(default_factory=dict)
     ransom_accrual: dict[str, int] = field(default_factory=dict)
+    notoriety_baseline: int = 0
+    rival_trash_talk_unlocked: bool = False
+    pending_rival_mail: list[dict[str, str]] = field(default_factory=list)
 
 
 class ModifierManager:
@@ -467,7 +470,9 @@ class RivalHeatManager:
             if prof["subnet"] == cidr and game.meta.subnet_heat.get(cidr, 0) >= 4:
                 game.retention.rival_aggression = min(10, game.retention.rival_aggression + 1)
                 game.retention.last_rival = rival
-                game.mail.send(
+                from chaos_system import CareerPressureManager
+                CareerPressureManager.send_or_queue_rival_mail(
+                    game,
                     f"{rival}@rival.net",
                     f"Heat on {cidr}",
                     f"You are lighting up {prof['label']} territory.\n\n— {rival}",

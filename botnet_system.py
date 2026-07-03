@@ -372,7 +372,8 @@ class BotnetManager:
         ChaosNewsManager.push(
             game, f"FRAME JOB: forged logs on {server.ip} blame {rival}",
         )
-        game.mail.send(
+        CareerPressureManager.send_or_queue_rival_mail(
+            game,
             f"{rival}@rival.net",
             "someone framed me on your subnet",
             f"Your logs on {server.hostname} say I hit it. I didn't.\n"
@@ -436,7 +437,9 @@ class BotnetManager:
             warn(f"RIVAL COUNTER-OP: {host} ({ip}) cleaned your {kind} payload.")
             RivalHeatManager.spike(game, server.subnet if server else "192.168.1.0/24", 2)
             rival = __import__("retention").RetentionManager.pick_rival_attacker(game)
-            game.mail.send(
+            from chaos_system import CareerPressureManager
+            CareerPressureManager.send_or_queue_rival_mail(
+                game,
                 f"{rival}@rival.net",
                 "Nice botnet — I scrubbed a node",
                 f"Found your {kind} on {host}. I purged it. Keep counting your miners.\n\n— {rival}",

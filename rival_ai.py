@@ -162,7 +162,10 @@ class RivalAIManager:
             body = RIVAL_RACE_WIN_MAIL.get(rival, RIVAL_RACE_WIN_MAIL["phantom_pkt"]).format(
                 mission_id=rid, target=target,
             )
-            game.mail.send(f"{rival}@rival.net", f"sniped — {rid}", f"{body}\n\n— {rival}")
+            from chaos_system import CareerPressureManager
+            CareerPressureManager.send_or_queue_rival_mail(
+                game, f"{rival}@rival.net", f"sniped — {rid}", f"{body}\n\n— {rival}",
+            )
             game.retention.last_rival = rival
             game.retention.rival_aggression = min(10, game.retention.rival_aggression + 1)
             game.meta.rival_race_prog.pop(rid, None)
@@ -176,17 +179,26 @@ class RivalAIManager:
             body = RIVAL_RACE_LATE_MAIL.get(rival, RIVAL_RACE_LATE_MAIL["phantom_pkt"]).format(
                 mission_id=rid, target=target,
             )
-            game.mail.send(f"{rival}@rival.net", f"almost got {rid}", f"{body}\n\n— {rival}")
+            from chaos_system import CareerPressureManager
+            CareerPressureManager.send_or_queue_rival_mail(
+                game, f"{rival}@rival.net", f"almost got {rid}", f"{body}\n\n— {rival}",
+            )
         elif prog >= 14 and "half" not in warned:
             warned.append("half")
             warn(f"{rival} at 50% on {rid} — rival race heating up.")
             body = RIVAL_RACE_HALF_MAIL.get(rival, RIVAL_RACE_HALF_MAIL["phantom_pkt"]).format(
                 mission_id=rid, target=target,
             )
-            game.mail.send(f"{rival}@rival.net", f"racing you — {rid}", f"{body}\n\n— {rival}")
+            from chaos_system import CareerPressureManager
+            CareerPressureManager.send_or_queue_rival_mail(
+                game, f"{rival}@rival.net", f"racing you — {rid}", f"{body}\n\n— {rival}",
+            )
 
     @staticmethod
     def send_block_taunt(game: Game, rival: str, fw: int) -> None:
+        from chaos_system import CareerPressureManager
+        if not CareerPressureManager.can_trash_talk(game):
+            return
         if random.random() > 0.38:
             return
         pool = RIVAL_BLOCK_MAIL.get(rival, RIVAL_BLOCK_MAIL["nyx_root"])
@@ -195,6 +207,9 @@ class RivalAIManager:
 
     @staticmethod
     def send_breach_mail(game: Game, rival: str, fw: int, loss: int) -> None:
+        from chaos_system import CareerPressureManager
+        if not CareerPressureManager.can_trash_talk(game):
+            return
         subnet = RivalAIManager.context_subnet(game)
         pool = RIVAL_BREACH_MAIL.get(rival, RIVAL_BREACH_MAIL["nyx_root"])
         subject, body = random.choice(pool)
