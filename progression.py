@@ -298,13 +298,19 @@ class SaveManager:
     AUTOSAVE_EVERY = 5
 
     @staticmethod
-    def _progress_key(data: dict) -> tuple[int, int, int, int]:
+    def _progress_key(data: dict) -> tuple[int, ...]:
         """Higher = more progress. Used to detect accidental save overwrites."""
         p = data.get("player", {})
+        missions = data.get("missions", [])
+        completed = sum(1 for m in missions if m.get("completed"))
         phase_rank = {"tutorial": 0, "endless": 1, "career": 2}.get(p.get("phase", "tutorial"), 0)
         return (
             phase_rank,
             int(p.get("tutorial_step", 0)),
+            completed,
+            int(p.get("ticks", 0)),
+            len(p.get("discovered_ips", [])),
+            int(p.get("firewall_level", 0)),
             int(p.get("money", 0)),
             int(p.get("reputation", 0)),
         )
