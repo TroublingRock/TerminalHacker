@@ -1021,6 +1021,25 @@ class RetentionState:
 
 class RetentionManager:
     @staticmethod
+    def exfil_local_path(target_file: str) -> str:
+        fname = target_file.rsplit("/", 1)[-1]
+        return f"/home/hacker/downloads/{fname}"
+
+    @staticmethod
+    def has_target_exfil(game: Game, target_ip: str, target_file: str) -> bool:
+        """True when the named loot file was downloaded from the contract host."""
+        if not target_ip or not target_file:
+            return False
+        local = RetentionManager.exfil_local_path(target_file)
+        p = game.player
+        if local not in p.files:
+            return False
+        source = p.exfil_sources.get(local)
+        if not source:
+            return False
+        return source == target_ip
+
+    @staticmethod
     def today() -> str:
         return date.today().isoformat()
 
@@ -1750,14 +1769,12 @@ class RetentionManager:
             if mtype == "social":
                 if not mission.target_file:
                     return False
-                fname = mission.target_file.rsplit("/", 1)[-1]
-                if f"/home/hacker/downloads/{fname}" not in p.files:
+                if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                     return False
                 return logs_ok(game.network.get_server(mission.target_ip), mission.require_log_wipe)
             if not mission.target_file:
                 return mtype == "ghost"
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             server = game.network.get_server(mission.target_ip)
             if mtype == "root_heist" and mission.require_privesc:
@@ -1769,8 +1786,7 @@ class RetentionManager:
             server = game.network.get_server(mission.target_ip)
             if not mission.target_file:
                 return False
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             pid = getattr(server, "puzzle_id", "") if server else ""
             if pid == "http_intel":
@@ -1789,8 +1805,7 @@ class RetentionManager:
                 return False
             if not mission.target_file:
                 return False
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             server = game.network.get_server(mission.target_ip)
             return logs_ok(server, mission.require_log_wipe)
@@ -1801,8 +1816,7 @@ class RetentionManager:
                 return False
             if not mission.target_file:
                 return False
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             jump = game.network.get_server(mission.pivot_host)
             target = game.network.get_server(mission.target_ip)
@@ -1821,8 +1835,7 @@ class RetentionManager:
                     return False
             if not mission.target_file:
                 return False
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             if mtype == "root_heist" and mission.require_privesc:
                 if mission.target_ip not in p.privesc_hosts and not p.remote_was_root:

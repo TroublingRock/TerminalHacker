@@ -523,6 +523,7 @@ class SaveManager:
                     for k in p.files
                     if "/downloads/" in k
                 },
+                "exfil_sources": dict(p.exfil_sources),
                 "notes_content": p.files[NOTES_PATH].content if NOTES_PATH in p.files else "",
                 "daily": {
                     "challenge_id": game.daily.challenge_id,

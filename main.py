@@ -1164,6 +1164,7 @@ class Player:
     command_history: set[str] = field(default_factory=set)
     tutorial_flags: set[str] = field(default_factory=set)
     files: dict[str, VirtualFile] = field(default_factory=dict)
+    exfil_sources: dict[str, str] = field(default_factory=dict)
     ticks: int = 0
     reputation: int = 0
     rank_index: int = 0
@@ -2146,6 +2147,7 @@ class Game:
         name = path.rsplit("/", 1)[-1]
         local = f"/home/hacker/downloads/{name}"
         self.player.files[local] = VirtualFile(local, f.read(), owner=self.player.username)
+        self.player.exfil_sources[local] = s.ip
         success(f"Exfiltrated to {local}")
         from depth_systems import ModifierManager
         if self.remote_server():
@@ -2283,6 +2285,8 @@ class Game:
         if not path:
             return
         del files[path]
+        if path in self.player.exfil_sources:
+            del self.player.exfil_sources[path]
         success(f"Removed {path}")
         s = self.remote_server()
         if s and s.ip == "192.168.1.50" and not s.player_left_traces(self.player):

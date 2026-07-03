@@ -152,6 +152,8 @@ class HintManager:
 
     @staticmethod
     def _focus_mission(game: Game) -> Mission | None:
+        from retention import RetentionManager
+
         open_missions = [m for m in game.missions.missions if not m.completed]
         if not open_missions:
             return None
@@ -164,8 +166,7 @@ class HintManager:
             target = getattr(mission, "target_file", "") or ""
             if not target:
                 continue
-            fname = target.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" in p.files:
+            if RetentionManager.has_target_exfil(game, mission.target_ip, target):
                 return mission
         return open_missions[0]
 
@@ -202,6 +203,7 @@ class HintManager:
     @staticmethod
     def _mission_hint(game: Game, mission: Mission) -> tuple[str, str]:
         from depth_systems import ModifierManager
+        from retention import RetentionManager
         from variety_content import PuzzleManager
 
         p = game.player
@@ -290,7 +292,7 @@ class HintManager:
                 exfil = PuzzleManager.exfil_target(server, mission.target_file) if server else mission.target_file
                 local_name = exfil.rsplit("/", 1)[-1]
                 local_path = f"/home/hacker/downloads/{local_name}"
-                if local_path not in p.files:
+                if not RetentionManager.has_target_exfil(game, ip, exfil):
                     return f"download {exfil}", f"Exfil {exfil} for payment."
 
             if server and mission.require_log_wipe and server.player_left_traces(p):
