@@ -1313,13 +1313,18 @@ class DesktopApp:
             return
         win = self._window("mail", "Mail — Secure Inbox", 720, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(2, weight=1)
 
         self._mail_header = tk.Label(body, text="INBOX", fg=COLORS["accent"], bg=COLORS["window"],
                                      font=F(14, bold=True))
-        self._mail_header.pack(anchor=tk.W)
+        self._mail_header.grid(row=0, column=0, sticky="ew")
+
+        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
+        self._mail_btn_row.grid(row=1, column=0, sticky="ew", pady=(8, 6))
 
         panes = tk.Frame(body, bg=COLORS["window"])
-        panes.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        panes.grid(row=2, column=0, sticky="nsew")
 
         left = tk.Frame(panes, bg=COLORS["window"], width=240)
         left.pack(side=tk.LEFT, fill=tk.Y)
@@ -1383,9 +1388,9 @@ class DesktopApp:
             self.refresh_taskbar()
 
         listbox.bind("<<ListboxSelect>>", show_message)
+        listbox.bind("<Delete>", self._mail_delete_key)
+        listbox.bind("<BackSpace>", self._mail_delete_key)
 
-        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
-        self._mail_btn_row.pack(fill=tk.X, pady=(8, 0))
         self._rebuild_mail_buttons()
 
         self._refresh_mail_ui()
@@ -1447,6 +1452,8 @@ class DesktopApp:
         if self._mail_folder == "trash":
             tk.Button(row, text="Delete Forever", command=self._permanent_delete_mail,
                       bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+            tk.Button(row, text="Restore to Inbox", command=self._restore_selected_mail,
+                      bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
             tk.Button(row, text="Empty Trash", command=self._empty_mail_trash,
                       bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
         else:
@@ -1456,6 +1463,10 @@ class DesktopApp:
                       bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
             tk.Button(row, text="Mark All Read", command=self._mark_all_mail_read,
                       bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+        tk.Label(
+            row, text="Del/⌫ = trash or delete forever",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+        ).pack(side=tk.RIGHT, padx=(8, 0))
         tk.Button(row, text="Open Job Board", command=self.open_job_board,
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
 
@@ -1474,6 +1485,24 @@ class DesktopApp:
             self._mail_viewer.delete("1.0", tk.END)
             self._mail_viewer.configure(state=tk.DISABLED)
 
+    def _selected_mail_message(self) -> MailMessage | None:
+        if not self._mail_listbox:
+            return None
+        sel = self._mail_listbox.curselection()
+        if not sel:
+            return None
+        msgs = self._mail_current_messages()
+        if sel[0] >= len(msgs):
+            return None
+        return msgs[sel[0]]
+
+    def _mail_delete_key(self, _event=None) -> str:
+        if self._mail_folder == "trash":
+            self._permanent_delete_mail()
+        else:
+            self._delete_selected_mail()
+        return "break"
+
     def _mark_all_mail_read(self) -> None:
         self.game.mail.mark_all_read()
         self._refresh_mail_badge()
@@ -1482,15 +1511,11 @@ class DesktopApp:
             self._populate_mail_list(self._mail_listbox)
 
     def _delete_selected_mail(self) -> None:
-        if not self._mail_listbox or self._mail_folder != "inbox":
+        if self._mail_folder != "inbox":
             return
-        sel = self._mail_listbox.curselection()
-        if not sel:
+        msg = self._selected_mail_message()
+        if not msg:
             return
-        msgs = self.game.mail.messages
-        if sel[0] >= len(msgs):
-            return
-        msg = msgs[sel[0]]
         self.game.mail.trash_message(msg.mail_id)
         self.game.autosave(force=True)
         self._refresh_mail_ui()
@@ -1512,19 +1537,29 @@ class DesktopApp:
         self.refresh_taskbar()
 
     def _permanent_delete_mail(self) -> None:
-        if not self._mail_listbox or self._mail_folder != "trash":
+        if self._mail_folder != "trash":
             return
-        sel = self._mail_listbox.curselection()
-        if not sel:
+        msg = self._selected_mail_message()
+        if not msg:
             return
-        msgs = self.game.mail.trash
-        if sel[0] >= len(msgs):
-            return
-        msg = msgs[sel[0]]
         self.game.mail.permanent_delete(msg.mail_id)
         self.game.autosave(force=True)
         self._refresh_mail_ui()
         self._clear_mail_viewer("Permanently deleted.")
+        self.refresh_taskbar()
+
+    def _restore_selected_mail(self) -> None:
+        if self._mail_folder != "trash":
+            return
+        msg = self._selected_mail_message()
+        if not msg:
+            return
+        self.game.mail.restore_message(msg.mail_id)
+        self.game.autosave(force=True)
+        self._mail_folder = "inbox"
+        self._refresh_mail_ui()
+        self._clear_mail_viewer("Restored to Inbox.")
+        self._refresh_mail_badge()
         self.refresh_taskbar()
 
     def _empty_mail_trash(self) -> None:

@@ -652,6 +652,19 @@ class MailBox:
         self.trash.clear()
         return count
 
+    def restore_message(self, mail_id: str) -> bool:
+        for i, m in enumerate(self.trash):
+            if m.mail_id == mail_id:
+                self.messages.insert(0, self.trash.pop(i))
+                return True
+        return False
+
+    def message_by_id(self, mail_id: str) -> MailMessage | None:
+        for m in self.messages + self.trash:
+            if m.mail_id == mail_id:
+                return m
+        return None
+
     # Back-compat aliases
     def delete(self, mail_id: str) -> bool:
         return self.trash_message(mail_id)
@@ -1660,7 +1673,8 @@ class Game:
             "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "note [add|clear|set] [text]",
-            "shop", "buy [item]", "missions", "contracts", "status", "rank",
+            "shop", "buy [item]", "missions", "contracts", "mail [list|trash|delete|restore]",
+            "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
@@ -2209,6 +2223,75 @@ class Game:
         for m in self.missions.missions:
             line = m.status_line() + RivalAIManager.race_progress_line(self, m)
             Console.out(f"  {line}")
+
+    def cmd_mail(self, args: list[str]) -> None:
+        divider("MAIL")
+        action = args[0].lower() if args else "list"
+        if action in ("list", "inbox"):
+            if not self.mail.messages:
+                Console.out("  Inbox empty.")
+                return
+            for m in self.mail.messages:
+                mark = "● " if not m.read else "  "
+                Console.out(f"  {mark}{m.mail_id:<12} {m.subject[:44]}")
+            Console.out(f"\n  {self.mail.unread_count()} unread  |  Trash: {len(self.mail.trash)}")
+            Console.out("  mail read <id>  |  mail trash <id>  |  mail delete <id>  |  mail empty")
+            return
+        if action == "trash":
+            if len(args) < 2:
+                if not self.mail.trash:
+                    Console.out("  Trash empty.")
+                    return
+                for m in self.mail.trash:
+                    Console.out(f"    {m.mail_id:<12} {m.subject[:44]}")
+                Console.out("\n  mail delete <id>  |  mail restore <id>  |  mail empty")
+                return
+            if args[1].lower() == "read":
+                removed = self.mail.trash_all_read()
+                success(f"Moved {removed} read message(s) to Trash." if removed else "No read messages to trash.")
+                return
+            if self.mail.trash_message(args[1]):
+                success(f"Moved {args[1]} to Trash.")
+            else:
+                error(f"No inbox message {args[1]!r}.")
+            return
+        if action == "read":
+            if len(args) < 2:
+                error("Usage: mail read <mail-id>")
+                return
+            msg = self.mail.message_by_id(args[1])
+            if not msg:
+                error("Message not found.")
+                return
+            self.mail.mark_read(msg.mail_id)
+            Console.out(f"  From: {msg.sender}")
+            Console.out(f"  Subj: {msg.subject}")
+            Console.out(f"  Date: {msg.timestamp}\n")
+            Console.out(msg.body)
+            return
+        if action == "delete":
+            if len(args) < 2:
+                error("Usage: mail delete <mail-id>  (must be in Trash)")
+                return
+            if self.mail.permanent_delete(args[1]):
+                success(f"Permanently deleted {args[1]}.")
+            else:
+                error("Message not in Trash — use: mail trash <id> first.")
+            return
+        if action == "restore":
+            if len(args) < 2:
+                error("Usage: mail restore <mail-id>")
+                return
+            if self.mail.restore_message(args[1]):
+                success(f"Restored {args[1]} to Inbox.")
+            else:
+                error("Message not in Trash.")
+            return
+        if action == "empty":
+            removed = self.mail.empty_trash()
+            success(f"Emptied trash ({removed} message(s))." if removed else "Trash already empty.")
+            return
+        error("Usage: mail [list|read <id>|trash <id>|delete <id>|restore <id>|empty]")
 
     def cmd_status(self, _a: list[str]) -> None:
         p = self.player
@@ -2779,7 +2862,7 @@ class Game:
             "note": self.cmd_note, "notes": self.cmd_note,
             "rm": self.cmd_rm, "pwd": self.cmd_pwd, "whoami": self.cmd_whoami,
             "uname": self.cmd_uname, "shop": self.cmd_shop, "buy": self.cmd_buy,
-            "missions": self.cmd_missions, "contracts": self.cmd_contracts,
+            "missions": self.cmd_missions, "contracts": self.cmd_contracts, "mail": self.cmd_mail,
             "status": self.cmd_status, "rank": self.cmd_rank,
             "achievements": self.cmd_achievements, "daily": self.cmd_daily,
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
