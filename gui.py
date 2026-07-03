@@ -84,6 +84,7 @@ WINDOW_STAGGER: dict[str, tuple[int, int]] = {
 
 # Quick-launch buttons appear only after the player types each command once.
 TERMINAL_QUICK_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("hint", "hint"),
     ("probe", "probe"),
     ("crack", "crack"),
     ("ls", "ls"),

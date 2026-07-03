@@ -418,6 +418,9 @@ class TutorialManager:
         p.rank_index = 1
         from progression import PlayerProfile
         PlayerProfile.mark_veteran()
+        self.game.meta.notoriety_baseline = self.game.meta.notoriety
+        self.game.meta.rival_trash_talk_unlocked = False
+        self.game.meta.pending_rival_mail = []
         if not any(r.destination == "10.0.0.0/24" for r in p.routes):
             p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
         self.game.network.deploy_company_hosts_with_puzzles(self.game, p.reputation, False)
@@ -436,7 +439,7 @@ class TutorialManager:
         from chaos_system import ROOKIE_GRACE_TICKS
         teach(
             "Career mode uses REAL money. Traces and rivals hit your wallet. "
-            f"Rivals talk from day one; heat lockdowns wait ~{ROOKIE_GRACE_TICKS} commands."
+            f"Rival trash talk starts after your first crack; lockdowns wait ~{ROOKIE_GRACE_TICKS} commands."
         )
         Console.out(f"  Starting career balance: ${p.money}")
         Console.out("  Progress auto-saves. Type 'help' for career commands.\n")
@@ -1666,10 +1669,18 @@ class Game:
     def cmd_lesson(self, _a: list[str]) -> None:
         self.tutorial.show_lesson()
 
+    def cmd_hint(self, _a: list[str]) -> None:
+        from hint_system import HintManager
+
+        cmd, why = HintManager.infer(self)
+        divider("NEXT COMMAND")
+        success(f"Try: {cmd}")
+        teach(why)
+
     def cmd_help(self, _a: list[str]) -> None:
         divider("COMMANDS")
         cmds = [
-            "lesson", "help", "ifconfig", "route", "route add [net] via [gw]",
+            "lesson", "hint", "help", "ifconfig", "route", "route add [net] via [gw]",
             "vpn [connect|disconnect|status]", "scan/nmap [CIDR]", "connect [IP] [port]",
             "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
@@ -1905,7 +1916,8 @@ class Game:
             s.cracked = True
             self.player.has_remote_shell = True
             success(f"Backdoor shell on {s.hostname} — no brute-force needed.")
-            from chaos_system import RivalReactionManager
+            from chaos_system import CareerPressureManager, RivalReactionManager
+            CareerPressureManager.on_first_crack(self, s)
             RivalReactionManager.on_crack(self, s)
             return
 
@@ -1949,7 +1961,8 @@ class Game:
                 self.player.earn(40 + s.security_level * 20, "crack bounty")
                 from progression import ReputationSystem
                 ReputationSystem.add_rep(self, 15 + s.security_level * 5, "intrusion")
-            from chaos_system import RivalReactionManager
+            from chaos_system import CareerPressureManager, RivalReactionManager
+            CareerPressureManager.on_first_crack(self, s)
             RivalReactionManager.on_crack(self, s)
             return
         error("Failed — upgrade CPU or buy hydra/hashcat.")
@@ -2855,7 +2868,7 @@ class Game:
             return
 
         handlers: dict[str, Callable[[list[str]], None]] = {
-            "lesson": self.cmd_lesson, "help": self.cmd_help, "ifconfig": self.cmd_ifconfig,
+            "lesson": self.cmd_lesson, "hint": self.cmd_hint, "help": self.cmd_help, "ifconfig": self.cmd_ifconfig,
             "vpn": self.cmd_vpn, "scan": self.cmd_scan, "nmap": self.cmd_scan,
             "connect": self.cmd_connect, "disconnect": self.cmd_disconnect,
             "probe": self.cmd_probe, "crack": self.cmd_crack, "curl": self.cmd_curl, "privesc": self.cmd_privesc,
