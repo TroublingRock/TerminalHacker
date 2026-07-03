@@ -157,6 +157,9 @@ class DesktopApp:
         self._board_compose: scrolledtext.ScrolledText | None = None
         self._board_rival_var: tk.StringVar | None = None
         self._board_meta: tk.Label | None = None
+        self._board_taunt_btn: tk.Button | None = None
+        self._board_reply_btn: tk.Button | None = None
+        self._board_taunt_hint: tk.Label | None = None
         self.taskbar_label: tk.Label | None = None
         self.clock_label: tk.Label | None = None
         self.desktop_canvas: tk.Canvas | None = None
@@ -1285,6 +1288,9 @@ class DesktopApp:
             self._board_compose = None
             self._board_rival_var = None
             self._board_meta = None
+            self._board_taunt_btn = None
+            self._board_reply_btn = None
+            self._board_taunt_hint = None
         if key == "files":
             self._files_list_frame = None
             self._files_preview_frame = None
@@ -1342,8 +1348,9 @@ class DesktopApp:
         if "mail" in self._built_panels:
             self._show_app("mail")
             self._refresh_mail_ui()
+            self._update_mail_reply_ui(self._selected_mail_message())
             return
-        win = self._window("mail", "Mail — Secure Inbox", 720, 520)
+        win = self._window("mail", "Mail — Secure Inbox", 720, 580)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         body.columnconfigure(0, weight=1)
         body.rowconfigure(2, weight=1)
@@ -1399,15 +1406,20 @@ class DesktopApp:
         self._mail_viewer = viewer
         self._mail_meta = meta
 
-        reply_frame = tk.Frame(right, bg=COLORS["window"])
-        reply_frame.pack(fill=tk.X, pady=(8, 0))
+        reply_frame = tk.Frame(body, bg=COLORS["window"])
+        reply_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         self._mail_reply_frame = reply_frame
+        tk.Label(
+            reply_frame,
+            text="Rival trash talk:",
+            fg=COLORS["warn"], bg=COLORS["window"], font=F(9, bold=True), anchor=tk.W,
+        ).pack(fill=tk.X)
         self._mail_reply_hint = tk.Label(
             reply_frame,
             text="Select rival mail (@rival.net) to reply",
             fg=COLORS["muted"], bg=COLORS["window"], font=F(9), anchor=tk.W,
         )
-        self._mail_reply_hint.pack(fill=tk.X)
+        self._mail_reply_hint.pack(fill=tk.X, pady=(2, 0))
         reply_text = scrolledtext.ScrolledText(
             reply_frame, height=3, bg=COLORS["terminal_bg"], fg=COLORS["text"],
             font=F(10), relief=tk.FLAT, wrap=tk.WORD,
@@ -1423,7 +1435,7 @@ class DesktopApp:
         self._mail_reply_btn.pack(side=tk.LEFT)
         tk.Label(
             reply_btn_row,
-            text="Escalates rival anger — use Terminal mail reply for same effect",
+            text="Escalates rival anger",
             fg=COLORS["muted"], bg=COLORS["window"], font=F(8),
         ).pack(side=tk.LEFT, padx=8)
 
@@ -1483,14 +1495,25 @@ class DesktopApp:
 
     def _mail_send_rival_reply(self) -> None:
         from tkinter import messagebox
+        from chaos_system import CareerPressureManager
         from rival_taunt import RivalTauntManager
 
         msg = self._selected_mail_message()
         if not msg or not self._mail_reply_text:
             return
+        if not CareerPressureManager.can_trash_talk(self.game):
+            messagebox.showwarning(
+                "Not yet",
+                "Crack a host first — rivals aren't watching your handle yet.",
+            )
+            return
         body = self._mail_reply_text.get("1.0", tk.END).strip()
         if len(body) < 5:
             messagebox.showwarning("Too short", "Write at least 5 characters.")
+            return
+        rival = RivalTauntManager.rival_from_mail(msg)
+        if not rival:
+            messagebox.showwarning("Wrong message", "Only mail from @rival.net can be taunted back.")
             return
         if RivalTauntManager.mail_reply(self.game, msg.mail_id, body):
             sounds.play("success")
@@ -1504,6 +1527,29 @@ class DesktopApp:
                 "Taunt sent",
                 "Rival received your reply. Check Mail and Board for their response.",
             )
+        else:
+            messagebox.showerror("Could not send", "Check Terminal for details, or pick rival mail.")
+
+    def _update_board_taunt_ui(self) -> None:
+        from chaos_system import CareerPressureManager
+
+        unlocked = CareerPressureManager.can_trash_talk(self.game)
+        if self._board_taunt_hint:
+            if unlocked:
+                self._board_taunt_hint.configure(
+                    text="Public taunts hit harder than mail replies. Select a /rivals/ post to reply.",
+                    fg=COLORS["muted"],
+                )
+            else:
+                self._board_taunt_hint.configure(
+                    text="Crack a host first — rivals aren't watching your handle yet.",
+                    fg=COLORS["warn"],
+                )
+        state = tk.NORMAL if unlocked else tk.DISABLED
+        if self._board_taunt_btn:
+            self._board_taunt_btn.configure(state=state)
+        if self._board_reply_btn:
+            self._board_reply_btn.configure(state=state)
 
     def _mail_current_messages(self) -> list[MailMessage]:
         if self._mail_folder == "trash":
@@ -2267,8 +2313,9 @@ class DesktopApp:
         if "board" in self._built_panels:
             self._show_app("board")
             self._refresh_board_panel()
+            self._update_board_taunt_ui()
             return
-        win = self._window("board", "Darknet Board — Social Channels", 760, 560)
+        win = self._window("board", "Darknet Board — Social Channels", 760, 600)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         p = self.game.player
 
@@ -2277,6 +2324,11 @@ class DesktopApp:
         if p.phase not in ("career", "endless"):
             tk.Label(body, text="Complete training to access the board.",
                      fg=COLORS["warn"], bg=COLORS["window"]).pack(anchor=tk.W, pady=12)
+            tk.Label(
+                body,
+                text="Trash talk unlocks in career mode after your first crack.",
+                fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+            ).pack(anchor=tk.W)
             return
 
         SocialBoardManager.seed_if_needed(self.game)
@@ -2319,6 +2371,12 @@ class DesktopApp:
             font=F(10), relief=tk.FLAT, wrap=tk.WORD,
         )
         self._board_compose.pack(fill=tk.X, pady=(4, 6))
+        self._board_taunt_hint = tk.Label(
+            compose_frame,
+            text="",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9), anchor=tk.W,
+        )
+        self._board_taunt_hint.pack(fill=tk.X, pady=(0, 4))
 
         action_row = tk.Frame(compose_frame, bg=COLORS["window"])
         action_row.pack(fill=tk.X)
@@ -2332,14 +2390,16 @@ class DesktopApp:
             highlightthickness=0, activebackground=COLORS["accent_dim"],
         )
         rival_menu.pack(side=tk.LEFT, padx=(4, 12))
-        tk.Button(
+        self._board_taunt_btn = tk.Button(
             action_row, text="Public Taunt", command=self._board_send_taunt,
             bg=COLORS["warn"], fg="white", relief=tk.FLAT, padx=10,
-        ).pack(side=tk.LEFT)
-        tk.Button(
+        )
+        self._board_taunt_btn.pack(side=tk.LEFT)
+        self._board_reply_btn = tk.Button(
             action_row, text="Reply to Selected Post", command=self._board_send_reply,
             bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
-        ).pack(side=tk.LEFT, padx=8)
+        )
+        self._board_reply_btn.pack(side=tk.LEFT, padx=8)
         tk.Button(
             action_row, text="Upvote Post", command=self._board_upvote_selected,
             bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
@@ -2352,6 +2412,7 @@ class DesktopApp:
         ).pack(anchor=tk.W, pady=(8, 0))
 
         self._refresh_board_panel()
+        self._update_board_taunt_ui()
         self._built_panels.add("board")
 
     def _selected_board_post(self):
@@ -2403,6 +2464,7 @@ class DesktopApp:
         if posts:
             self._board_listbox.selection_set(0)
             self._show_board_post()
+        self._update_board_taunt_ui()
 
     def _board_compose_text(self) -> str:
         if not self._board_compose:
@@ -2411,8 +2473,15 @@ class DesktopApp:
 
     def _board_send_taunt(self) -> None:
         from tkinter import messagebox
+        from chaos_system import CareerPressureManager
         from rival_taunt import RivalTauntManager
 
+        if not CareerPressureManager.can_trash_talk(self.game):
+            messagebox.showwarning(
+                "Not yet",
+                "Crack a host first — rivals aren't watching your handle yet.",
+            )
+            return
         body = self._board_compose_text()
         if len(body) < 5:
             messagebox.showwarning("Too short", "Write at least 5 characters.")
@@ -2427,11 +2496,20 @@ class DesktopApp:
             self.refresh_taskbar()
             self._refresh_status_panel()
             messagebox.showinfo("Taunt posted", f"{rival} was provoked. Watch Mail and /rivals/.")
+        else:
+            messagebox.showerror("Could not post", "Check Terminal for details.")
 
     def _board_send_reply(self) -> None:
         from tkinter import messagebox
+        from chaos_system import CareerPressureManager
         from rival_taunt import RivalTauntManager
 
+        if not CareerPressureManager.can_trash_talk(self.game):
+            messagebox.showwarning(
+                "Not yet",
+                "Crack a host first — rivals aren't watching your handle yet.",
+            )
+            return
         post = self._selected_board_post()
         body = self._board_compose_text()
         if not post:
@@ -2453,6 +2531,8 @@ class DesktopApp:
             self.refresh_taskbar()
             self._refresh_status_panel()
             messagebox.showinfo("Reply posted", "Rival anger increased. Check Mail for response.")
+        else:
+            messagebox.showerror("Could not reply", "Check Terminal for details.")
 
     def _board_upvote_selected(self) -> None:
         from social_board import SocialBoardManager
