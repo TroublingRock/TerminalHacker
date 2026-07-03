@@ -199,6 +199,17 @@ class DesktopApp:
         self.refresh_taskbar()
         if self.game.defer_career_session:
             self.root.after(200, self._run_deferred_career_session)
+        self._raise_main_window()
+
+    def _raise_main_window(self) -> None:
+        """Bring desktop to front after agent restarts (VNC often hides new windows)."""
+        try:
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(400, lambda: self.root.attributes("-topmost", False))
+            self.root.focus_force()
+        except tk.TclError:
+            pass
 
     def _schedule_taskbar_refresh(self) -> None:
         if self._taskbar_refresh_job:
