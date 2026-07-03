@@ -140,6 +140,8 @@ class RivalAIManager:
             return ""
         if mission.completed:
             return ""
+        if getattr(mission, "race_lost", False):
+            return " [RACE: LOST]"
         prog = game.meta.rival_race_prog.get(mission.mission_id, 0)
         rival = game.meta.rival_race_rival.get(mission.mission_id, "?")
         return f" [RACE: {rival} {prog}/{RIVAL_RACE_GOAL}]"
@@ -157,6 +159,7 @@ class RivalAIManager:
         target = mission.target_ip or "target"
 
         if prog >= RIVAL_RACE_GOAL:
+            mission.race_lost = True
             mission.completed = True
             warn(f"{rival} SNIPED {rid} — contract lost to rival race.")
             body = RIVAL_RACE_WIN_MAIL.get(rival, RIVAL_RACE_WIN_MAIL["phantom_pkt"]).format(

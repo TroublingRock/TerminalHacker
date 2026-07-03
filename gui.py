@@ -131,6 +131,7 @@ class DesktopApp:
         self.game = Game()
         self.game.gui_mode = True
         self.game.player._game_ref = self.game
+        self.game._gui_ref = self
         Console.fast_mode = True
         self.game.mail.on_new_mail = self._on_new_mail
 
@@ -348,7 +349,7 @@ class DesktopApp:
     def _prompt_parts(self) -> list[tuple[str, str]]:
         p = self.game.player
         if p.is_local():
-            user, host = p.username, "localhost"
+            user, host = p.display_name(), "localhost"
         elif p.remote_is_root:
             user, host = "root", p.prompt_host
         else:
@@ -375,7 +376,7 @@ class DesktopApp:
     def _terminal_window_title(self) -> str:
         p = self.game.player
         if p.is_local():
-            user, host = p.username, "localhost"
+            user, host = p.display_name(), "localhost"
         elif p.remote_is_root:
             user, host = "root", p.prompt_host
         else:
@@ -1716,6 +1717,8 @@ class DesktopApp:
             self.game.dispatch(cmd)
             self._reveal_terminal_quick(cmd)
             self._flush_taskbar_refresh()
+            if "status" in self._built_panels:
+                self.root.after(50, self._refresh_status_panel)
             if phase_before == "tutorial" and self.game.player.phase == "career":
                 self.root.after(150, self._show_graduation_popup)
             elif self.game.defer_career_session:
@@ -2317,6 +2320,7 @@ class DesktopApp:
                 refresh_wallet()
                 refresh_shop()
                 self.refresh_taskbar()
+                self._refresh_status_panel()
                 if graduated:
                     self._show_graduation_popup()
             elif (
@@ -2734,6 +2738,7 @@ class DesktopApp:
         else:
             lines.append(f"Phase:       tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
         lines.append(p.wallet_label())
+        lines.append(f"Handle:      {p.display_name()}  (terminal: handle <name>)")
         lines.append(f"CPU level:   {p.cpu_level}")
         lines.append(f"Firewall:    {p.firewall_level}  (always on — blocks rivals passively)")
         lines.append(f"Cracker:     tier {p.cracker_tier}")
@@ -2804,6 +2809,10 @@ class DesktopApp:
                   bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         tk.Button(btn_row, text="Restore Backup", command=self._gui_restore_backup,
                   bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            btn_row, text="Set Handle", command=self._prompt_set_handle,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT, padx=(0, 8))
         if p.phase == "career":
             tk.Button(
                 btn_row, text="Defend ON", command=lambda: (
@@ -2825,6 +2834,29 @@ class DesktopApp:
             tk.Button(btn_row, text="Endless Run (endless start)", command=self.open_terminal,
                       bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         self._built_panels.add("status")
+
+    def _prompt_set_handle(self) -> None:
+        from tkinter import simpledialog, messagebox
+        import re
+
+        current = self.game.player.display_name()
+        name = simpledialog.askstring(
+            "Set Handle",
+            "Operator handle (3–16 chars, start with a letter):",
+            initialvalue=current if current != "trainee" else "",
+            parent=self.root,
+        )
+        if not name:
+            return
+        name = name.strip()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{2,15}", name):
+            messagebox.showerror("Invalid handle", "Use 3–16 characters: letters, numbers, _ or -")
+            return
+        self.game.player.handle = name
+        sounds.play("success")
+        self.refresh_taskbar()
+        self._refresh_status_panel()
+        messagebox.showinfo("Handle updated", f"You are now: {name}")
 
     def _show_graduation_popup(self) -> None:
         from tkinter import messagebox

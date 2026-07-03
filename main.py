@@ -760,9 +760,10 @@ class Mission:
     heist_step: int = 0
     story_arc: str = ""
     rival_counter: bool = False
+    race_lost: bool = False
 
     def status_line(self) -> str:
-        mark = "[DONE]" if self.completed else "[OPEN]"
+        mark = "[LOST]" if self.race_lost else ("[DONE]" if self.completed else "[OPEN]")
         tag = ""
         if self.hourly_event:
             tag = f" [HOURLY {self.reward_multiplier}x]"
@@ -824,10 +825,16 @@ class MissionBoard:
     def check_completion(self, game: "Game") -> None:
         from retention import RetentionManager
         from session_content import HourlyManager, MasteryGrader
+        from rival_ai import RIVAL_RACE_GOAL
 
         for mission in self.missions:
+            if getattr(mission, "race_lost", False):
+                continue
             if mission.completed:
                 continue
+            if "rival_race" in getattr(mission, "modifiers", []):
+                if game.meta.rival_race_prog.get(mission.mission_id, 0) >= RIVAL_RACE_GOAL:
+                    continue
             if game.player.phase == "endless" and not getattr(mission, "endless_floor", False):
                 continue
             if game.player.phase != "endless" and getattr(mission, "endless_floor", False):
@@ -1102,6 +1109,7 @@ class Shop:
 @dataclass
 class Player:
     username: str = "trainee"
+    handle: str = "trainee"
     phase: str = "tutorial"
     tutorial_step: int = 0
     tutorial_credits: int = TutorialManager.TUTORIAL_BUDGET
@@ -1176,6 +1184,9 @@ class Player:
 
     def is_local(self) -> bool:
         return self.connection == "localhost"
+
+    def display_name(self) -> str:
+        return self.handle or self.username
 
     @property
     def prompt_host(self) -> str:
@@ -1564,7 +1575,7 @@ class Game:
     def prompt(self) -> str:
         p = self.player
         if p.is_local():
-            user = p.username
+            user = p.display_name()
         elif p.remote_is_root:
             user = "root"
         else:
@@ -1644,9 +1655,9 @@ class Game:
         self.threat.on_tick()
         if self.player.phase == "career":
             HourlyManager.refresh(self)
-            self.missions.check_completion(self)
+            self._advance_missions()
         if self.player.phase == "endless":
-            self.missions.check_completion(self)
+            self._advance_missions()
             from endless_mode import EndlessManager
             EndlessManager.check_bankruptcy(self)
             EndlessManager.on_post_command(self)
@@ -1661,8 +1672,6 @@ class Game:
             from retention import RetentionManager
             if self.player.phase == "career":
                 RetentionManager.check_bridge_triggers(self)
-            from depth_systems import ModifierManager
-            ModifierManager.on_post_command(self)
             from faction_consumables import ConsumableManager
             ConsumableManager.on_post_command(self)
             from botnet_system import BotnetManager
@@ -1678,6 +1687,12 @@ class Game:
             FlashChaosManager.maybe_spawn(self)
             from payload_drops import PayloadDropManager
             PayloadDropManager.on_post_command(self)
+
+    def _advance_missions(self) -> None:
+        """Resolve rival races before paying contracts (prevents snipe-then-pay)."""
+        from depth_systems import ModifierManager
+        ModifierManager.on_post_command(self)
+        self.missions.check_completion(self)
 
     def try_unlock(self, key: str) -> None:
         from progression import ACHIEVEMENTS
@@ -1732,7 +1747,7 @@ class Game:
     def cmd_help(self, _a: list[str]) -> None:
         divider("COMMANDS")
         cmds = [
-            "lesson", "hint", "skip tutorial", "help", "ifconfig", "route", "route add [net] via [gw]",
+            "lesson", "hint", "skip tutorial", "help", "handle <name>", "ifconfig", "route", "route add [net] via [gw]",
             "vpn [connect|disconnect|status]", "scan/nmap [CIDR]", "connect [IP] [port]",
             "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
@@ -1838,7 +1853,7 @@ class Game:
         RetentionManager.on_bridge_event(self, "scan")
         from session_content import LateralManager
         LateralManager.on_scan(self, cidr)
-        self.missions.check_completion(self)
+        self._advance_missions()
         info("Use connect <IP> 22")
 
     def cmd_connect(self, args: list[str]) -> None:
@@ -2169,7 +2184,7 @@ class Game:
             self.player.tutorial_flags.add("daily_corp_exfil_done")
         if "/var/log/auth.log" in args[0] or path.endswith("auth.log"):
             pass
-        self.missions.check_completion(self)
+        self._advance_missions()
 
     def cmd_ls(self, args: list[str]) -> None:
         files = self.player.files if self.player.is_local() else (self.require_shell() and self.remote_server().files)
@@ -2308,7 +2323,7 @@ class Game:
 
     def cmd_whoami(self, _a: list[str]) -> None:
         if self.player.is_local():
-            Console.out(self.player.username)
+            Console.out(self.player.display_name())
         elif self.player.remote_is_root:
             Console.out("root")
         elif self.remote_server():
@@ -2429,6 +2444,7 @@ class Game:
             Console.out("  Phase:      career (training complete)")
         else:
             Console.out(f"  Phase:      tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
+        Console.out(f"  Handle:     {p.display_name()}  (handle <name> to change)")
         Console.out(f"  {p.wallet_label()}")
         Console.out(f"  CPU/FW:     L{p.cpu_level} / L{p.firewall_level}")
         Console.out(f"  Offense:    {p.crack_gear_label()} — need power ≥ remote FW to crack")
@@ -2452,6 +2468,23 @@ class Game:
             from botnet_system import BotnetManager
             for line in BotnetManager.status_lines(self):
                 Console.out(line)
+
+    def cmd_handle(self, args: list[str]) -> None:
+        if not args:
+            error("Usage: handle <name>")
+            teach("3–16 characters: letters, numbers, underscore, hyphen. Example: handle ghost_ops")
+            return
+        name = args[0].strip()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{2,15}", name):
+            error("Invalid handle — use 3–16 chars, start with a letter.")
+            return
+        self.player.handle = name
+        success(f"Handle set to {name}")
+        if hasattr(self, "gui_mode") and self.gui_mode:
+            gui = getattr(self, "_gui_ref", None)
+            if gui:
+                gui.refresh_taskbar()
+                gui._refresh_status_panel()
 
     def cmd_rank(self, _a: list[str]) -> None:
         from progression import RANKS, ReputationSystem
@@ -3004,7 +3037,7 @@ class Game:
             "rm": self.cmd_rm, "pwd": self.cmd_pwd, "whoami": self.cmd_whoami,
             "uname": self.cmd_uname, "shop": self.cmd_shop, "buy": self.cmd_buy,
             "missions": self.cmd_missions, "contracts": self.cmd_contracts, "mail": self.cmd_mail,
-            "status": self.cmd_status, "rank": self.cmd_rank,
+            "status": self.cmd_status, "handle": self.cmd_handle, "rank": self.cmd_rank,
             "achievements": self.cmd_achievements, "daily": self.cmd_daily,
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
             "streak": self.cmd_streak, "season": self.cmd_season, "operation": self.cmd_operation,

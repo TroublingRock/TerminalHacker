@@ -46,6 +46,7 @@ class RivalAITests(unittest.TestCase):
         game.meta.rival_race_prog["race-2"] = RIVAL_RACE_GOAL
         RivalAIManager.on_race_tick(game, m)
         self.assertTrue(m.completed)
+        self.assertTrue(m.race_lost)
         self.assertNotIn("race-2", game.meta.rival_race_prog)
 
     def test_heat_mult_spike(self) -> None:

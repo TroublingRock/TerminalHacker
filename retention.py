@@ -1709,7 +1709,7 @@ class RetentionManager:
     def _complete_mission(game: Game, mission: Mission) -> None:
         from main import success
 
-        if mission.completed:
+        if mission.completed or getattr(mission, "race_lost", False):
             return
         mission.completed = True
         game.player.earn(mission.reward, f"contract {mission.broker}")
@@ -1724,6 +1724,8 @@ class RetentionManager:
 
     @staticmethod
     def mission_is_satisfied(game: Game, mission: Mission) -> bool:
+        if getattr(mission, "race_lost", False):
+            return False
         from main import ip_in_subnet
 
         p = game.player

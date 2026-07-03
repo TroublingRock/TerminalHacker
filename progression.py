@@ -559,7 +559,8 @@ class SaveManager:
                  "heist_id": getattr(m, "heist_id", ""),
                  "heist_step": getattr(m, "heist_step", 0),
                  "story_arc": getattr(m, "story_arc", ""),
-                 "rival_counter": getattr(m, "rival_counter", False)}
+                 "rival_counter": getattr(m, "rival_counter", False),
+                "race_lost": getattr(m, "race_lost", False)}
                 for m in game.missions.missions
             ],
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
@@ -880,6 +881,7 @@ class SaveManager:
                 heist_step=md.get("heist_step", 0),
                 story_arc=md.get("story_arc", ""),
                 rival_counter=md.get("rival_counter", False),
+                race_lost=md.get("race_lost", False),
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
