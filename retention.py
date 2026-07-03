@@ -1087,6 +1087,9 @@ class RetentionManager:
         RivalHeatManager.decay_on_login(game)
         WeeklyHeistManager.refresh(game)
 
+        from payload_drops import PayloadDropManager
+        PayloadDropManager.on_career_start(game)
+
         from story_system import StoryManager
         StoryManager.ensure_intro(game)
         from social_board import SocialBoardManager

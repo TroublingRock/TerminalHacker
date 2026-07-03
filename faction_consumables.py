@@ -175,7 +175,8 @@ class FactionRepManager:
             game.meta.contracts_since_free_consumable += 1
             if game.meta.contracts_since_free_consumable >= 5:
                 game.meta.contracts_since_free_consumable = 0
-                key = random.choice(list(CONSUMABLES.keys()))
+                pool = [k for k in CONSUMABLES if not k.endswith("_payload")]
+                key = random.choice(pool)
                 ConsumableManager.add_to_inventory(game, key, 1)
                 from main import success
                 success(f"Broker perk: free {CONSUMABLES[key]['name']} added to inventory.")

@@ -144,11 +144,6 @@ class ChaosCareerManager:
         game.meta.notoriety_baseline = 4
         game.meta.rival_trash_talk_unlocked = False
         game.meta.pending_rival_mail = []
-        game.meta.inventory["miner_payload"] = game.meta.inventory.get("miner_payload", 0) + 2
-        game.meta.inventory["ddos_payload"] = game.meta.inventory.get("ddos_payload", 0) + 1
-        game.meta.inventory["leak_payload"] = game.meta.inventory.get("leak_payload", 0) + 1
-        game.meta.inventory["virus_payload"] = game.meta.inventory.get("virus_payload", 0) + 1
-        game.meta.inventory["deface_payload"] = game.meta.inventory.get("deface_payload", 0) + 1
 
         if not any(r.destination == "10.0.0.0/24" for r in p.routes):
             p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
@@ -156,6 +151,9 @@ class ChaosCareerManager:
             p.routes.append(Route("203.0.113.0/24", "192.168.1.1"))
         if not any(r.destination == "198.18.0.0/24" for r in p.routes):
             p.routes.append(Route("198.18.0.0/24", "192.168.1.1"))
+
+        from payload_drops import PayloadDropManager
+        PayloadDropManager.on_chaos_start(game)
 
         game.network.deploy_company_hosts_with_puzzles(game, p.reputation, True)
 
@@ -184,6 +182,7 @@ class ChaosCareerManager:
             "ghost_broker@darknet",
             "Chaos contract queue open",
             "No hand-holding. Contracts pay extra if you leave the subnet burning.\n"
+            "Botnet kits come from shard@null.dark dead drops — check Mail.\n"
             "Type: chaos status  |  infect miner  |  chaos provoke\n\n— ghost_broker",
         )
         CareerPressureManager.send_or_queue_rival_mail(

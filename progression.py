@@ -735,6 +735,13 @@ class SaveManager:
                 "heat_scrub_cd": game.meta.heat_scrub_cd,
                 "heat_scrubs_paid": game.meta.heat_scrubs_paid,
                 "world_event_applied_week": game.meta.world_event_applied_week,
+                "payload_drop_index": game.meta.payload_drop_index,
+                "payload_drop_cd": game.meta.payload_drop_cd,
+                "payload_drop_ip": game.meta.payload_drop_ip,
+                "payload_drop_path": game.meta.payload_drop_path,
+                "payload_drop_key": game.meta.payload_drop_key,
+                "payload_drop_password": game.meta.payload_drop_password,
+                "payload_drop_claimed": game.meta.payload_drop_claimed,
                 "defaced_hosts": list(game.meta.defaced_hosts),
                 "framed_rivals": game.meta.framed_rivals,
                 "ransom_accrual": game.meta.ransom_accrual,
@@ -1062,6 +1069,13 @@ class SaveManager:
                 heat_scrub_cd=md.get("heat_scrub_cd", 0),
                 heat_scrubs_paid=md.get("heat_scrubs_paid", 0),
                 world_event_applied_week=md.get("world_event_applied_week", ""),
+                payload_drop_index=md.get("payload_drop_index", 0),
+                payload_drop_cd=md.get("payload_drop_cd", 0),
+                payload_drop_ip=md.get("payload_drop_ip", ""),
+                payload_drop_path=md.get("payload_drop_path", ""),
+                payload_drop_key=md.get("payload_drop_key", ""),
+                payload_drop_password=md.get("payload_drop_password", ""),
+                payload_drop_claimed=md.get("payload_drop_claimed", False),
                 defaced_hosts=set(md.get("defaced_hosts", [])),
                 framed_rivals=dict(md.get("framed_rivals", {})),
                 ransom_accrual=dict(md.get("ransom_accrual", {})),
@@ -1082,6 +1096,8 @@ class SaveManager:
                     print(f"  {note}", file=sys.stderr)
         from chaos_system import CareerPressureManager
         CareerPressureManager.sync_unlock_from_save(game)
+        from payload_drops import PayloadDropManager
+        PayloadDropManager.restore_from_save(game)
         if p.phase == "endless" and game.endless.active:
             for ip in game.endless.floor_hosts:
                 if ip in game.network.servers:

@@ -236,6 +236,13 @@ class MetaState:
     heat_scrub_cd: int = 0
     heat_scrubs_paid: int = 0
     world_event_applied_week: str = ""
+    payload_drop_index: int = 0
+    payload_drop_cd: int = 0
+    payload_drop_ip: str = ""
+    payload_drop_path: str = ""
+    payload_drop_key: str = ""
+    payload_drop_password: str = ""
+    payload_drop_claimed: bool = False
     defaced_hosts: set[str] = field(default_factory=set)
     framed_rivals: dict[str, str] = field(default_factory=dict)
     ransom_accrual: dict[str, int] = field(default_factory=dict)

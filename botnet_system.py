@@ -209,7 +209,9 @@ class BotnetManager:
 
         count = game.meta.inventory.get(shop_key, 0)
         if count < 1:
-            error(f"Need shop payload: buy {shop_key}  (then infect again)")
+            from payload_drops import PayloadDropManager
+            hint = PayloadDropManager.hint_when_empty(game, shop_key)
+            error(hint or f"No {shop_key} in inventory.")
             return False
         game.meta.inventory[shop_key] = count - 1
         return True
@@ -237,7 +239,7 @@ class BotnetManager:
             Console.out("          infect ransom [IP]  |  infect deface [IP]  |  infect frame <rival> [IP]")
             Console.out("          infect virus [IP]")
             Console.out("  Requires: active shell or backdoor on target.")
-            Console.out("  Shop: buy miner_payload | ddos_payload | leak_payload | ransom_payload | ...")
+            Console.out("  Payloads: hunt dead drops — Mail from shard@null.dark has coords.")
             return
 
         kind = args[0].lower()
@@ -507,7 +509,7 @@ class BotnetManager:
             Console.out(line)
         if not game.meta.infections and not game.meta.ddos_targets:
             Console.out("\n  No payloads deployed.")
-            teach("Crack a host, buy miner_payload, then: infect miner")
+            teach("Crack a host, hunt a dead drop from shard@null.dark, then: infect miner")
             return
         Console.out("\n  Nodes:")
         for ip, kind in sorted(game.meta.infections.items()):

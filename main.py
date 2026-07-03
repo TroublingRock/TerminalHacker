@@ -998,49 +998,6 @@ SHOP_CATALOG = [
         max_level=1,
         detail="Consumable. use decoy_log — disconnect without leaving trace evidence for 6 commands.",
     ),
-    ShopItem(
-        "miner_payload", "Miner Payload", "Passive income via botnet.", 140,
-        consumable=True,
-        max_level=1,
-        detail="Consumable. On a cracked host: infect miner. Run botnet / botnet collect in Terminal. "
-        "Raises heat on that subnet.",
-    ),
-    ShopItem(
-        "ddos_payload", "DDoS Payload", "Softens a rival target.", 220,
-        consumable=True,
-        max_level=1,
-        detail="Consumable. On a cracked host: infect ddos <target IP>. Slows rival races and weakens FW on target.",
-    ),
-    ShopItem(
-        "leak_payload", "Leak Worm", "Auto-dump host files to the board.", 160,
-        consumable=True,
-        max_level=1,
-        detail="Consumable. infect leak on cracked host, then chaos leak while connected. Triggers meltdown chains.",
-    ),
-    ShopItem(
-        "ransom_payload", "Ransom Locker", "High-yield encrypted hostage income.", 200,
-        consumable=True,
-        max_level=1,
-        detail="Consumable. infect ransom on cracked host. Accrues ~2x miner income to botnet bank. Very loud.",
-    ),
-    ShopItem(
-        "deface_payload", "Web Defacer", "Tag victim pages for notoriety.", 175,
-        consumable=True,
-        max_level=1,
-        detail="Consumable. infect deface or chaos deface from shell. Posts to flex board, spikes heat.",
-    ),
-    ShopItem(
-        "frame_payload", "Frame Kit", "Plant forged logs blaming a rival.", 240,
-        consumable=True,
-        max_level=1,
-        detail="Consumable. infect frame <rival> [IP] — rivals: acid_k, phantom_pkt, nyx_root, zero_cool.",
-    ),
-    ShopItem(
-        "virus_payload", "Autonomous Virus", "Cross-subnet worm spreader.", 190,
-        consumable=True,
-        max_level=1,
-        detail="Consumable. infect virus — autospreads to discovered hosts on routed subnets when heat rises.",
-    ),
 ]
 
 
@@ -1713,6 +1670,8 @@ class Game:
             FactionWarManager.tick_cooldown(self)
             BrokerHeatScrub.tick_cooldown(self)
             FlashChaosManager.maybe_spawn(self)
+            from payload_drops import PayloadDropManager
+            PayloadDropManager.on_post_command(self)
 
     def try_unlock(self, key: str) -> None:
         from progression import ACHIEVEMENTS
@@ -2183,6 +2142,9 @@ class Game:
             return
         name = path.rsplit("/", 1)[-1]
         local = f"/home/hacker/downloads/{name}"
+        from payload_drops import PayloadDropManager
+        if PayloadDropManager.try_claim_download(self, s.ip, path):
+            return
         self.player.files[local] = VirtualFile(local, f.read(), owner=self.player.username)
         self.player.exfil_sources[local] = s.ip
         success(f"Exfiltrated to {local}")
