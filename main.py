@@ -1335,8 +1335,27 @@ class VirtualNetwork:
                 continue
             self.servers[spec["ip"]] = build_company_server(spec)
 
+    def deploy_mission_targets(self, game: "Game") -> list[str]:
+        """Ensure open contract targets exist even below normal rep gates."""
+        from progression import COMPANY_HOSTS, build_company_server
+
+        spawned: list[str] = []
+        for mission in game.missions.missions:
+            if mission.completed:
+                continue
+            ip = getattr(mission, "target_ip", "") or ""
+            if not ip or "/" in ip or ip in self.servers:
+                continue
+            spec = next((s for s in COMPANY_HOSTS if s["ip"] == ip), None)
+            if not spec:
+                continue
+            self.servers[ip] = build_company_server(spec)
+            spawned.append(ip)
+        return spawned
+
     def deploy_company_hosts_with_puzzles(self, game: "Game", reputation: int, chaos: bool) -> None:
         self.deploy_company_hosts(reputation, chaos)
+        self.deploy_mission_targets(game)
         from variety_content import VarietyManager
         VarietyManager.deploy_puzzles(game)
         from longevity_content import ExtendedHostManager
@@ -1810,6 +1829,12 @@ class Game:
         cidr = args[0] if args else "192.168.1.0/24"
         divider(f"NMAP {cidr}")
         targets = self.network.hosts_in_cidr(cidr, self.player)
+        spawned = self.network.deploy_mission_targets(self)
+        for ip in spawned:
+            srv = self.network.get_server(ip)
+            if srv and ip_in_subnet(ip, cidr) and self.player.has_route_to(ip):
+                if srv not in targets:
+                    targets.append(srv)
         if not targets:
             warn(f"No reachable hosts in {cidr}. Add a route? (route add 10.0.0.0/24 via 192.168.1.1)")
             return
@@ -1862,15 +1887,23 @@ class Game:
         Console.pause(0.2)
         self.player.connection = ip
         self.player.connected_port = port
-        self.player.has_remote_shell = False
-        self.player.remote_is_root = False
         self.player.cwd = f"/home/{server.ssh_user}"
         self.log_remote(server, f"TCP connection to {ip}:{port}", f"Connection from port {random.randint(40000, 60000)}")
 
+        if server.cracked:
+            self.player.has_remote_shell = True
+            self.player.remote_is_root = server.ip in self.player.privesc_hosts
+            success(
+                f"Connected to {server.hostname}. "
+                f"Shell restored — already cracked{f' as root' if self.player.remote_is_root else ''}."
+            )
+        else:
+            self.player.has_remote_shell = False
+            self.player.remote_is_root = False
+            success(f"Connected to {server.hostname}. Run crack for shell.")
+
         if ip == "192.168.1.50":
             self.player.tutorial_flags.add("connected_training")
-
-        success(f"Connected to {server.hostname}. Run crack for shell.")
 
         if self.player.phase == "career":
             from session_content import MasteryGrader
@@ -1953,6 +1986,9 @@ class Game:
             return
         if s.cracked:
             self.player.has_remote_shell = True
+            if self.player.remote_is_root or s.ip in self.player.privesc_hosts:
+                self.player.remote_is_root = True
+            success(f"Shell access restored on {s.hostname}.")
             return
 
         from session_content import LateralManager
@@ -2155,6 +2191,14 @@ class Game:
             Console.out(f"  {path}{tag}")
         if not subdirs and not direct_files:
             muted("  (empty)")
+        elif (
+            not self.player.is_local()
+            and self.player.has_remote_shell
+            and not args
+            and self.player.cwd.startswith("/home")
+            and any("/var/log/" in p for p in files)
+        ):
+            teach("System logs live under /var/log — try: ls /var/log")
 
     def cmd_cat(self, args: list[str]) -> None:
         if not args:

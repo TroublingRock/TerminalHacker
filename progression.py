@@ -93,7 +93,7 @@ COMPANY_HOSTS: list[dict[str, Any]] = [
      "extra_files": {"/home/admin/model_weights.bin": "ENCRYPTED_BLOB\n"}},
     {"ip": "10.0.0.42", "hostname": "corp-dc", "company": "NovaDyne Corp",
      "security_level": 3, "ssh_password": "corp42!", "subnet": "10.0.0.0/24",
-     "story": "Domain controller. Board secrets.", "min_rep": 150, "privesc_available": True,
+     "story": "Domain controller. Board secrets.", "min_rep": 0, "privesc_available": True,
      "extra_files": {"/home/admin/corporate_secrets.txt": "Acquisition: Helix AI\n"}},
     {"ip": "10.0.0.55", "hostname": "vault-server", "company": "NovaDyne Treasury",
      "security_level": 5, "ssh_password": "qu4ntum_vault", "subnet": "10.0.0.0/24",
