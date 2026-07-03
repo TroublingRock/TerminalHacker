@@ -2191,14 +2191,19 @@ class Game:
             Console.out(f"  {path}{tag}")
         if not subdirs and not direct_files:
             muted("  (empty)")
-        elif (
+        if (
             not self.player.is_local()
             and self.player.has_remote_shell
             and not args
-            and self.player.cwd.startswith("/home")
             and any("/var/log/" in p for p in files)
         ):
-            teach("System logs live under /var/log — try: ls /var/log")
+            cwd = self.player.cwd.rstrip("/") or "/"
+            in_log_tree = cwd == "/var/log" or cwd.startswith("/var/log/")
+            if not in_log_tree:
+                teach(
+                    "System logs live under /var/log — try: ls /var/log  "
+                    "then  rm /var/log/syslog  and  rm /var/log/auth.log",
+                )
 
     def cmd_cat(self, args: list[str]) -> None:
         if not args:

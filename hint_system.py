@@ -17,6 +17,9 @@ class HintManager:
         if p.phase == "tutorial":
             return HintManager._tutorial_hint(game)
         if p.phase in ("career", "endless"):
+            connected = HintManager._connected_mission_hint(game)
+            if connected:
+                return connected
             mission = HintManager._focus_mission(game)
             if mission:
                 return HintManager._mission_hint(game, mission)
@@ -149,10 +152,45 @@ class HintManager:
 
     @staticmethod
     def _focus_mission(game: Game) -> Mission | None:
-        for mission in game.missions.missions:
-            if not mission.completed:
+        open_missions = [m for m in game.missions.missions if not m.completed]
+        if not open_missions:
+            return None
+        p = game.player
+        if p.connection and not p.is_local():
+            for mission in open_missions:
+                if mission.target_ip == p.connection:
+                    return mission
+        for mission in open_missions:
+            target = getattr(mission, "target_file", "") or ""
+            if not target:
+                continue
+            fname = target.rsplit("/", 1)[-1]
+            if f"/home/hacker/downloads/{fname}" in p.files:
                 return mission
-        return None
+        return open_missions[0]
+
+    @staticmethod
+    def _connected_mission_hint(game: Game) -> tuple[str, str] | None:
+        """When shelled in on a contract host, hint that job — not another IP."""
+        p = game.player
+        if not p.connection or p.is_local() or not p.has_remote_shell:
+            return None
+        ip = p.connection
+        for mission in game.missions.missions:
+            if mission.completed or mission.target_ip != ip:
+                continue
+            return HintManager._mission_hint(game, mission)
+        server = game.network.get_server(ip)
+        if not server or not server.player_left_traces(p):
+            return None
+        from depth_systems import ToolManager
+        if ToolManager.logs_clean_enough(game, server, p):
+            return None
+        if "/var/log/syslog" in server.files:
+            return "rm /var/log/syslog", f"Wipe syslog on {ip} — your IP is still in the logs."
+        if "/var/log/auth.log" in server.files:
+            return "rm /var/log/auth.log", f"Wipe auth.log on {ip} — delete both log files before disconnect."
+        return "ls /var/log", f"Logs on {ip} are under /var/log — list them, then rm each file."
 
     @staticmethod
     def _subnet_for_ip(ip: str) -> str:
@@ -259,9 +297,10 @@ class HintManager:
                 from depth_systems import ToolManager
                 if not ToolManager.logs_clean_enough(game, server, p):
                     if "/var/log/syslog" in server.files:
-                        return "rm /var/log/syslog", "Wipe syslog traces before leaving."
+                        return "rm /var/log/syslog", f"Wipe syslog on {ip} before leaving."
                     if "/var/log/auth.log" in server.files:
-                        return "rm /var/log/auth.log", "Wipe auth.log — contract requires a clean exit."
+                        return "rm /var/log/auth.log", f"Wipe auth.log on {ip} — contract requires a clean exit."
+                    return "ls /var/log", f"Logs on {ip} live under /var/log — rm syslog and auth.log."
 
             if not p.is_local():
                 return "disconnect", "Logs clean — disconnect and collect your payout."

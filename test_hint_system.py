@@ -71,6 +71,50 @@ class HintSystemTests(unittest.TestCase):
         cmd, _ = HintManager.infer(game)
         self.assertEqual(cmd, "crack")
 
+    def test_hint_on_connected_host_suggests_log_wipe(self) -> None:
+        game = Game()
+        game.player.phase = "career"
+        game.network.deploy_company_hosts_with_puzzles(
+            game, game.player.reputation, game.player.chaos_unlocked,
+        )
+        ip = "10.0.0.55"
+        for mission in game.missions.missions:
+            mission.completed = True
+        from main import Mission
+        game.missions.missions.insert(
+            0,
+            Mission(
+                "vault-test", "ghost_broker",
+                "Exfil payroll.csv from vault-server, wipe logs.",
+                ip, "/root/payroll.csv", 500, require_privesc=True,
+            ),
+        )
+        game.missions.missions.insert(
+            0,
+            Mission(
+                "other", "ghost_broker", "Other target", "10.0.0.42",
+                "/home/admin/corporate_secrets.txt", 400,
+            ),
+        )
+        game.player.discovered_ips.add(ip)
+        if not any(r.destination == "10.0.0.0/24" for r in game.player.routes):
+            from main import Route
+            game.player.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
+        game.player.connection = ip
+        game.player.has_remote_shell = True
+        game.player.privesc_hosts.add(ip)
+        game.player.cwd = "/root"
+        server = game.network.get_server(ip)
+        assert server is not None
+        server.cracked = True
+        server.write_auth(f"Accepted password for admin from {game.player.public_ip}")
+        game.player.files["/home/hacker/downloads/payroll.csv"] = __import__(
+            "main", fromlist=["VirtualFile"]
+        ).VirtualFile("/home/hacker/downloads/payroll.csv", "ceo,2.1M\n")
+        cmd, why = HintManager.infer(game)
+        self.assertIn("rm /var/log", cmd)
+        self.assertIn("10.0.0.55", why)
+
 
 if __name__ == "__main__":
     unittest.main()
