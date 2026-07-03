@@ -321,6 +321,37 @@ class SaveManager:
         return False
 
     @staticmethod
+    def _repair_inflated_heat(game: Game, *, legacy_world_event: bool = False) -> list[str]:
+        """Clamp subnet heat stacked by duplicate world-event application."""
+        p = game.player
+        completed = sum(1 for m in game.missions.missions if m.completed)
+        if p.ticks > 80 and completed >= 3:
+            return []
+
+        repaired: list[str] = []
+        for subnet, h in list(game.meta.subnet_heat.items()):
+            cap = 4 if legacy_world_event else 5
+            suspicious = h >= 7 and p.ticks < 60 and completed <= 2
+            if suspicious or (legacy_world_event and h > cap):
+                game.meta.subnet_heat[subnet] = min(h, cap)
+                repaired.append(subnet)
+
+        if not repaired:
+            return []
+
+        game.meta.chaos_flags = {
+            f for f in game.meta.chaos_flags if not f.startswith("heat_")
+        }
+        baseline = game.meta.notoriety_baseline
+        if game.meta.notoriety > baseline + 6 and p.ticks < 50:
+            game.meta.notoriety = max(baseline, game.meta.notoriety - 6)
+
+        return [
+            "Save repair: clamped inflated subnet heat from a prior bug "
+            f"({', '.join(repaired)}).",
+        ]
+
+    @staticmethod
     def _normalize_player_state(game: Game) -> None:
         """Clamp inconsistent tutorial_step values from older or partial saves."""
         from main import TUTORIAL_CURRICULUM
@@ -692,6 +723,7 @@ class SaveManager:
                 "faction_war_cd": game.meta.faction_war_cd,
                 "heat_scrub_cd": game.meta.heat_scrub_cd,
                 "heat_scrubs_paid": game.meta.heat_scrubs_paid,
+                "world_event_applied_week": game.meta.world_event_applied_week,
                 "defaced_hosts": list(game.meta.defaced_hosts),
                 "framed_rivals": game.meta.framed_rivals,
                 "ransom_accrual": game.meta.ransom_accrual,
@@ -928,6 +960,7 @@ class SaveManager:
                 world_event_week=ld.get("world_event_week", ""),
             )
         md = data.get("meta", {})
+        legacy_world_event = "world_event_applied_week" not in md
         if md:
             tunnels = {int(k): tuple(v) for k, v in md.get("tunnels", {}).items()}
             game.meta = MetaState(
@@ -972,6 +1005,7 @@ class SaveManager:
                 faction_war_cd=md.get("faction_war_cd", 0),
                 heat_scrub_cd=md.get("heat_scrub_cd", 0),
                 heat_scrubs_paid=md.get("heat_scrubs_paid", 0),
+                world_event_applied_week=md.get("world_event_applied_week", ""),
                 defaced_hosts=set(md.get("defaced_hosts", [])),
                 framed_rivals=dict(md.get("framed_rivals", {})),
                 ransom_accrual=dict(md.get("ransom_accrual", {})),
@@ -983,6 +1017,13 @@ class SaveManager:
                 rival_trash_talk_unlocked=md.get("rival_trash_talk_unlocked", False),
                 pending_rival_mail=list(md.get("pending_rival_mail", [])),
             )
+            repair_notes = SaveManager._repair_inflated_heat(
+                game, legacy_world_event=legacy_world_event,
+            )
+            if repair_notes and not quiet:
+                import sys
+                for note in repair_notes:
+                    print(f"  {note}", file=sys.stderr)
         from chaos_system import CareerPressureManager
         CareerPressureManager.sync_unlock_from_save(game)
         if p.phase == "endless" and game.endless.active:

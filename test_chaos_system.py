@@ -131,6 +131,53 @@ class ChaosSystemTests(unittest.TestCase):
         self.assertEqual(game.meta.notoriety, before)
         self.assertFalse(any("lockdown" in f for f in game.meta.chaos_flags))
 
+    def test_rookie_grace_survives_first_crack(self) -> None:
+        from chaos_system import CareerPressureManager
+
+        game = Game()
+        game.player.phase = "career"
+        game.player.ticks = 5
+        ip = "192.168.1.50"
+        srv = game.network.get_server(ip)
+        assert srv is not None
+        srv.cracked = True
+        game.player.discovered_ips.add(ip)
+        self.assertTrue(CareerPressureManager.rookie_grace(game))
+
+    def test_rookie_grace_survives_first_contract(self) -> None:
+        from chaos_system import CareerPressureManager
+
+        game = Game()
+        game.player.phase = "career"
+        game.player.ticks = 12
+        game.missions.missions[0].completed = True
+        self.assertTrue(CareerPressureManager.rookie_grace(game))
+
+    def test_heat_lockdown_fires_one_event_per_command(self) -> None:
+        from chaos_system import ChaosEventManager
+
+        game = Game()
+        game.player.phase = "career"
+        game.player.ticks = 30
+        game.missions.missions[0].completed = True
+        game.meta.subnet_heat["192.168.1.0/24"] = 10
+        ChaosEventManager.on_post_command(game, "scan 192.168.1.0/24")
+        fired = [f for f in game.meta.chaos_flags if f.startswith("heat_")]
+        self.assertEqual(len(fired), 1)
+
+    def test_buy_does_not_trigger_heat_lockdown(self) -> None:
+        from chaos_system import ChaosEventManager
+
+        game = Game()
+        game.player.phase = "career"
+        game.player.ticks = 30
+        game.missions.missions[0].completed = True
+        game.meta.subnet_heat["192.168.1.0/24"] = 10
+        before = game.meta.notoriety
+        ChaosEventManager.on_post_command(game, "buy firewall")
+        self.assertEqual(game.meta.notoriety, before)
+        self.assertFalse(any("lockdown" in f for f in game.meta.chaos_flags))
+
     def test_trash_talk_waits_for_first_crack(self) -> None:
         from chaos_system import CareerPressureManager
 

@@ -24,7 +24,14 @@ HEAT_EVENT_THRESHOLDS: tuple[tuple[int, str], ...] = (
 )
 
 # Commands with no hostile player action — rivals observe but don't punish yet.
-ROOKIE_GRACE_TICKS = 18
+ROOKIE_GRACE_TICKS = 25
+
+# Localhost upkeep — buying a firewall should not trip subnet lockdowns.
+HEAT_EVENT_BENIGN_VERBS = frozenset({
+    "buy", "shop", "sell", "heat", "mail", "missions", "help", "hint",
+    "save", "load", "status", "season", "operation", "notes", "note",
+    "lesson", "skip", "chaos", "achievements", "files", "file",
+})
 
 
 class CareerPressureManager:
@@ -37,14 +44,10 @@ class CareerPressureManager:
             return True
         if p.ticks >= ROOKIE_GRACE_TICKS:
             return False
-        if any(m.completed for m in game.missions.missions):
+        if sum(1 for m in game.missions.missions if m.completed) >= 2:
             return False
         if game.meta.infections:
             return False
-        for ip in p.discovered_ips:
-            srv = game.network.get_server(ip)
-            if srv and srv.cracked:
-                return False
         return True
 
     @staticmethod
@@ -268,16 +271,20 @@ class ChaosEventManager:
     """Heat on subnets triggers escalating world reactions."""
 
     @staticmethod
-    def on_post_command(game: Game) -> None:
+    def on_post_command(game: Game, cmd: str = "") -> None:
         if game.player.phase not in ("career", "endless"):
             return
         if CareerPressureManager.rookie_grace(game):
             return
+        verb = (cmd.strip().split() or [""])[0].lower()
+        if verb in HEAT_EVENT_BENIGN_VERBS:
+            return
         for subnet, heat in list(game.meta.subnet_heat.items()):
-            for threshold, event_id in HEAT_EVENT_THRESHOLDS:
+            for threshold, event_id in reversed(HEAT_EVENT_THRESHOLDS):
                 key = f"heat_{subnet}_{event_id}"
                 if heat >= threshold and key not in game.meta.chaos_flags:
                     ChaosEventManager._fire(game, subnet, heat, event_id, key)
+                    break
 
     @staticmethod
     def _fire(game: Game, subnet: str, heat: int, event_id: str, flag_key: str) -> None:

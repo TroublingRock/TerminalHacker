@@ -235,6 +235,7 @@ class MetaState:
     faction_war_cd: int = 0
     heat_scrub_cd: int = 0
     heat_scrubs_paid: int = 0
+    world_event_applied_week: str = ""
     defaced_hosts: set[str] = field(default_factory=set)
     framed_rivals: dict[str, str] = field(default_factory=dict)
     ransom_accrual: dict[str, int] = field(default_factory=dict)
@@ -438,7 +439,10 @@ class RivalHeatManager:
         return game.meta.subnet_heat.get(cidr, 0)
 
     @staticmethod
-    def spike(game: Game, cidr: str, amount: int) -> None:
+    def spike(game: Game, cidr: str, amount: int, *, player_action: bool = False) -> None:
+        from chaos_system import CareerPressureManager
+        if not player_action and CareerPressureManager.rookie_grace(game):
+            return
         mult = 1.0
         for prof in RIVAL_PROFILES.values():
             if prof["subnet"] == cidr:
@@ -464,10 +468,12 @@ class RivalHeatManager:
     @staticmethod
     def on_contract_complete(game: Game, mission: Mission) -> None:
         cidr = RivalHeatManager.subnet_for_ip(mission.target_ip)
-        RivalHeatManager.spike(game, cidr, 1)
+        RivalHeatManager.spike(game, cidr, 1, player_action=True)
         spec = game.meta.specialization
         if spec == "saboteur":
-            RivalHeatManager.spike(game, cidr, SPECIALIZATIONS["saboteur"].get("heat_spike", 3))
+            RivalHeatManager.spike(
+                game, cidr, SPECIALIZATIONS["saboteur"].get("heat_spike", 3), player_action=True,
+            )
         for rival, prof in RIVAL_PROFILES.items():
             if prof["subnet"] == cidr and game.meta.subnet_heat.get(cidr, 0) >= 4:
                 game.retention.rival_aggression = min(10, game.retention.rival_aggression + 1)

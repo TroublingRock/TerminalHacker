@@ -1240,7 +1240,10 @@ class RetentionManager:
         if llm_story:
             story_body = llm_story
         game.mail.send(story["sender"], story["subject"], story_body)
-        game.mail.send(rival["sender"], rival["subject"], rival_body)
+        from chaos_system import CareerPressureManager
+        CareerPressureManager.send_or_queue_rival_mail(
+            game, rival["sender"], rival["subject"], rival_body,
+        )
 
     @staticmethod
     def _story_addendum(game: Game) -> str:

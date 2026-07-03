@@ -1696,7 +1696,7 @@ class Game:
             )
             from depth_systems import BrokerHeatScrub
             BotnetSpreadManager.try_spread(self)
-            ChaosEventManager.on_post_command(self)
+            ChaosEventManager.on_post_command(self, cmd)
             FactionWarManager.tick_cooldown(self)
             BrokerHeatScrub.tick_cooldown(self)
             FlashChaosManager.maybe_spawn(self)

@@ -431,10 +431,10 @@ class LLMStructManager:
         if not ev:
             return lines
         wk = _week_key()
-        applied = getattr(game.meta, "_world_event_applied_week", "")
+        applied = game.meta.world_event_applied_week
         if applied == wk:
             return lines
-        game.meta._world_event_applied_week = wk
+        game.meta.world_event_applied_week = wk
 
         hd = int(ev.get("heat_delta", 0))
         if hd:
