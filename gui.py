@@ -2194,7 +2194,9 @@ class DesktopApp:
             scroll.insert(tk.END, f"  id={post.post_id}  +{post.likes} likes\n\n")
         scroll.configure(state=tk.DISABLED)
 
-        tk.Label(body, text="Terminal: board post flex Title | body  |  board upvote post-0001",
+        tk.Label(body, text="Terminal: board taunt acid_k | message  |  board reply post-0003 | message",
+                 fg=COLORS["muted"], bg=COLORS["window"], font=F(9)).pack(anchor=tk.W, pady=(8, 0))
+        tk.Label(body, text="Terminal: board post flex Title | body  |  mail reply mail-0001 | message",
                  fg=COLORS["muted"], bg=COLORS["window"], font=F(9)).pack(anchor=tk.W, pady=(8, 0))
         self._built_panels.add("board")
 
@@ -2769,6 +2771,8 @@ class DesktopApp:
             lines.append(f"Story flags: {', '.join(sorted(self.game.story.flags)) or 'none'}")
             lines.append(f"Board karma: {self.game.board.karma}")
             lines.append(f"Rival threat: {self.game.retention.rival_aggression}/10 ({self.game.retention.last_rival or 'none'})")
+            from rival_taunt import RivalTauntManager
+            lines.extend(RivalTauntManager.status_lines(self.game))
             nxt = RANKS[min(p.rank_index + 1, len(RANKS) - 1)]
             if p.rank_index < len(RANKS) - 1:
                 lines.append(f"Next rank:   {nxt.name} at {nxt.rep_required} rep")

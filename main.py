@@ -1759,7 +1759,8 @@ class Game:
             "endless", "story", "board", "spec", "heist", "heat", "heat cool [subnet]",
             "chaos [start|status|provoke|run|unlock|leak|war|raid|strike|news]",
             "phish", "tunnel", "plant", "forge", "infect", "botnet",
-            "use [item]", "factions", "llm [test|on|off]", "world",
+            "use [item]", "factions", "mail reply <id> | <msg>", "board taunt <rival> | <msg>",
+            "llm [test|on|off]", "world",
             "save", "load", "exit",
         ]
         Console.out("  " + "\n  ".join(cmds) + "\n")
@@ -2379,7 +2380,7 @@ class Game:
                 mark = "● " if not m.read else "  "
                 Console.out(f"  {mark}{m.mail_id:<12} {m.subject[:44]}")
             Console.out(f"\n  {self.mail.unread_count()} unread  |  Trash: {len(self.mail.trash)}")
-            Console.out("  mail read <id>  |  mail trash <id>  |  mail delete <id>  |  mail empty")
+            Console.out("  mail read <id>  |  mail reply <id> | <message>  |  mail trash <id>  |  mail delete <id>  |  mail empty")
             return
         if action == "trash":
             if len(args) < 2:
@@ -2412,6 +2413,22 @@ class Game:
             Console.out(f"  Subj: {msg.subject}")
             Console.out(f"  Date: {msg.timestamp}\n")
             Console.out(msg.body)
+            from rival_taunt import RivalTauntManager
+            hint = RivalTauntManager.mail_reply_hint(msg)
+            if hint:
+                teach(hint)
+            return
+        if action == "reply":
+            if len(args) < 2:
+                error("Usage: mail reply <mail-id> | <message>")
+                return
+            rest = " ".join(args[1:])
+            if "|" not in rest:
+                error("Usage: mail reply <mail-id> | <message>")
+                return
+            mail_id, body = [x.strip() for x in rest.split("|", 1)]
+            from rival_taunt import RivalTauntManager
+            RivalTauntManager.mail_reply(self, mail_id, body)
             return
         if action == "delete":
             if len(args) < 2:
@@ -2435,7 +2452,7 @@ class Game:
             removed = self.mail.empty_trash()
             success(f"Emptied trash ({removed} message(s))." if removed else "Trash already empty.")
             return
-        error("Usage: mail [list|read <id>|trash <id>|delete <id>|restore <id>|empty]")
+        error("Usage: mail [list|read <id>|reply <id> | <msg>|trash <id>|delete <id>|restore <id>|empty]")
 
     def cmd_status(self, _a: list[str]) -> None:
         p = self.player
@@ -2467,6 +2484,9 @@ class Game:
                 Console.out(line)
             from botnet_system import BotnetManager
             for line in BotnetManager.status_lines(self):
+                Console.out(line)
+            from rival_taunt import RivalTauntManager
+            for line in RivalTauntManager.status_lines(self):
                 Console.out(line)
 
     def cmd_handle(self, args: list[str]) -> None:
@@ -2813,6 +2833,7 @@ class Game:
 
     def cmd_board(self, args: list[str]) -> None:
         from social_board import BOARD_NAMES, SocialBoardManager
+        from rival_taunt import RIVAL_KEYS, RivalTauntManager
 
         if self.player.phase not in ("career", "endless"):
             warn("Board unlocks in career mode.")
@@ -2824,6 +2845,8 @@ class Game:
             for p in SocialBoardManager.list_posts(self):
                 Console.out(f"  {SocialBoardManager.format_post(p)}")
             Console.out("\n  board <name> | board post <board> <title> | <body>")
+            Console.out("  board taunt <rival> | <body>  — public trash talk (raises rival anger)")
+            Console.out("  board reply <post-id> | <body>  — reply on /rivals/")
             Console.out("  board upvote <post-id>")
             return
         action = args[0].lower()
@@ -2845,10 +2868,30 @@ class Game:
                 title, body = rest[:40], rest
             SocialBoardManager.player_post(self, board, title, body)
             return
+        if action == "taunt":
+            if len(args) < 2:
+                error("Usage: board taunt <rival> | <message>")
+                error(f"Rivals: {', '.join(sorted(RIVAL_KEYS))}")
+                return
+            rest = " ".join(args[1:])
+            if "|" not in rest:
+                error("Usage: board taunt acid_k | your message here")
+                return
+            rival, body = [x.strip() for x in rest.split("|", 1)]
+            RivalTauntManager.board_taunt(self, rival, body)
+            return
+        if action == "reply" and len(args) > 1:
+            rest = " ".join(args[1:])
+            if "|" not in rest:
+                error("Usage: board reply <post-id> | <message>")
+                return
+            post_id, body = [x.strip() for x in rest.split("|", 1)]
+            RivalTauntManager.board_reply(self, post_id, body)
+            return
         if action == "upvote" and len(args) > 1:
             SocialBoardManager.upvote(self, args[1])
             return
-        error(f"Usage: board [<{'|'.join(BOARD_NAMES)}>|post|upvote]")
+        error(f"Usage: board [<{'|'.join(BOARD_NAMES)}>|post|taunt|reply|upvote]")
 
     def cmd_spec(self, args: list[str]) -> None:
         from depth_systems import SPECIALIZATIONS, SpecializationManager

@@ -1004,6 +1004,7 @@ class RetentionState:
     weekly_story_week: str = ""
     rival_aggression: int = 0
     last_rival: str = ""
+    rival_anger: dict[str, int] = field(default_factory=dict)
     reactions_sent: list[str] = field(default_factory=list)
     bridge_id: str = ""
     bridge_tasks: list[str] = field(default_factory=list)
@@ -1091,6 +1092,9 @@ class RetentionManager:
 
         from payload_drops import PayloadDropManager
         PayloadDropManager.on_career_start(game)
+
+        from rival_taunt import RivalTauntManager
+        RivalTauntManager.decay_anger_on_login(game)
 
         from story_system import StoryManager
         StoryManager.ensure_intro(game)

@@ -238,6 +238,8 @@ class RivalAIManager:
                 f"  Territory focus: {game.retention.last_rival} "
                 f"({prof.get('label', 'rival')}) — {prof.get('subnet', '?')}",
             )
+        from rival_taunt import RivalTauntManager
+        lines.extend(RivalTauntManager.status_lines(game))
         return lines
 
     @staticmethod
