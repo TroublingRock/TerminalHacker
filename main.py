@@ -436,7 +436,7 @@ class TutorialManager:
         from chaos_system import ROOKIE_GRACE_TICKS
         teach(
             "Career mode uses REAL money. Traces and rivals hit your wallet. "
-            f"Rivals hold fire for ~{ROOKIE_GRACE_TICKS} commands — then heat and notoriety bite."
+            f"Rivals talk from day one; heat lockdowns wait ~{ROOKIE_GRACE_TICKS} commands."
         )
         Console.out(f"  Starting career balance: ${p.money}")
         Console.out("  Progress auto-saves. Type 'help' for career commands.\n")

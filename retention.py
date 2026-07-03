@@ -1240,9 +1240,6 @@ class RetentionManager:
         if llm_story:
             story_body = llm_story
         game.mail.send(story["sender"], story["subject"], story_body)
-        from chaos_system import CareerPressureManager
-        if CareerPressureManager.rookie_grace(game):
-            return
         game.mail.send(rival["sender"], rival["subject"], rival_body)
 
     @staticmethod

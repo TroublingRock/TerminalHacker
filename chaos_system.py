@@ -116,7 +116,8 @@ class ChaosCareerManager:
         warn("Loud runs pay more. Ghost runs are for cowards.")
         from main import info
         info(
-            f"Rookie window: ~{ROOKIE_GRACE_TICKS} commands before subnet heat and rival lockdowns bite."
+            f"Rookie window: ~{ROOKIE_GRACE_TICKS} commands before heat lockdowns and notoriety spikes. "
+            "Rivals will still talk — they just can't fine you yet."
         )
 
         game.mail.send(
@@ -430,20 +431,15 @@ class RivalReactionManager:
 
     @staticmethod
     def _react(game: Game, chance: float, subject: str, body: str, notoriety: int = 1) -> None:
-        from rival_ai import RivalAIManager
-
         if game.player.phase not in ("career", "endless"):
-            return
-        if not (game.meta.chaos_mode or RivalAIManager.should_react_in_career(game)):
-            return
-        if CareerPressureManager.rookie_grace(game):
             return
         if random.random() > chance:
             return
         from retention import RetentionManager
         rival = RetentionManager.pick_rival_attacker(game)
         game.mail.send(f"{rival}@rival.net", subject, f"{body}\n\n— {rival}")
-        NotorietyManager.add(game, notoriety, subject.lower())
+        if not CareerPressureManager.rookie_grace(game):
+            NotorietyManager.add(game, notoriety, subject.lower(), player_action=True)
 
     @staticmethod
     def on_scan_chaos_subnet(game: Game, cidr: str) -> None:
