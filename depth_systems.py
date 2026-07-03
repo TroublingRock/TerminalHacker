@@ -233,6 +233,8 @@ class MetaState:
     meltdown: dict[str, Any] = field(default_factory=dict)
     ghost_raid_cd: int = 0
     faction_war_cd: int = 0
+    heat_scrub_cd: int = 0
+    heat_scrubs_paid: int = 0
     defaced_hosts: set[str] = field(default_factory=set)
     framed_rivals: dict[str, str] = field(default_factory=dict)
     ransom_accrual: dict[str, int] = field(default_factory=dict)
@@ -499,6 +501,141 @@ class RivalHeatManager:
         if game.retention.last_rival:
             lines.append(f"  Angriest rival: {game.retention.last_rival}")
         return lines
+
+
+class BrokerHeatScrub:
+    """Pay darknet brokers to launder subnet traces — expensive and on cooldown."""
+
+    COOLDOWN = 32
+    MIN_HEAT = 4
+    DROP = 3
+    BASE_COST = 500
+    COST_PER_HEAT = 220
+    BROKER = "shade_runner"
+
+    @staticmethod
+    def tick_cooldown(game: Game) -> None:
+        if game.meta.heat_scrub_cd > 0:
+            game.meta.heat_scrub_cd -= 1
+
+    @staticmethod
+    def resolve_cidr(game: Game, target: str) -> str | None:
+        if not target:
+            hot = [
+                (cidr, game.meta.subnet_heat.get(cidr, 0))
+                for cidr in SUBNETS
+                if game.meta.subnet_heat.get(cidr, 0) >= BrokerHeatScrub.MIN_HEAT
+            ]
+            if not hot:
+                return None
+            return max(hot, key=lambda row: row[1])[0]
+        raw = target.strip()
+        if "/" in raw:
+            for cidr in SUBNETS:
+                if cidr == raw or cidr.startswith(raw.split(".")[0]):
+                    return cidr
+            return raw if raw in game.meta.subnet_heat else None
+        from main import ip_in_subnet
+        for cidr in SUBNETS:
+            if ip_in_subnet(raw, cidr) or raw.startswith(cidr.rsplit(".", 1)[0]):
+                return cidr
+        return None
+
+    @staticmethod
+    def quote_cost(game: Game, cidr: str) -> int:
+        heat = game.meta.subnet_heat.get(cidr, 0)
+        cost = BrokerHeatScrub.BASE_COST + heat * BrokerHeatScrub.COST_PER_HEAT
+        uses = game.meta.heat_scrubs_paid
+        if uses >= 1:
+            cost = int(cost * (1.0 + uses * 0.18))
+        from faction_consumables import FactionRepManager
+        if FactionRepManager.has_perk(game, "brokers", 50):
+            cost = int(cost * 0.9)
+        return cost
+
+    @staticmethod
+    def status_lines(game: Game) -> list[str]:
+        if game.player.phase not in ("career", "endless"):
+            return []
+        lines = ["  Broker heat scrub:"]
+        if game.meta.heat_scrub_cd > 0:
+            lines.append(f"    Cooldown: {game.meta.heat_scrub_cd} commands remaining")
+        else:
+            lines.append("    Ready — heat cool [subnet]")
+        hot = [
+            (cidr, game.meta.subnet_heat.get(cidr, 0))
+            for cidr in SUBNETS
+            if game.meta.subnet_heat.get(cidr, 0) >= BrokerHeatScrub.MIN_HEAT
+        ]
+        if hot:
+            cidr, heat = max(hot, key=lambda row: row[1])
+            cost = BrokerHeatScrub.quote_cost(game, cidr)
+            lines.append(
+                f"    Hottest: {cidr} ({heat}/10) — scrub quote ${cost} "
+                f"(−{BrokerHeatScrub.DROP} heat)"
+            )
+        else:
+            lines.append(f"    No subnet at heat {BrokerHeatScrub.MIN_HEAT}+ for broker payout.")
+        if game.meta.heat_scrubs_paid:
+            lines.append(f"    Lifetime scrubs: {game.meta.heat_scrubs_paid} (prices rise each time)")
+        return lines
+
+    @staticmethod
+    def cool(game: Game, target: str = "") -> None:
+        from main import error, success, teach, warn
+
+        if game.player.phase not in ("career", "endless"):
+            error("Broker heat scrub unlocks in career mode.")
+            return
+        if game.meta.heat_scrub_cd > 0:
+            error(f"Brokers are laundering your last payment — wait {game.meta.heat_scrub_cd} commands.")
+            return
+
+        cidr = BrokerHeatScrub.resolve_cidr(game, target)
+        if not cidr:
+            error(
+                f"No scrub target. Need heat {BrokerHeatScrub.MIN_HEAT}+ on a subnet, "
+                "or pass: heat cool 10.0.0.0/24"
+            )
+            teach("Natural decay: −1 heat per subnet each login day. Scrub is for emergencies only.")
+            return
+
+        heat = game.meta.subnet_heat.get(cidr, 0)
+        if heat < BrokerHeatScrub.MIN_HEAT:
+            error(f"{cidr} is only heat {heat}/10 — brokers won't touch it yet.")
+            return
+
+        cost = BrokerHeatScrub.quote_cost(game, cidr)
+        if not game.player.spend(cost, f"broker heat scrub ({cidr})"):
+            return
+
+        new_heat = max(0, heat - BrokerHeatScrub.DROP)
+        game.meta.subnet_heat[cidr] = new_heat
+        game.meta.heat_scrub_cd = BrokerHeatScrub.COOLDOWN
+        game.meta.heat_scrubs_paid += 1
+
+        from faction_consumables import FactionRepManager
+        FactionRepManager.shift(game, {"brokers": 10, "corps": 3, "rivals": -2})
+
+        success(
+            f"{BrokerHeatScrub.BROKER} paid off SOC auditors — "
+            f"{cidr} heat {heat} → {new_heat} (−{heat - new_heat})"
+        )
+        warn(f"Broker cut: ${cost}. Next scrub in ~{BrokerHeatScrub.COOLDOWN} commands.")
+        teach("Scrubbing logs doesn't erase behavior — stay quiet on that subnet or heat returns.")
+
+        game.mail.send(
+            f"{BrokerHeatScrub.BROKER}@darknet",
+            f"Heat scrub — {cidr}",
+            f"I greased palms on {cidr}. Heat down to {new_heat}/10.\n"
+            f"Cost you ${cost}. Don't make me do this every hour.\n\n— {BrokerHeatScrub.BROKER}",
+        )
+
+        if game.meta.chaos_mode:
+            from chaos_system import ChaosNewsManager
+            ChaosNewsManager.push(
+                game, f"BROKER SCRUB: operator bought heat relief on {cidr} (${cost})",
+            )
 
 
 class SpecializationManager:

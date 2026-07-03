@@ -690,6 +690,8 @@ class SaveManager:
                 "meltdown": game.meta.meltdown,
                 "ghost_raid_cd": game.meta.ghost_raid_cd,
                 "faction_war_cd": game.meta.faction_war_cd,
+                "heat_scrub_cd": game.meta.heat_scrub_cd,
+                "heat_scrubs_paid": game.meta.heat_scrubs_paid,
                 "defaced_hosts": list(game.meta.defaced_hosts),
                 "framed_rivals": game.meta.framed_rivals,
                 "ransom_accrual": game.meta.ransom_accrual,
@@ -697,6 +699,9 @@ class SaveManager:
                 "botnet_bank": game.meta.botnet_bank,
                 "ddos_targets": game.meta.ddos_targets,
                 "botnet_purges": game.meta.botnet_purges,
+                "notoriety_baseline": game.meta.notoriety_baseline,
+                "rival_trash_talk_unlocked": game.meta.rival_trash_talk_unlocked,
+                "pending_rival_mail": game.meta.pending_rival_mail,
             },
         }
 
@@ -965,6 +970,8 @@ class SaveManager:
                 meltdown=dict(md.get("meltdown", {})),
                 ghost_raid_cd=md.get("ghost_raid_cd", 0),
                 faction_war_cd=md.get("faction_war_cd", 0),
+                heat_scrub_cd=md.get("heat_scrub_cd", 0),
+                heat_scrubs_paid=md.get("heat_scrubs_paid", 0),
                 defaced_hosts=set(md.get("defaced_hosts", [])),
                 framed_rivals=dict(md.get("framed_rivals", {})),
                 ransom_accrual=dict(md.get("ransom_accrual", {})),
@@ -972,7 +979,12 @@ class SaveManager:
                 botnet_bank=md.get("botnet_bank", 0),
                 ddos_targets=md.get("ddos_targets", {}),
                 botnet_purges=md.get("botnet_purges", 0),
+                notoriety_baseline=md.get("notoriety_baseline", md.get("notoriety", 0)),
+                rival_trash_talk_unlocked=md.get("rival_trash_talk_unlocked", False),
+                pending_rival_mail=list(md.get("pending_rival_mail", [])),
             )
+        from chaos_system import CareerPressureManager
+        CareerPressureManager.sync_unlock_from_save(game)
         if p.phase == "endless" and game.endless.active:
             for ip in game.endless.floor_hosts:
                 if ip in game.network.servers:

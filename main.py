@@ -1675,9 +1675,11 @@ class Game:
             from chaos_system import (
                 BotnetSpreadManager, ChaosEventManager, FactionWarManager, FlashChaosManager,
             )
+            from depth_systems import BrokerHeatScrub
             BotnetSpreadManager.try_spread(self)
             ChaosEventManager.on_post_command(self)
             FactionWarManager.tick_cooldown(self)
+            BrokerHeatScrub.tick_cooldown(self)
             FlashChaosManager.maybe_spawn(self)
 
     def try_unlock(self, key: str) -> None:
@@ -1742,7 +1744,7 @@ class Game:
             "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
-            "endless", "story", "board", "spec", "heist", "heat",
+            "endless", "story", "board", "spec", "heist", "heat", "heat cool [subnet]",
             "chaos [start|status|provoke|run|unlock|leak|war|raid|strike|news]",
             "phish", "tunnel", "plant", "forge", "infect", "botnet",
             "use [item]", "factions", "llm [test|on|off]", "world",
@@ -2779,13 +2781,24 @@ class Game:
         if args and args[0] == "choose" and len(args) > 1:
             WeeklyHeistManager.choose_branch(self, args[1].lower())
 
-    def cmd_heat(self, _a: list[str]) -> None:
-        from depth_systems import RivalHeatManager
+    def cmd_heat(self, args: list[str]) -> None:
+        from depth_systems import BrokerHeatScrub, RivalHeatManager
+
+        if args and args[0].lower() == "cool":
+            BrokerHeatScrub.cool(self, args[1] if len(args) > 1 else "")
+            return
 
         divider("SUBNET HEAT — RIVAL PRESSURE")
         for line in RivalHeatManager.status_lines(self):
             Console.out(line)
+        for line in BrokerHeatScrub.status_lines(self):
+            Console.out(line)
         Console.out("\n  High heat = more traces and rival attacks on that subnet.")
+        if self.player.phase in ("career", "endless"):
+            Console.out(
+                "  Emergency: heat cool [subnet] — pay brokers to drop heat "
+                f"(min {BrokerHeatScrub.MIN_HEAT}/10, costly, ~{BrokerHeatScrub.COOLDOWN} cmd cooldown)."
+            )
 
     def cmd_phish(self, args: list[str]) -> None:
         if not args:
