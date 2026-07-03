@@ -710,6 +710,20 @@ class MailBox:
                 return m
         return None
 
+    def messages_for_category(self, category: str, game: "Game") -> list[MailMessage]:
+        from mail_categories import filter_messages
+
+        if category == "trash":
+            return self.trash
+        return filter_messages(self.messages, category, game)
+
+    def unread_in_category(self, category: str, game: "Game") -> int:
+        from mail_categories import unread_count
+
+        if category == "trash":
+            return 0
+        return unread_count(self.messages, category, game)
+
     # Back-compat aliases
     def delete(self, mail_id: str) -> bool:
         return self.trash_message(mail_id)
@@ -2373,13 +2387,21 @@ class Game:
         divider("MAIL")
         action = args[0].lower() if args else "list"
         if action in ("list", "inbox"):
+            from mail_categories import TAB_LABELS, mail_category
+
             if not self.mail.messages:
                 Console.out("  Inbox empty.")
                 return
-            for m in self.mail.messages:
-                mark = "● " if not m.read else "  "
-                Console.out(f"  {mark}{m.mail_id:<12} {m.subject[:44]}")
-            Console.out(f"\n  {self.mail.unread_count()} unread  |  Trash: {len(self.mail.trash)}")
+            for tab in ("contracts", "rivals", "completed"):
+                msgs = [m for m in self.mail.messages if mail_category(m, self) == tab]
+                if not msgs:
+                    continue
+                unread = sum(1 for m in msgs if not m.read)
+                Console.out(f"\n  [{TAB_LABELS[tab]}]  ({unread} unread)")
+                for m in msgs:
+                    mark = "● " if not m.read else "  "
+                    Console.out(f"  {mark}{m.mail_id:<12} {m.subject[:44]}")
+            Console.out(f"\n  {self.mail.unread_count()} unread total  |  Trash: {len(self.mail.trash)}")
             Console.out("  mail read <id>  |  mail reply <id> | <message>  |  mail trash <id>  |  mail delete <id>  |  mail empty")
             return
         if action == "trash":

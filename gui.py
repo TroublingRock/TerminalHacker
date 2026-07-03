@@ -143,10 +143,10 @@ class DesktopApp:
         self._mail_listbox: tk.Listbox | None = None
         self._mail_viewer: scrolledtext.ScrolledText | None = None
         self._mail_meta: tk.Label | None = None
-        self._mail_folder: str = "inbox"
+        self._mail_folder: str = "contracts"
         self._mail_header: tk.Label | None = None
         self._mail_btn_row: tk.Frame | None = None
-        self._mail_inbox_btn: tk.Button | None = None
+        self._mail_tab_btns: dict[str, tk.Button] = {}
         self._mail_trash_btn: tk.Button | None = None
         self._mail_reply_frame: tk.Frame | None = None
         self._mail_reply_text: scrolledtext.ScrolledText | None = None
@@ -334,7 +334,7 @@ class DesktopApp:
         self.refresh_taskbar()
         self._refresh_mail_badge()
         if self._mail_listbox and "mail" in self.open_windows:
-            self._populate_mail_list(self._mail_listbox)
+            self._refresh_mail_ui()
 
     def _refresh_mail_badge(self) -> None:
         if not self.mail_badge:
@@ -1276,9 +1276,8 @@ class DesktopApp:
             self._mail_meta = None
             self._mail_header = None
             self._mail_btn_row = None
-            self._mail_inbox_btn = None
-            self._mail_trash_btn = None
-            self._mail_folder = "inbox"
+            self._mail_tab_btns = {}
+            self._mail_folder = "contracts"
             self._mail_reply_frame = None
             self._mail_reply_text = None
             self._mail_reply_btn = None
@@ -1365,22 +1364,43 @@ class DesktopApp:
         panes = tk.Frame(body, bg=COLORS["window"])
         panes.grid(row=2, column=0, sticky="nsew")
 
-        left = tk.Frame(panes, bg=COLORS["window"], width=240)
+        left = tk.Frame(panes, bg=COLORS["window"], width=280)
         left.pack(side=tk.LEFT, fill=tk.Y)
         left.pack_propagate(False)
 
         folder_row = tk.Frame(left, bg=COLORS["window"])
-        folder_row.pack(fill=tk.X, pady=(0, 6))
-        self._mail_inbox_btn = tk.Button(
-            folder_row, text="Inbox", command=lambda: self._switch_mail_folder("inbox"),
-            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=8, pady=2,
-        )
-        self._mail_inbox_btn.pack(side=tk.LEFT)
-        self._mail_trash_btn = tk.Button(
-            folder_row, text="Trash", command=lambda: self._switch_mail_folder("trash"),
-            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=8, pady=2,
-        )
-        self._mail_trash_btn.pack(side=tk.LEFT, padx=6)
+        folder_row.pack(fill=tk.X, pady=(0, 4))
+        folder_row2 = tk.Frame(left, bg=COLORS["window"])
+        folder_row2.pack(fill=tk.X, pady=(0, 6))
+        from mail_categories import MAIL_TABS
+
+        tab_short = {
+            "contracts": "Contracts",
+            "rivals": "Rivals",
+            "completed": "Completed",
+            "trash": "Trash",
+        }
+        tab_rows = {
+            "contracts": folder_row,
+            "rivals": folder_row,
+            "completed": folder_row2,
+            "trash": folder_row2,
+        }
+        self._mail_tab_btns = {}
+        for tab in MAIL_TABS:
+            btn = tk.Button(
+                tab_rows[tab],
+                text=tab_short[tab],
+                command=lambda t=tab: self._switch_mail_folder(t),
+                bg=COLORS["border"],
+                fg=COLORS["text"],
+                relief=tk.FLAT,
+                padx=6,
+                pady=2,
+                font=F(9),
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 4))
+            self._mail_tab_btns[tab] = btn
 
         listbox = tk.Listbox(
             left, bg=COLORS["terminal_bg"], fg=COLORS["text"],
@@ -1476,7 +1496,7 @@ class DesktopApp:
         rival = RivalTauntManager.rival_from_mail(msg) if msg else None
         can_reply = (
             bool(rival)
-            and self._mail_folder == "inbox"
+            and self._mail_folder == "rivals"
             and CareerPressureManager.can_trash_talk(self.game)
         )
         if self._mail_reply_hint:
@@ -1492,6 +1512,11 @@ class DesktopApp:
             self._mail_reply_hint.configure(text=hint)
         if self._mail_reply_btn:
             self._mail_reply_btn.configure(state=tk.NORMAL if can_reply else tk.DISABLED)
+        if self._mail_reply_frame:
+            if self._mail_folder == "rivals":
+                self._mail_reply_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+            else:
+                self._mail_reply_frame.grid_remove()
 
     def _mail_send_rival_reply(self) -> None:
         from tkinter import messagebox
@@ -1552,41 +1577,54 @@ class DesktopApp:
             self._board_reply_btn.configure(state=state)
 
     def _mail_current_messages(self) -> list[MailMessage]:
-        if self._mail_folder == "trash":
-            return self.game.mail.trash
-        return self.game.mail.messages
+        return self.game.mail.messages_for_category(self._mail_folder, self.game)
 
     def _switch_mail_folder(self, folder: str) -> None:
         self._mail_folder = folder
         self._refresh_mail_ui()
 
     def _refresh_mail_ui(self) -> None:
+        from mail_categories import TAB_LABELS
+
         if not self._mail_listbox:
             return
-        trash_n = len(self.game.mail.trash)
-        if self._mail_trash_btn and self._mail_trash_btn.winfo_exists():
-            self._mail_trash_btn.configure(text=f"Trash ({trash_n})" if trash_n else "Trash")
-        if self._mail_inbox_btn and self._mail_inbox_btn.winfo_exists():
-            if self._mail_folder == "inbox":
-                self._mail_inbox_btn.configure(bg=COLORS["accent_dim"], fg="white")
-                if self._mail_trash_btn:
-                    self._mail_trash_btn.configure(bg=COLORS["border"], fg=COLORS["text"])
+        for tab, btn in self._mail_tab_btns.items():
+            if not btn.winfo_exists():
+                continue
+            unread = self.game.mail.unread_in_category(tab, self.game)
+            base = TAB_LABELS[tab]
+            if tab == "trash":
+                count = len(self.game.mail.trash)
+                label = f"{base} ({count})" if count else base
             else:
-                self._mail_inbox_btn.configure(bg=COLORS["border"], fg=COLORS["text"])
-                if self._mail_trash_btn:
-                    self._mail_trash_btn.configure(bg=COLORS["warn"], fg="white")
+                label = f"{base} ({unread})" if unread else base
+            btn.configure(text=label)
+            if tab == self._mail_folder:
+                if tab == "trash":
+                    btn.configure(bg=COLORS["warn"], fg="white")
+                else:
+                    btn.configure(bg=COLORS["accent_dim"], fg="white")
+            else:
+                btn.configure(bg=COLORS["border"], fg=COLORS["text"])
         if self._mail_header:
-            self._mail_header.configure(
-                text="TRASH" if self._mail_folder == "trash" else "INBOX",
-                fg=COLORS["warn"] if self._mail_folder == "trash" else COLORS["accent"],
-            )
+            if self._mail_folder == "trash":
+                self._mail_header.configure(text="TRASH", fg=COLORS["warn"])
+            else:
+                self._mail_header.configure(
+                    text=TAB_LABELS.get(self._mail_folder, "MAIL").upper(),
+                    fg=COLORS["accent"],
+                )
         self._rebuild_mail_buttons()
         self._populate_mail_list(self._mail_listbox)
         if self._mail_meta:
-            folder_hint = "Trash — select to read. Delete Forever removes permanently."
-            inbox_hint = "Select a message"
+            hints = {
+                "contracts": "Contracts, intel, and broker updates",
+                "rivals": "Rival trash talk and warnings",
+                "completed": "Paid contracts and closed threads",
+                "trash": "Trash — select to read. Delete Forever removes permanently.",
+            }
             self._mail_meta.configure(
-                text=folder_hint if self._mail_folder == "trash" else inbox_hint,
+                text=hints.get(self._mail_folder, "Select a message"),
                 fg=COLORS["muted"],
             )
         if self._mail_viewer:
@@ -1598,6 +1636,8 @@ class DesktopApp:
         if msgs:
             self._mail_listbox.selection_set(0)
             self._mail_listbox.event_generate("<<ListboxSelect>>")
+        elif self._mail_reply_frame:
+            self._mail_reply_frame.grid_remove()
 
     def _rebuild_mail_buttons(self) -> None:
         if not self._mail_btn_row:
@@ -1629,7 +1669,7 @@ class DesktopApp:
     def _populate_mail_list(self, listbox: tk.Listbox) -> None:
         listbox.delete(0, tk.END)
         for msg in self._mail_current_messages():
-            prefix = "● " if not msg.read and self._mail_folder == "inbox" else "   "
+            prefix = "● " if not msg.read and self._mail_folder != "trash" else "   "
             tag = "🗑 " if self._mail_folder == "trash" else prefix
             listbox.insert(tk.END, f"{tag}{msg.subject[:40]}")
 
@@ -1661,14 +1701,16 @@ class DesktopApp:
         return "break"
 
     def _mark_all_mail_read(self) -> None:
-        self.game.mail.mark_all_read()
+        if self._mail_folder != "trash":
+            for msg in self._mail_current_messages():
+                msg.read = True
+            self.game.autosave(force=True)
         self._refresh_mail_badge()
         self.refresh_taskbar()
-        if self._mail_listbox:
-            self._populate_mail_list(self._mail_listbox)
+        self._refresh_mail_ui()
 
     def _delete_selected_mail(self) -> None:
-        if self._mail_folder != "inbox":
+        if self._mail_folder == "trash":
             return
         msg = self._selected_mail_message()
         if not msg:
@@ -1681,9 +1723,12 @@ class DesktopApp:
         self.refresh_taskbar()
 
     def _delete_read_mail(self) -> None:
-        if self._mail_folder != "inbox":
+        if self._mail_folder == "trash":
             return
-        removed = self.game.mail.trash_all_read()
+        removed = 0
+        for msg in list(self._mail_current_messages()):
+            if msg.read and self.game.mail.trash_message(msg.mail_id):
+                removed += 1
         if removed:
             self.game.autosave(force=True)
         self._refresh_mail_ui()
@@ -1713,9 +1758,11 @@ class DesktopApp:
             return
         self.game.mail.restore_message(msg.mail_id)
         self.game.autosave(force=True)
-        self._mail_folder = "inbox"
+        from mail_categories import mail_category
+
+        self._mail_folder = mail_category(msg, self.game)
         self._refresh_mail_ui()
-        self._clear_mail_viewer("Restored to Inbox.")
+        self._clear_mail_viewer("Restored to mailbox.")
         self._refresh_mail_badge()
         self.refresh_taskbar()
 
