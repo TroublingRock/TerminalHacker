@@ -226,19 +226,11 @@ class LLMStructManager:
         if not tf and mt != "ghost":
             tf = VarietyMissionGenerator._pick_loot_file(server)
 
-        reward = 320 + server.security_level * 100 + random.randint(0, 180)
-        if mt == "ghost":
-            tf = ""
-            reward += 200
-        elif mt == "root_heist":
-            reward += 300
+        from economy import EconomyManager
+        reward, rep = EconomyManager.build_classic_reward(server.security_level, mt)
         if mods_out:
             reward = int(reward * (1.0 + 0.12 * len(mods_out)))
         reward += int(spec.get("payout_bonus", 0))
-
-        rep = 35 + server.security_level * 12
-        if mt == "root_heist":
-            rep += 30
 
         briefing = str(spec.get("briefing", "")).strip()
         if not briefing:

@@ -128,7 +128,7 @@ class ChaosCareerManager:
         p.phase = "career"
         p.tutorial_step = len(__import__("main").TUTORIAL_CURRICULUM)
         p.tutorial_credits = 0
-        p.money = 1200
+        p.money = 850
         p.reputation = 150
         p.rank_index = 1
         p.cpu_level = 2
@@ -164,7 +164,7 @@ class ChaosCareerManager:
                 Mission(
                     "chaos-001", "nullbyte",
                     f"LOUD JOB: crack {starter_ip}, steal /home/admin/notes.txt, leave traces optional.",
-                    starter_ip, "/home/admin/notes.txt", 550, rep_reward=35,
+                    starter_ip, "/home/admin/notes.txt", 280, rep_reward=28,
                     require_log_wipe=False,
                 ),
             )
@@ -703,7 +703,7 @@ class GhostRaidManager:
             "/home/ghost/keys.txt",
             "/var/backups/abandoned.db",
         ])
-        reward = random.randint(380, 720)
+        reward = random.randint(220, 420)
         if ip not in game.network.servers:
             game.network.servers[ip] = Server(
                 ip, f"ghost-{octet}", 1,

@@ -522,8 +522,8 @@ class BrokerHeatScrub:
     COOLDOWN = 32
     MIN_HEAT = 4
     DROP = 3
-    BASE_COST = 500
-    COST_PER_HEAT = 220
+    BASE_COST = 780
+    COST_PER_HEAT = 310
     BROKER = "shade_runner"
 
     @staticmethod

@@ -453,7 +453,7 @@ class TutorialManager:
     def graduate(self) -> None:
         p = self.player
         p.phase = "career"
-        p.money = max(750, 500 + p.tutorial_credits)
+        p.money = max(450, 280 + p.tutorial_credits)
         p.tutorial_credits = 0
         p.reputation = 100
         p.rank_index = 1
@@ -472,7 +472,7 @@ class TutorialManager:
                 Mission(
                     "starter-001", "ghost_broker",
                     f"Warm-up contract: crack {starter_ip}, download /home/admin/notes.txt, wipe logs.",
-                    starter_ip, "/home/admin/notes.txt", 400, rep_reward=45,
+                    starter_ip, "/home/admin/notes.txt", 220, rep_reward=35,
                 ),
             )
         divider("CAREER MODE UNLOCKED")
@@ -793,10 +793,10 @@ class MissionBoard:
         self.missions = [
             Mission("ghost-001", "ghost_broker",
                     "Hack 10.0.0.42, download corporate_secrets.txt, wipe logs.", "10.0.0.42",
-                    "/home/admin/corporate_secrets.txt", 750, rep_reward=80),
+                    "/home/admin/corporate_secrets.txt", 420, rep_reward=65),
             Mission("cipher-002", "cipher7",
                     "Crack vault-server (10.0.0.55), privesc, exfil payroll.csv.", "10.0.0.55",
-                    "/root/payroll.csv", 1500, rep_reward=120),
+                    "/root/payroll.csv", 880, rep_reward=95),
         ]
         self._announced = False
 
@@ -855,6 +855,9 @@ class MissionBoard:
             payout = int(payout * style_mult)
             if mission.hourly_event and mission.reward_multiplier > 1:
                 payout = int(payout * mission.reward_multiplier)
+            from economy import EconomyManager
+            payout = int(payout * EconomyManager.payout_multiplier(game, mission))
+            payout, broker_fee = EconomyManager.apply_broker_fee(game, payout, mission.broker)
             rep = mission.rep_reward + MasteryGrader.rep_bonus(grade)
             mission.completed = True
             game.player.earn(payout, f"contract {mission.broker}")
@@ -862,6 +865,9 @@ class MissionBoard:
             if style_note:
                 from main import info
                 info(style_note)
+            if broker_fee > 0:
+                from main import muted
+                muted(f"  Broker cut: -${broker_fee}")
             self.complete_mission_hooks(game, mission, payout, rep)
             if game.mail:
                 game.mail.send(
@@ -952,48 +958,48 @@ def defense_firewall_help(game: "Game") -> list[str]:
 
 SHOP_CATALOG = [
     ShopItem(
-        "cpu", "CPU Upgrade", "Faster brute-force attacks.", 200,
+        "cpu", "CPU Upgrade", "Faster brute-force attacks.", 280,
         detail="Upgrade gear. Each CPU level adds +1 offensive power (FW L4 needs power ≥4).",
         max_level=6,
     ),
     ShopItem(
         "firewall", "Firewall Upgrade",
-        "Passive protection — blocks rival attacks automatically.", 175,
+        "Passive protection — blocks rival attacks automatically.", 245,
         detail="Always active (no toggle). Rivals compare attack power vs your firewall level. "
         "Upgrade if you keep getting breached. Separate from 'Defense mode' (defend on).",
         max_level=5,
     ),
     ShopItem(
-        "vpn_pro", "VPN Pro License", "Permanent VPN in career mode.", 300,
+        "vpn_pro", "VPN Pro License", "Permanent VPN in career mode.", 420,
         detail="Tutorial VPN is free. Career needs this license for vpn connect. "
         "Victims log the VPN exit IP instead of your real public IP.",
         max_level=1,
     ),
     ShopItem(
-        "hydra", "Hydra Lite", "Smarter password wordlist ordering.", 350,
+        "hydra", "Hydra Lite", "Smarter password wordlist ordering.", 490,
         detail="Permanent tool. +2 offensive power (stacks with CPU). FW L4 needs CPU L2+hydra or CPU L4.",
         max_level=1,
     ),
     ShopItem(
-        "hashcat", "Hashcat Pro", "Cuts failed crack attempts ~40%.", 800,
+        "hashcat", "Hashcat Pro", "Cuts failed crack attempts ~40%.", 1120,
         detail="Permanent tool. Requires Hydra Lite. +4 offensive power total — cracks FW L6+ hosts.",
         max_level=1,
     ),
     ShopItem(
-        "burner_ip", "Burner IP Kit", "Mask egress IP for 8 commands.", 120,
+        "burner_ip", "Burner IP Kit", "Mask egress IP for 8 commands.", 165,
         consumable=True,
         max_level=1,
         detail="Consumable. After buying: use burner_ip in Terminal. Masks the IP written to remote logs "
         "for 8 commands. Stacks with VPN.",
     ),
     ShopItem(
-        "zero_day", "Zero-day Exploit", "Instant crack on current SSH target.", 450,
+        "zero_day", "Zero-day Exploit", "Instant crack on current SSH target.", 620,
         consumable=True,
         max_level=1,
         detail="Consumable. connect to a host, then: use zero_day — skips brute-force once.",
     ),
     ShopItem(
-        "decoy_log", "Decoy Log Pack", "6 commands of full trace immunity.", 200,
+        "decoy_log", "Decoy Log Pack", "6 commands of full trace immunity.", 275,
         consumable=True,
         max_level=1,
         detail="Consumable. use decoy_log — disconnect without leaving trace evidence for 6 commands.",
@@ -1453,9 +1459,9 @@ class ThreatSystem:
                 RivalAIManager.send_block_taunt(self.game, rival, p.firewall_level)
             return
 
-        loss = random.randint(40, 100) * max(1, power - p.firewall_level)
-        if p.phase == "career" and p.money < 1200:
-            loss = min(loss, max(35, p.money // 3))
+        loss = random.randint(55, 145) * max(1, power - p.firewall_level)
+        if p.phase == "career" and p.money < 900:
+            loss = min(loss, max(45, p.money // 4))
         p.penalize(loss, f"{rival} breached your defenses")
         self.game.retention.last_rival = rival
         self.game.retention.rival_aggression = min(
@@ -1917,7 +1923,7 @@ class Game:
                     from endless_mode import EndlessManager
                     EndlessManager.on_death(self, "forensic trace")
                 else:
-                    self.player.penalize(random.randint(50, 120), "Forensic trace")
+                    self.player.penalize(random.randint(75, 185), "Forensic trace")
         else:
             self.try_unlock("ghost_hands")
             self.player.tutorial_flags.add("daily_zero_trace_done")
@@ -2046,7 +2052,9 @@ class Game:
             if "daily_shop_bought" not in self.player.tutorial_flags:
                 self.player.tutorial_flags.add("daily_no_shop_done")
             if self.player.phase == "career":
-                self.player.earn(40 + s.security_level * 20, "crack bounty")
+                from economy import EconomyManager
+                bounty = EconomyManager.crack_bounty(s.security_level, self.player.reputation)
+                self.player.earn(bounty, "crack bounty")
                 from progression import ReputationSystem
                 ReputationSystem.add_rep(self, 15 + s.security_level * 5, "intrusion")
             from chaos_system import CareerPressureManager, RivalReactionManager
@@ -2528,7 +2536,7 @@ class Game:
             success("Defense mode off.")
             return
         if action == "upgrade":
-            cost = 200 * self.blue.ids_level
+            cost = 280 * self.blue.ids_level
             if not self.player.spend(cost, "IDS upgrade"):
                 return
             self.blue.ids_level += 1

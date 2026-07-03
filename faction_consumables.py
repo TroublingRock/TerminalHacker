@@ -46,18 +46,18 @@ CONSUMABLES: dict[str, dict[str, Any]] = {
     "burner_ip": {
         "name": "Burner IP Kit",
         "desc": "Mask egress IP for 8 commands.",
-        "cost": 120,
+        "cost": 165,
         "commands": 8,
     },
     "zero_day": {
         "name": "Zero-day Exploit",
         "desc": "Auto-crack current SSH target once.",
-        "cost": 450,
+        "cost": 620,
     },
     "decoy_log": {
         "name": "Decoy Log Pack",
         "desc": "6 commands of full trace immunity.",
-        "cost": 200,
+        "cost": 275,
         "commands": 6,
     },
     "miner_payload": {

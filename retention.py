@@ -17,12 +17,12 @@ if TYPE_CHECKING:
 
 STREAK_MILESTONES: dict[int, tuple[int, int, str]] = {
     # day: (cash, season_xp, message)
-    1: (75, 25, "Day 1 check-in — stay in the fight."),
-    3: (150, 40, "3-day streak. Brokers are watching."),
-    7: (400, 100, "Week one locked in. Bonus intel incoming."),
-    14: (800, 175, "Two weeks straight. You're reliable."),
-    21: (1200, 250, "Three-week streak — elite contractor status."),
-    30: (3000, 500, "MONTH STREAK. Net God clearance unlocked in brokers' eyes."),
+    1: (50, 25, "Day 1 check-in — stay in the fight."),
+    3: (100, 40, "3-day streak. Brokers are watching."),
+    7: (275, 100, "Week one locked in. Bonus intel incoming."),
+    14: (550, 175, "Two weeks straight. You're reliable."),
+    21: (850, 250, "Three-week streak — elite contractor status."),
+    30: (2100, 500, "MONTH STREAK. Net God clearance unlocked in brokers' eyes."),
 }
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Crack corp-gateway (192.168.1.10), exfil any file, vanish clean.",
         "target_ip": "192.168.1.10",
         "target_file": "/home/admin/notes.txt",
-        "reward": 900,
+        "reward": 620,
         "rep_reward": 90,
         "min_rep": 0,
     },
@@ -162,7 +162,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Hit vendor-vpn (192.168.1.30). Ghost run — zero traces, no exfil needed.",
         "target_ip": "192.168.1.30",
         "target_file": "",
-        "reward": 1100,
+        "reward": 760,
         "rep_reward": 110,
         "min_rep": 0,
         "mission_type": "ghost",
@@ -174,7 +174,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Steal terminations.csv from hr-portal (10.0.0.88), wipe logs.",
         "target_ip": "10.0.0.88",
         "target_file": "/home/admin/terminations.csv",
-        "reward": 1400,
+        "reward": 980,
         "rep_reward": 130,
         "min_rep": 150,
     },
@@ -185,7 +185,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Privesc on fin-trading (172.16.0.20), exfil algo_config.yml.",
         "target_ip": "172.16.0.20",
         "target_file": "/home/admin/algo_config.yml",
-        "reward": 2000,
+        "reward": 1400,
         "rep_reward": 160,
         "min_rep": 400,
         "require_privesc": True,
@@ -198,7 +198,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Steal model_weights.bin from research-node (192.168.1.25).",
         "target_ip": "192.168.1.25",
         "target_file": "/home/admin/model_weights.bin",
-        "reward": 1250,
+        "reward": 880,
         "rep_reward": 115,
         "min_rep": 0,
     },
@@ -209,7 +209,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Privesc vault-server (10.0.0.55), exfil payroll.csv as root.",
         "target_ip": "10.0.0.55",
         "target_file": "/root/payroll.csv",
-        "reward": 2200,
+        "reward": 1550,
         "rep_reward": 175,
         "min_rep": 150,
         "require_privesc": True,
@@ -222,7 +222,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Crack chaos-c2 (203.0.113.66), exfil rival_plans.txt, survive traces.",
         "target_ip": "203.0.113.66",
         "target_file": "/root/rival_plans.txt",
-        "reward": 3500,
+        "reward": 2500,
         "rep_reward": 200,
         "min_rep": 750,
         "require_privesc": True,
@@ -235,7 +235,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Hit dark-vault (203.0.113.99) — root heist on cold_wallet.dat.",
         "target_ip": "203.0.113.99",
         "target_file": "/root/cold_wallet.dat",
-        "reward": 5000,
+        "reward": 3600,
         "rep_reward": 250,
         "min_rep": 750,
         "require_privesc": True,
@@ -1057,6 +1057,8 @@ class RetentionManager:
         from progression import DailyChallenge
 
         cid, desc, reward, flag = DAILY_ROTATION[RetentionManager.daily_slot()]
+        from economy import DAILY_CASH_MULT
+        reward = max(100, int(reward * DAILY_CASH_MULT))
         return DailyChallenge(cid, desc, reward, flag)
 
     @staticmethod
@@ -1187,12 +1189,14 @@ class RetentionManager:
             r.season_xp -= need
             tier = SEASON_TIERS[r.season_tier]
             r.season_tier += 1
-            game.player.earn(tier["cash"], f"season tier {r.season_tier}")
+            from economy import SEASON_CASH_MULT
+            season_cash = max(50, int(tier["cash"] * SEASON_CASH_MULT))
+            game.player.earn(season_cash, f"season tier {r.season_tier}")
             ReputationSystem.add_rep(game, tier["rep"], f"season tier {r.season_tier}")
             game.mail.send(
                 "security@terminalhacker.local",
                 f"Season tier {r.season_tier} unlocked",
-                f"{tier['label']}\n+${tier['cash']} +{tier['rep']} rep\n\nKeep the streak alive.",
+                f"{tier['label']}\n+${season_cash} +{tier['rep']} rep\n\nKeep the streak alive.",
             )
             if r.season_tier >= len(SEASON_TIERS):
                 game.achievements.unlock("season_complete")
