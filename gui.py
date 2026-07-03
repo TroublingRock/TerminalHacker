@@ -1004,15 +1004,16 @@ class DesktopApp:
         panel._title_lbl = title_lbl  # type: ignore[attr-defined]
         panel._titlebar = titlebar  # type: ignore[attr-defined]
         panel._geom = geom  # type: ignore[attr-defined]
-        panel._maximized = False  # type: ignore[attr-defined]
+        panel._maximized = True  # type: ignore[attr-defined]
         panel._max_btn = max_btn  # type: ignore[attr-defined]
+        max_btn.configure(text="=")
         self.open_windows[key] = panel
 
         self._bind_window_drag(key, titlebar, title_lbl, shell)
         inner.bind("<Button-1>", lambda _e, k=key: self._focus_window(k), add="+")
         shell.bind("<Button-1>", lambda _e, k=key: self._focus_window(k), add="+")
 
-        self._place_window(key, shell, geom[2], geom[3])
+        self._place_maximized(shell)
         self._focus_window(key)
         sounds.play("open")
         return panel
