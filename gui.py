@@ -148,6 +148,15 @@ class DesktopApp:
         self._mail_btn_row: tk.Frame | None = None
         self._mail_inbox_btn: tk.Button | None = None
         self._mail_trash_btn: tk.Button | None = None
+        self._mail_reply_frame: tk.Frame | None = None
+        self._mail_reply_text: scrolledtext.ScrolledText | None = None
+        self._mail_reply_btn: tk.Button | None = None
+        self._mail_reply_hint: tk.Label | None = None
+        self._board_listbox: tk.Listbox | None = None
+        self._board_viewer: scrolledtext.ScrolledText | None = None
+        self._board_compose: scrolledtext.ScrolledText | None = None
+        self._board_rival_var: tk.StringVar | None = None
+        self._board_meta: tk.Label | None = None
         self.taskbar_label: tk.Label | None = None
         self.clock_label: tk.Label | None = None
         self.desktop_canvas: tk.Canvas | None = None
@@ -1267,6 +1276,15 @@ class DesktopApp:
             self._mail_inbox_btn = None
             self._mail_trash_btn = None
             self._mail_folder = "inbox"
+            self._mail_reply_frame = None
+            self._mail_reply_text = None
+            self._mail_reply_btn = None
+            self._mail_reply_hint = None
+            self._board_listbox = None
+            self._board_viewer = None
+            self._board_compose = None
+            self._board_rival_var = None
+            self._board_meta = None
         if key == "files":
             self._files_list_frame = None
             self._files_preview_frame = None
@@ -1381,6 +1399,34 @@ class DesktopApp:
         self._mail_viewer = viewer
         self._mail_meta = meta
 
+        reply_frame = tk.Frame(right, bg=COLORS["window"])
+        reply_frame.pack(fill=tk.X, pady=(8, 0))
+        self._mail_reply_frame = reply_frame
+        self._mail_reply_hint = tk.Label(
+            reply_frame,
+            text="Select rival mail (@rival.net) to reply",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9), anchor=tk.W,
+        )
+        self._mail_reply_hint.pack(fill=tk.X)
+        reply_text = scrolledtext.ScrolledText(
+            reply_frame, height=3, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=F(10), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        reply_text.pack(fill=tk.X, pady=(4, 4))
+        self._mail_reply_text = reply_text
+        reply_btn_row = tk.Frame(reply_frame, bg=COLORS["window"])
+        reply_btn_row.pack(fill=tk.X)
+        self._mail_reply_btn = tk.Button(
+            reply_btn_row, text="Send Taunt Reply", command=self._mail_send_rival_reply,
+            bg=COLORS["warn"], fg="white", relief=tk.FLAT, padx=10, state=tk.DISABLED,
+        )
+        self._mail_reply_btn.pack(side=tk.LEFT)
+        tk.Label(
+            reply_btn_row,
+            text="Escalates rival anger — use Terminal mail reply for same effect",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(8),
+        ).pack(side=tk.LEFT, padx=8)
+
         def show_message(_event=None) -> None:
             sel = listbox.curselection()
             if not sel:
@@ -1398,6 +1444,7 @@ class DesktopApp:
             viewer.delete("1.0", tk.END)
             viewer.insert(tk.END, msg.body)
             viewer.configure(state=tk.DISABLED)
+            self._update_mail_reply_ui(msg)
             self._refresh_mail_badge()
             self.refresh_taskbar()
 
@@ -1409,6 +1456,54 @@ class DesktopApp:
 
         self._refresh_mail_ui()
         self._built_panels.add("mail")
+
+    def _update_mail_reply_ui(self, msg: MailMessage | None) -> None:
+        from chaos_system import CareerPressureManager
+        from rival_taunt import RivalTauntManager
+
+        rival = RivalTauntManager.rival_from_mail(msg) if msg else None
+        can_reply = (
+            bool(rival)
+            and self._mail_folder == "inbox"
+            and CareerPressureManager.can_trash_talk(self.game)
+        )
+        if self._mail_reply_hint:
+            if not msg:
+                hint = "Select a message"
+            elif not rival:
+                hint = "Only rival mail (@rival.net) can be taunted back"
+            elif not CareerPressureManager.can_trash_talk(self.game):
+                hint = "Crack a host first — rivals aren't watching yet"
+            else:
+                anger = self.game.retention.rival_anger.get(rival, 0)
+                hint = f"Reply to {rival} — anger {anger}/10 (public board taunts hit harder)"
+            self._mail_reply_hint.configure(text=hint)
+        if self._mail_reply_btn:
+            self._mail_reply_btn.configure(state=tk.NORMAL if can_reply else tk.DISABLED)
+
+    def _mail_send_rival_reply(self) -> None:
+        from tkinter import messagebox
+        from rival_taunt import RivalTauntManager
+
+        msg = self._selected_mail_message()
+        if not msg or not self._mail_reply_text:
+            return
+        body = self._mail_reply_text.get("1.0", tk.END).strip()
+        if len(body) < 5:
+            messagebox.showwarning("Too short", "Write at least 5 characters.")
+            return
+        if RivalTauntManager.mail_reply(self.game, msg.mail_id, body):
+            sounds.play("success")
+            self._mail_reply_text.delete("1.0", tk.END)
+            self.game.autosave(force=True)
+            self._refresh_mail_ui()
+            self._refresh_mail_badge()
+            self.refresh_taskbar()
+            self._refresh_status_panel()
+            messagebox.showinfo(
+                "Taunt sent",
+                "Rival received your reply. Check Mail and Board for their response.",
+            )
 
     def _mail_current_messages(self) -> list[MailMessage]:
         if self._mail_folder == "trash":
@@ -1452,6 +1547,7 @@ class DesktopApp:
             self._mail_viewer.configure(state=tk.NORMAL)
             self._mail_viewer.delete("1.0", tk.END)
             self._mail_viewer.configure(state=tk.DISABLED)
+        self._update_mail_reply_ui(None)
         msgs = self._mail_current_messages()
         if msgs:
             self._mail_listbox.selection_set(0)
@@ -1498,6 +1594,7 @@ class DesktopApp:
             self._mail_viewer.configure(state=tk.NORMAL)
             self._mail_viewer.delete("1.0", tk.END)
             self._mail_viewer.configure(state=tk.DISABLED)
+        self._update_mail_reply_ui(None)
 
     def _selected_mail_message(self) -> MailMessage | None:
         if not self._mail_listbox:
@@ -2165,11 +2262,13 @@ class DesktopApp:
 
     def open_social_board(self) -> None:
         from social_board import BOARD_NAMES, SocialBoardManager
+        from rival_taunt import RIVAL_KEYS
 
         if "board" in self._built_panels:
             self._show_app("board")
+            self._refresh_board_panel()
             return
-        win = self._window("board", "Darknet Board — Social Channels", 680, 520)
+        win = self._window("board", "Darknet Board — Social Channels", 760, 560)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         p = self.game.player
 
@@ -2181,24 +2280,189 @@ class DesktopApp:
             return
 
         SocialBoardManager.seed_if_needed(self.game)
-        tk.Label(body, text=f"Karma: {self.game.board.karma}  |  Boards: {', '.join(BOARD_NAMES)}",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=F(10)).pack(anchor=tk.W, pady=(4, 8))
+        self._board_meta = tk.Label(
+            body, text="", fg=COLORS["muted"], bg=COLORS["window"], font=F(10),
+        )
+        self._board_meta.pack(anchor=tk.W, pady=(4, 6))
 
-        scroll = scrolledtext.ScrolledText(body, height=18, bg=COLORS["terminal_bg"],
-                                           fg=COLORS["text"], font=F(10), relief=tk.FLAT)
-        scroll.pack(fill=tk.BOTH, expand=True)
-        for post in SocialBoardManager.list_posts(self.game, limit=20):
-            tag = " [YOU]" if post.player_post else ""
-            scroll.insert(tk.END, f"/{post.board}/{tag} {post.author}: {post.title}\n")
-            scroll.insert(tk.END, f"  {post.body[:200]}{'...' if len(post.body) > 200 else ''}\n")
-            scroll.insert(tk.END, f"  id={post.post_id}  +{post.likes} likes\n\n")
-        scroll.configure(state=tk.DISABLED)
+        panes = tk.Frame(body, bg=COLORS["window"])
+        panes.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(body, text="Terminal: board taunt acid_k | message  |  board reply post-0003 | message",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=F(9)).pack(anchor=tk.W, pady=(8, 0))
-        tk.Label(body, text="Terminal: board post flex Title | body  |  mail reply mail-0001 | message",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=F(9)).pack(anchor=tk.W, pady=(8, 0))
+        left = tk.Frame(panes, bg=COLORS["window"], width=260)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
+        self._board_listbox = tk.Listbox(
+            left, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=F(10), relief=tk.FLAT, selectbackground=COLORS["accent_dim"],
+            activestyle="none",
+        )
+        self._board_listbox.pack(fill=tk.BOTH, expand=True)
+        self._board_listbox.bind("<<ListboxSelect>>", self._show_board_post)
+
+        right = tk.Frame(panes, bg=COLORS["window"])
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
+        self._board_viewer = scrolledtext.ScrolledText(
+            right, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=F(10), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        self._board_viewer.pack(fill=tk.BOTH, expand=True)
+        self._board_viewer.configure(state=tk.DISABLED)
+
+        compose_frame = tk.Frame(body, bg=COLORS["window"])
+        compose_frame.pack(fill=tk.X, pady=(10, 0))
+        tk.Label(
+            compose_frame, text="Trash talk (raises rival anger + notoriety):",
+            fg=COLORS["warn"], bg=COLORS["window"], font=F(9, bold=True),
+        ).pack(anchor=tk.W)
+        self._board_compose = scrolledtext.ScrolledText(
+            compose_frame, height=3, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=F(10), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        self._board_compose.pack(fill=tk.X, pady=(4, 6))
+
+        action_row = tk.Frame(compose_frame, bg=COLORS["window"])
+        action_row.pack(fill=tk.X)
+        self._board_rival_var = tk.StringVar(value=sorted(RIVAL_KEYS)[0])
+        tk.Label(action_row, text="Rival:", fg=COLORS["text"], bg=COLORS["window"], font=F(9)).pack(
+            side=tk.LEFT,
+        )
+        rival_menu = tk.OptionMenu(action_row, self._board_rival_var, *sorted(RIVAL_KEYS))
+        rival_menu.configure(
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT,
+            highlightthickness=0, activebackground=COLORS["accent_dim"],
+        )
+        rival_menu.pack(side=tk.LEFT, padx=(4, 12))
+        tk.Button(
+            action_row, text="Public Taunt", command=self._board_send_taunt,
+            bg=COLORS["warn"], fg="white", relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            action_row, text="Reply to Selected Post", command=self._board_send_reply,
+            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            action_row, text="Upvote Post", command=self._board_upvote_selected,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(
+            body,
+            text=f"Boards: {', '.join(BOARD_NAMES)}  |  Terminal: board post flex Title | body",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+        ).pack(anchor=tk.W, pady=(8, 0))
+
+        self._refresh_board_panel()
         self._built_panels.add("board")
+
+    def _selected_board_post(self):
+        from social_board import SocialBoardManager
+
+        if not self._board_listbox:
+            return None
+        sel = self._board_listbox.curselection()
+        if not sel:
+            return None
+        posts = SocialBoardManager.list_posts(self.game, limit=30)
+        if sel[0] >= len(posts):
+            return None
+        return posts[sel[0]]
+
+    def _show_board_post(self, _event=None) -> None:
+        post = self._selected_board_post()
+        if not post or not self._board_viewer:
+            return
+        self._board_viewer.configure(state=tk.NORMAL)
+        self._board_viewer.delete("1.0", tk.END)
+        self._board_viewer.insert(
+            tk.END,
+            f"/{post.board}/  {post.post_id}\n"
+            f"Author: {post.author}\n"
+            f"Title: {post.title}\n"
+            f"Likes: {post.likes}\n\n"
+            f"{post.body}",
+        )
+        self._board_viewer.configure(state=tk.DISABLED)
+
+    def _refresh_board_panel(self) -> None:
+        from social_board import SocialBoardManager
+
+        if not self._board_listbox:
+            return
+        SocialBoardManager.seed_if_needed(self.game)
+        if self._board_meta:
+            self._board_meta.configure(
+                text=f"Karma: {self.game.board.karma}  |  Boards: intel, rivals, flex, lfg",
+            )
+        self._board_listbox.delete(0, tk.END)
+        posts = SocialBoardManager.list_posts(self.game, limit=30)
+        for post in posts:
+            tag = " [YOU]" if post.player_post else ""
+            self._board_listbox.insert(
+                tk.END, f"/{post.board}/{tag} {post.author}: {post.title[:36]}",
+            )
+        if posts:
+            self._board_listbox.selection_set(0)
+            self._show_board_post()
+
+    def _board_compose_text(self) -> str:
+        if not self._board_compose:
+            return ""
+        return self._board_compose.get("1.0", tk.END).strip()
+
+    def _board_send_taunt(self) -> None:
+        from tkinter import messagebox
+        from rival_taunt import RivalTauntManager
+
+        body = self._board_compose_text()
+        if len(body) < 5:
+            messagebox.showwarning("Too short", "Write at least 5 characters.")
+            return
+        rival = self._board_rival_var.get() if self._board_rival_var else "acid_k"
+        if RivalTauntManager.board_taunt(self.game, rival, body):
+            sounds.play("success")
+            if self._board_compose:
+                self._board_compose.delete("1.0", tk.END)
+            self.game.autosave(force=True)
+            self._refresh_board_panel()
+            self.refresh_taskbar()
+            self._refresh_status_panel()
+            messagebox.showinfo("Taunt posted", f"{rival} was provoked. Watch Mail and /rivals/.")
+
+    def _board_send_reply(self) -> None:
+        from tkinter import messagebox
+        from rival_taunt import RivalTauntManager
+
+        post = self._selected_board_post()
+        body = self._board_compose_text()
+        if not post:
+            messagebox.showwarning("No post", "Select a post on /rivals/ to reply.")
+            return
+        if post.board != "rivals":
+            messagebox.showwarning("Wrong board", "Reply taunts only work on /rivals/ posts.")
+            return
+        if len(body) < 5:
+            messagebox.showwarning("Too short", "Write at least 5 characters.")
+            return
+        if RivalTauntManager.board_reply(self.game, post.post_id, body):
+            sounds.play("success")
+            if self._board_compose:
+                self._board_compose.delete("1.0", tk.END)
+            self.game.autosave(force=True)
+            self._refresh_board_panel()
+            self._refresh_mail_ui()
+            self.refresh_taskbar()
+            self._refresh_status_panel()
+            messagebox.showinfo("Reply posted", "Rival anger increased. Check Mail for response.")
+
+    def _board_upvote_selected(self) -> None:
+        from social_board import SocialBoardManager
+
+        post = self._selected_board_post()
+        if not post:
+            return
+        if SocialBoardManager.upvote(self.game, post.post_id):
+            sounds.play("click")
+            self._refresh_board_panel()
 
     def open_shop(self) -> None:
         if "shop" in self._built_panels:
