@@ -17,6 +17,13 @@ TAB_LABELS = {
     "trash": "Trash",
 }
 
+TAB_SHORT = {
+    "contracts": "Contracts",
+    "rivals": "Rivals",
+    "completed": "Completed",
+    "trash": "Trash",
+}
+
 CONTRACT_ID_RE = re.compile(
     r"(?:contract offer:|new contract:|contract)\s+([A-Za-z0-9_-]+)",
     re.IGNORECASE,

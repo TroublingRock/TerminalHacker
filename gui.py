@@ -65,7 +65,7 @@ WINDOW_SIZES: dict[str, tuple[int, int]] = {
     "terminal": (820, 560),
     "notes": (440, 520),
     "files": (520, 480),
-    "mail": (640, 500),
+    "mail": (760, 580),
     "jobs": (660, 500),
     "board": (620, 480),
     "shop": (560, 480),
@@ -147,7 +147,7 @@ class DesktopApp:
         self._mail_header: tk.Label | None = None
         self._mail_btn_row: tk.Frame | None = None
         self._mail_tab_btns: dict[str, tk.Button] = {}
-        self._mail_trash_btn: tk.Button | None = None
+        self._mail_tab_row: tk.Frame | None = None
         self._mail_reply_frame: tk.Frame | None = None
         self._mail_reply_text: scrolledtext.ScrolledText | None = None
         self._mail_reply_btn: tk.Button | None = None
@@ -1277,6 +1277,7 @@ class DesktopApp:
             self._mail_header = None
             self._mail_btn_row = None
             self._mail_tab_btns = {}
+            self._mail_tab_row = None
             self._mail_folder = "contracts"
             self._mail_reply_frame = None
             self._mail_reply_text = None
@@ -1349,58 +1350,46 @@ class DesktopApp:
             self._refresh_mail_ui()
             self._update_mail_reply_ui(self._selected_mail_message())
             return
-        win = self._window("mail", "Mail — Secure Inbox", 720, 580)
+        win = self._window("mail", "Mail — Secure Inbox", 760, 600)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(2, weight=1)
+        body.rowconfigure(3, weight=1)
 
         self._mail_header = tk.Label(body, text="INBOX", fg=COLORS["accent"], bg=COLORS["window"],
                                      font=F(14, bold=True))
         self._mail_header.grid(row=0, column=0, sticky="ew")
 
-        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
-        self._mail_btn_row.grid(row=1, column=0, sticky="ew", pady=(8, 6))
+        from mail_categories import MAIL_TABS, TAB_SHORT
 
-        panes = tk.Frame(body, bg=COLORS["window"])
-        panes.grid(row=2, column=0, sticky="nsew")
-
-        left = tk.Frame(panes, bg=COLORS["window"], width=280)
-        left.pack(side=tk.LEFT, fill=tk.Y)
-        left.pack_propagate(False)
-
-        folder_row = tk.Frame(left, bg=COLORS["window"])
-        folder_row.pack(fill=tk.X, pady=(0, 4))
-        folder_row2 = tk.Frame(left, bg=COLORS["window"])
-        folder_row2.pack(fill=tk.X, pady=(0, 6))
-        from mail_categories import MAIL_TABS
-
-        tab_short = {
-            "contracts": "Contracts",
-            "rivals": "Rivals",
-            "completed": "Completed",
-            "trash": "Trash",
-        }
-        tab_rows = {
-            "contracts": folder_row,
-            "rivals": folder_row,
-            "completed": folder_row2,
-            "trash": folder_row2,
-        }
+        self._mail_tab_row = tk.Frame(body, bg=COLORS["window"])
+        self._mail_tab_row.grid(row=1, column=0, sticky="ew", pady=(6, 4))
+        for col in range(len(MAIL_TABS)):
+            self._mail_tab_row.columnconfigure(col, weight=1, uniform="mailtabs")
         self._mail_tab_btns = {}
-        for tab in MAIL_TABS:
+        for col, tab in enumerate(MAIL_TABS):
             btn = tk.Button(
-                tab_rows[tab],
-                text=tab_short[tab],
+                self._mail_tab_row,
+                text=TAB_SHORT[tab],
                 command=lambda t=tab: self._switch_mail_folder(t),
                 bg=COLORS["border"],
                 fg=COLORS["text"],
                 relief=tk.FLAT,
-                padx=6,
-                pady=2,
+                padx=4,
+                pady=4,
                 font=F(9),
             )
-            btn.pack(side=tk.LEFT, padx=(0, 4))
+            btn.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 3, 0))
             self._mail_tab_btns[tab] = btn
+
+        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
+        self._mail_btn_row.grid(row=2, column=0, sticky="ew", pady=(4, 6))
+
+        panes = tk.Frame(body, bg=COLORS["window"])
+        panes.grid(row=3, column=0, sticky="nsew")
+
+        left = tk.Frame(panes, bg=COLORS["window"], width=260)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
 
         listbox = tk.Listbox(
             left, bg=COLORS["terminal_bg"], fg=COLORS["text"],
@@ -1427,7 +1416,7 @@ class DesktopApp:
         self._mail_meta = meta
 
         reply_frame = tk.Frame(body, bg=COLORS["window"])
-        reply_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        reply_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         self._mail_reply_frame = reply_frame
         tk.Label(
             reply_frame,
@@ -1514,7 +1503,7 @@ class DesktopApp:
             self._mail_reply_btn.configure(state=tk.NORMAL if can_reply else tk.DISABLED)
         if self._mail_reply_frame:
             if self._mail_folder == "rivals":
-                self._mail_reply_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+                self._mail_reply_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
             else:
                 self._mail_reply_frame.grid_remove()
 
@@ -1584,7 +1573,7 @@ class DesktopApp:
         self._refresh_mail_ui()
 
     def _refresh_mail_ui(self) -> None:
-        from mail_categories import TAB_LABELS
+        from mail_categories import TAB_LABELS, TAB_SHORT
 
         if not self._mail_listbox:
             return
@@ -1592,7 +1581,7 @@ class DesktopApp:
             if not btn.winfo_exists():
                 continue
             unread = self.game.mail.unread_in_category(tab, self.game)
-            base = TAB_LABELS[tab]
+            base = TAB_SHORT[tab]
             if tab == "trash":
                 count = len(self.game.mail.trash)
                 label = f"{base} ({count})" if count else base
