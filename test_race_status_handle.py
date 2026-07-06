@@ -71,11 +71,29 @@ class HandleTests(unittest.TestCase):
             path.write_text(json.dumps(data))
             loaded = json.loads(path.read_text())
             self.assertEqual(loaded["player"]["handle"], "ghost_ops")
+            self.assertIn("handle_chosen", loaded["player"]["tutorial_flags"])
 
             game2 = Game()
             SaveManager._deserialize(game2, loaded)
             self.assertEqual(game2.player.handle, "ghost_ops")
             self.assertEqual(game2.player.display_name(), "ghost_ops")
+
+    def test_needs_handle_setup_until_chosen(self) -> None:
+        from main import HANDLE_CHOSEN_FLAG, needs_handle_setup
+
+        game = Game()
+        self.assertTrue(needs_handle_setup(game))
+        game.apply_handle("cipher7")
+        self.assertFalse(needs_handle_setup(game))
+        self.assertIn(HANDLE_CHOSEN_FLAG, game.player.tutorial_flags)
+
+    def test_migrate_handle_chosen_from_save(self) -> None:
+        from main import migrate_handle_chosen, needs_handle_setup
+
+        game = Game()
+        game.player.handle = "legacy_ops"
+        migrate_handle_chosen(game)
+        self.assertFalse(needs_handle_setup(game))
 
 
 if __name__ == "__main__":

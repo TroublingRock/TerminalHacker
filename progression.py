@@ -844,6 +844,9 @@ class SaveManager:
             elif hasattr(p, k):
                 setattr(p, k, v)
 
+        from main import migrate_handle_chosen
+        migrate_handle_chosen(game)
+
         if daily_data:
             game.daily = DailyChallenge(
                 daily_data["challenge_id"], daily_data["description"],

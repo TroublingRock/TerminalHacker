@@ -590,7 +590,7 @@ class TutorialManager:
         self.game.mail.send(
             "training_officer@terminalhacker.local",
             "URGENT — boot your workstation",
-            "Trainee,\n\n"
+            f"{p.display_name()},\n\n"
             "We detected probe traffic on the lab subnet. Before you touch anything remote:\n\n"
             "  1. Open Terminal → type: lesson\n"
             "  2. Run: ifconfig\n"
@@ -603,7 +603,7 @@ class TutorialManager:
         self.game.mail.send(
             "acid_k@rival.net",
             "new fish on the wire",
-            "Another trainee just booted up.\n"
+            f"{p.display_name()} just booted up.\n"
             "I'll be watching your scans. Try not to embarrass yourself.\n\n— acid_k",
         )
 
@@ -1501,6 +1501,18 @@ class ThreatSystem:
             self.game.tutorial.defense_attacks_triggered += 1
 
 
+HANDLE_CHOSEN_FLAG = "handle_chosen"
+
+
+def needs_handle_setup(game: "Game") -> bool:
+    return HANDLE_CHOSEN_FLAG not in game.player.tutorial_flags
+
+
+def migrate_handle_chosen(game: "Game") -> None:
+    if game.player.handle != "trainee":
+        game.player.tutorial_flags.add(HANDLE_CHOSEN_FLAG)
+
+
 # ---------------------------------------------------------------------------
 # Game engine
 # ---------------------------------------------------------------------------
@@ -1545,21 +1557,25 @@ class Game:
         self.quit_game = False
         self._cmds_since_autosave = 0
         self.last_autosave = ""
-        self._seed_mail()
+        # Welcome mail is sent after the player chooses a handle (GUI) or at banner (CLI).
 
     def autosave(self, force: bool = False) -> None:
         from progression import SaveManager
         SaveManager.autosave(self, force=force)
 
     def _seed_mail(self) -> None:
+        if "welcome_mail_sent" in self.player.tutorial_flags:
+            return
+        name = self.player.display_name()
         self.mail.send(
             "training_officer@terminalhacker.local",
             "Welcome to TerminalHacker Training",
-            "Trainee,\n\nYou are enrolled in the cybersecurity lab.\n"
+            f"{name},\n\nYou are enrolled in the cybersecurity lab.\n"
             "Open Training on the desktop (or type 'lesson' in Terminal).\n\n"
             "Your $500 tutorial budget covers training losses — career funds stay locked "
             "until graduation.\n\n— Training Officer",
         )
+        self.player.tutorial_flags.add("welcome_mail_sent")
 
     def banner(self) -> None:
         Console.out("Welcome to Ubuntu 24.04.2 LTS (GNU/Linux 6.8.0-generic x86_64)", "info")
@@ -2528,6 +2544,7 @@ class Game:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{2,15}", name):
             return False
         self.player.handle = name
+        self.player.tutorial_flags.add(HANDLE_CHOSEN_FLAG)
         from progression import SaveManager
         SaveManager.autosave(self, force=True)
         if hasattr(self, "gui_mode") and self.gui_mode:
@@ -3134,11 +3151,32 @@ class Game:
         else:
             error("Unknown command. Try lesson or help.")
 
+    def _prompt_handle_if_needed(self) -> None:
+        from progression import SaveManager
+
+        SaveManager.load(self, quiet=True)
+        migrate_handle_chosen(self)
+        if not needs_handle_setup(self):
+            return
+        Console.out("")
+        teach("Choose your hacker handle — this is how brokers and rivals know you.")
+        while self.running:
+            try:
+                name = input("Handle: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return
+            if self.apply_handle(name):
+                success(f"Welcome, {name}.")
+                return
+            error("Invalid handle — 3–16 chars, start with a letter (e.g. ghost_ops).")
+
     def run(self) -> None:
         try:
             import readline  # noqa: F401 — enables arrow-key history in CLI mode
         except ImportError:
             pass
+        self._prompt_handle_if_needed()
+        self._seed_mail()
         self.banner()
         while self.running:
             try:

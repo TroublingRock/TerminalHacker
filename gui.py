@@ -19,6 +19,7 @@ from main import (
     Shop,
     TUTORIAL_CURRICULUM,
     defense_firewall_help,
+    needs_handle_setup,
 )
 from chaos_system import ChaosCareerManager, NotorietyManager, MeltdownManager, ChaosNewsManager
 from progression import ACHIEVEMENTS, RANKS, ReputationSystem, SaveManager
@@ -205,7 +206,7 @@ class DesktopApp:
         self._build_top_panel()
         self._build_desktop()
         self._tick_clock()
-        self._run_onboarding()
+        self._begin_player_session()
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self.root.bind_all("<Escape>", self._unmaximize_active, add="+")
         self._schedule_autosave()
@@ -301,6 +302,8 @@ class DesktopApp:
         self._save_loaded = SaveManager.load(self.game, quiet=True)
         if self._save_loaded:
             self.game.tutorial.reconcile_stuck_lessons()
+            from main import migrate_handle_chosen
+            migrate_handle_chosen(self.game)
         if self._save_loaded and primary_was_reset:
             self._save_restore_notice = (
                 "Your career progress was restored from save backup. "
@@ -730,8 +733,96 @@ class DesktopApp:
         title_lbl.bind("<B1-Motion>", move, add="+")
         title_lbl.bind("<Double-Button-1>", dbl_toggle, add="+")
 
+    def _begin_player_session(self) -> None:
+        """First-time players must choose a handle before onboarding."""
+        if needs_handle_setup(self.game):
+            self.root.after(150, self._show_first_play_handle_dialog)
+        else:
+            self._run_onboarding()
+
+    def _show_first_play_handle_dialog(self) -> None:
+        from tkinter import messagebox
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("TerminalHacker — Operator Registration")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+        dlg.configure(bg=COLORS["window"])
+        dlg.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        w, h = 480, 300
+        dlg.geometry(f"{w}x{h}")
+        dlg.update_idletasks()
+        x = self.root.winfo_x() + max(0, (self.root.winfo_width() - w) // 2)
+        y = self.root.winfo_y() + max(0, (self.root.winfo_height() - h) // 2)
+        dlg.geometry(f"+{x}+{y}")
+
+        body = tk.Frame(dlg, bg=COLORS["window"], padx=24, pady=20)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            body, text="CHOOSE YOUR HANDLE",
+            fg=COLORS["accent"], bg=COLORS["window"], font=F(16, bold=True),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            body,
+            text=(
+                "Before you touch the terminal, pick the name brokers, rivals, "
+                "and the darknet will know you by.\n\n"
+                "3–16 characters · start with a letter · letters, numbers, _ or -"
+            ),
+            fg=COLORS["text"], bg=COLORS["window"], font=F(11),
+            justify=tk.LEFT, wraplength=w - 48,
+        ).pack(anchor=tk.W, pady=(10, 16))
+
+        entry_row = tk.Frame(body, bg=COLORS["window"])
+        entry_row.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(
+            entry_row, text="Handle:", fg=COLORS["muted"], bg=COLORS["window"], font=F(11),
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        handle_var = tk.StringVar()
+        entry = tk.Entry(
+            entry_row, textvariable=handle_var, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            insertbackground=COLORS["accent"], font=F(12), relief=tk.FLAT,
+        )
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
+        entry.focus_set()
+
+        hint = tk.Label(
+            body, text="Example: ghost_ops, nyx_root, cipher7",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+        )
+        hint.pack(anchor=tk.W, pady=(0, 16))
+
+        def submit(_event=None) -> None:
+            name = handle_var.get().strip()
+            if self.game.apply_handle(name):
+                sounds.play("success")
+                self.game._seed_mail()
+                self.refresh_taskbar()
+                self._rebuild_terminal_prompt()
+                dlg.destroy()
+                self._run_onboarding()
+            else:
+                messagebox.showwarning(
+                    "Invalid handle",
+                    "Use 3–16 characters, starting with a letter.\n"
+                    "Allowed: letters, numbers, underscore, hyphen.",
+                    parent=dlg,
+                )
+                entry.focus_set()
+
+        tk.Button(
+            body, text="Enter the Network", command=submit,
+            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT,
+            padx=16, pady=8, font=F(11, bold=True),
+        ).pack(anchor=tk.W)
+        entry.bind("<Return>", submit)
+
     def _run_onboarding(self) -> None:
         """Guide new tutorial players — auto-open Training on first launch."""
+        self.game._seed_mail()
         p = self.game.player
         if p.phase == "tutorial":
             self.game.tutorial.send_opening_hook()
@@ -3284,21 +3375,27 @@ class DesktopApp:
 
     def _gui_load_game(self) -> None:
         from progression import SaveManager
+        from main import migrate_handle_chosen
+
         if SaveManager.load(self.game):
             self.game.player._game_ref = self.game
+            migrate_handle_chosen(self.game)
             sounds.play("success")
             self._save_restore_notice = ""
             self.refresh_taskbar()
-            self._run_onboarding()
+            self._begin_player_session()
 
     def _gui_restore_backup(self) -> None:
         from progression import SaveManager
+        from main import migrate_handle_chosen
+
         if SaveManager.restore_backup(self.game):
             self.game.player._game_ref = self.game
+            migrate_handle_chosen(self.game)
             sounds.play("success")
             self._save_restore_notice = "Restored from save backup."
             self.refresh_taskbar()
-            self._run_onboarding()
+            self._begin_player_session()
 
     def run(self) -> None:
         import signal
