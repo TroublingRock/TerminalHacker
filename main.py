@@ -1534,20 +1534,21 @@ def migrate_handle_chosen(game: "Game") -> None:
         game.player.tutorial_flags.add(HANDLE_CHOSEN_FLAG)
 
 
-def repair_invalid_career_state(game: "Game") -> None:
+def repair_invalid_career_state(game: "Game") -> bool:
     """Send players back to tutorial if career unlocked without finishing or skipping."""
     from main import TUTORIAL_CURRICULUM
 
     p = game.player
     if p.phase != "career":
-        return
+        return False
     if "chaos_career" in p.tutorial_flags:
-        return
+        return False
     if p.tutorial_step >= len(TUTORIAL_CURRICULUM):
-        return
+        return False
     p.phase = "tutorial"
     p.handle = "trainee"
     p.tutorial_flags.discard(HANDLE_CHOSEN_FLAG)
+    return True
 
 
 # ---------------------------------------------------------------------------
