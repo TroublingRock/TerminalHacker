@@ -198,6 +198,9 @@ class ChaosCareerManager:
         else:
             from retention import RetentionManager
             RetentionManager.on_career_session(game)
+            from main import needs_handle_setup
+            if needs_handle_setup(game):
+                game.tutorial._prompt_career_handle_cli_if_needed()
 
         game.missions.announce_login(game.mail)
         game.autosave(force=True)

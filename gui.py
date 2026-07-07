@@ -206,12 +206,14 @@ class DesktopApp:
         self._build_top_panel()
         self._build_desktop()
         self._tick_clock()
-        self._begin_player_session()
+        self._run_onboarding()
+        if needs_handle_setup(self.game):
+            self.root.after(300, lambda: self._on_entered_career(show_graduation=False))
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
         self.root.bind_all("<Escape>", self._unmaximize_active, add="+")
         self._schedule_autosave()
         self.refresh_taskbar()
-        if self.game.defer_career_session:
+        if self.game.defer_career_session and not needs_handle_setup(self.game):
             self.root.after(200, self._run_deferred_career_session)
         self._raise_main_window()
 
@@ -299,11 +301,16 @@ class DesktopApp:
             if primary and backup and SaveManager._progress_key(backup) > SaveManager._progress_key(primary):
                 primary_was_reset = True
 
+        from main import migrate_handle_chosen, repair_invalid_career_state
+
         self._save_loaded = SaveManager.load(self.game, quiet=True)
         if self._save_loaded:
             self.game.tutorial.reconcile_stuck_lessons()
-            from main import migrate_handle_chosen
+            repaired = repair_invalid_career_state(self.game)
             migrate_handle_chosen(self.game)
+            if repaired:
+                from progression import SaveManager
+                SaveManager.save(self.game, quiet=True, allow_regression=True)
         if self._save_loaded and primary_was_reset:
             self._save_restore_notice = (
                 "Your career progress was restored from save backup. "
@@ -733,25 +740,37 @@ class DesktopApp:
         title_lbl.bind("<B1-Motion>", move, add="+")
         title_lbl.bind("<Double-Button-1>", dbl_toggle, add="+")
 
-    def _begin_player_session(self) -> None:
-        """First-time players must choose a handle before onboarding."""
+    def _on_entered_career(self, *, show_graduation: bool = True) -> None:
+        """Prompt for permanent handle when leaving tutorial, then continue career."""
         if needs_handle_setup(self.game):
-            self.root.after(150, self._show_first_play_handle_dialog)
+            self._show_career_handle_dialog(
+                lambda: self._continue_career_after_handle(show_graduation=show_graduation),
+            )
+        else:
+            self._continue_career_after_handle(show_graduation=show_graduation)
+
+    def _continue_career_after_handle(self, *, show_graduation: bool) -> None:
+        if self.game.defer_career_session:
+            self._run_deferred_career_session()
+        self.refresh_taskbar()
+        self._rebuild_terminal_prompt()
+        if show_graduation:
+            self._show_graduation_popup()
         else:
             self._run_onboarding()
 
-    def _show_first_play_handle_dialog(self) -> None:
+    def _show_career_handle_dialog(self, on_done) -> None:
         from tkinter import messagebox
 
         dlg = tk.Toplevel(self.root)
-        dlg.title("TerminalHacker — Operator Registration")
+        dlg.title("TerminalHacker — Choose Your Handle")
         dlg.transient(self.root)
         dlg.grab_set()
         dlg.resizable(False, False)
         dlg.configure(bg=COLORS["window"])
         dlg.protocol("WM_DELETE_WINDOW", lambda: None)
 
-        w, h = 480, 300
+        w, h = 500, 320
         dlg.geometry(f"{w}x{h}")
         dlg.update_idletasks()
         x = self.root.winfo_x() + max(0, (self.root.winfo_width() - w) // 2)
@@ -768,8 +787,8 @@ class DesktopApp:
         tk.Label(
             body,
             text=(
-                "Before you touch the terminal, pick the name brokers, rivals, "
-                "and the darknet will know you by.\n\n"
+                "Training is done — pick the name brokers, rivals, and the darknet "
+                "will know you by from here on.\n\n"
                 "3–16 characters · start with a letter · letters, numbers, _ or -"
             ),
             fg=COLORS["text"], bg=COLORS["window"], font=F(11),
@@ -789,21 +808,17 @@ class DesktopApp:
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
         entry.focus_set()
 
-        hint = tk.Label(
+        tk.Label(
             body, text="Example: ghost_ops, nyx_root, cipher7",
             fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
-        )
-        hint.pack(anchor=tk.W, pady=(0, 16))
+        ).pack(anchor=tk.W, pady=(0, 16))
 
         def submit(_event=None) -> None:
             name = handle_var.get().strip()
             if self.game.apply_handle(name):
                 sounds.play("success")
-                self.game._seed_mail()
-                self.refresh_taskbar()
-                self._rebuild_terminal_prompt()
                 dlg.destroy()
-                self._run_onboarding()
+                on_done()
             else:
                 messagebox.showwarning(
                     "Invalid handle",
@@ -814,7 +829,7 @@ class DesktopApp:
                 entry.focus_set()
 
         tk.Button(
-            body, text="Enter the Network", command=submit,
+            body, text="Lock In Handle", command=submit,
             bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT,
             padx=16, pady=8, font=F(11, bold=True),
         ).pack(anchor=tk.W)
@@ -1990,8 +2005,8 @@ class DesktopApp:
             if "status" in self._built_panels:
                 self.root.after(50, self._refresh_status_panel)
             if phase_before == "tutorial" and self.game.player.phase == "career":
-                self.root.after(150, self._show_graduation_popup)
-            elif self.game.defer_career_session:
+                self.root.after(150, lambda: self._on_entered_career(show_graduation=True))
+            elif self.game.defer_career_session and not needs_handle_setup(self.game):
                 self.root.after(50, self._run_deferred_career_session)
             if self._files_list_frame:
                 self._refresh_files()
@@ -2682,7 +2697,7 @@ class DesktopApp:
             ):
                 self.game.tutorial.reconcile_stuck_lessons()
                 if self.game.player.phase == "career":
-                    self.root.after(200, self._show_graduation_popup)
+                    self.root.after(200, lambda: self._on_entered_career(show_graduation=True))
             return
         win = self._window("shop", "Black Market — Upgrades", 680, 580)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
@@ -2795,7 +2810,7 @@ class DesktopApp:
                 self.refresh_taskbar()
                 self._refresh_status_panel()
                 if graduated:
-                    self._show_graduation_popup()
+                    self._on_entered_career(show_graduation=True)
             elif (
                 key == "firewall"
                 and p.phase == "tutorial"
@@ -3360,9 +3375,7 @@ class DesktopApp:
         self.game.autosave(force=True)
         self.refresh_taskbar()
         if phase_before == "tutorial" and self.game.player.phase == "career":
-            if self.game.defer_career_session:
-                self._run_deferred_career_session()
-            self._show_graduation_popup()
+            self._on_entered_career(show_graduation=True)
         else:
             from tkinter import messagebox
             p = self.game.player
@@ -3375,27 +3388,35 @@ class DesktopApp:
 
     def _gui_load_game(self) -> None:
         from progression import SaveManager
-        from main import migrate_handle_chosen
+        from main import migrate_handle_chosen, repair_invalid_career_state
 
         if SaveManager.load(self.game):
             self.game.player._game_ref = self.game
+            repair_invalid_career_state(self.game)
             migrate_handle_chosen(self.game)
             sounds.play("success")
             self._save_restore_notice = ""
             self.refresh_taskbar()
-            self._begin_player_session()
+            if needs_handle_setup(self.game):
+                self._on_entered_career(show_graduation=False)
+            else:
+                self._run_onboarding()
 
     def _gui_restore_backup(self) -> None:
         from progression import SaveManager
-        from main import migrate_handle_chosen
+        from main import migrate_handle_chosen, repair_invalid_career_state
 
         if SaveManager.restore_backup(self.game):
             self.game.player._game_ref = self.game
+            repair_invalid_career_state(self.game)
             migrate_handle_chosen(self.game)
             sounds.play("success")
             self._save_restore_notice = "Restored from save backup."
             self.refresh_taskbar()
-            self._begin_player_session()
+            if needs_handle_setup(self.game):
+                self._on_entered_career(show_graduation=False)
+            else:
+                self._run_onboarding()
 
     def run(self) -> None:
         import signal

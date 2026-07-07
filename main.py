@@ -452,6 +452,7 @@ class TutorialManager:
 
     def graduate(self) -> None:
         p = self.player
+        p.tutorial_step = len(TUTORIAL_CURRICULUM)
         p.phase = "career"
         p.money = max(450, 280 + p.tutorial_credits)
         p.tutorial_credits = 0
@@ -496,7 +497,23 @@ class TutorialManager:
         else:
             from retention import RetentionManager
             RetentionManager.on_career_session(self.game)
+            self._prompt_career_handle_cli_if_needed()
         self.game.autosave(force=True)
+
+    def _prompt_career_handle_cli_if_needed(self) -> None:
+        if not needs_handle_setup(self.game):
+            return
+        Console.out("")
+        teach("Training cleared — choose your permanent hacker handle.")
+        while True:
+            try:
+                name = input("Handle: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return
+            if self.game.apply_handle(name):
+                success(f"Career handle set to {name}.")
+                return
+            error("Invalid handle — 3–16 chars, start with a letter (e.g. ghost_ops).")
 
     def complete_defense_drill(self) -> None:
         self.player.tutorial_flags.add("defense_drill_done")
@@ -590,7 +607,7 @@ class TutorialManager:
         self.game.mail.send(
             "training_officer@terminalhacker.local",
             "URGENT — boot your workstation",
-            f"{p.display_name()},\n\n"
+            "Trainee,\n\n"
             "We detected probe traffic on the lab subnet. Before you touch anything remote:\n\n"
             "  1. Open Terminal → type: lesson\n"
             "  2. Run: ifconfig\n"
@@ -603,7 +620,7 @@ class TutorialManager:
         self.game.mail.send(
             "acid_k@rival.net",
             "new fish on the wire",
-            f"{p.display_name()} just booted up.\n"
+            "Another trainee just booted up.\n"
             "I'll be watching your scans. Try not to embarrass yourself.\n\n— acid_k",
         )
 
@@ -1505,12 +1522,32 @@ HANDLE_CHOSEN_FLAG = "handle_chosen"
 
 
 def needs_handle_setup(game: "Game") -> bool:
+    """Career handle — only after tutorial is finished or skipped."""
+    if game.player.phase not in ("career", "endless"):
+        return False
     return HANDLE_CHOSEN_FLAG not in game.player.tutorial_flags
 
 
 def migrate_handle_chosen(game: "Game") -> None:
-    if game.player.handle != "trainee":
+    """Legacy saves that already picked a career handle skip re-prompting."""
+    if game.player.phase in ("career", "endless") and game.player.handle != "trainee":
         game.player.tutorial_flags.add(HANDLE_CHOSEN_FLAG)
+
+
+def repair_invalid_career_state(game: "Game") -> None:
+    """Send players back to tutorial if career unlocked without finishing or skipping."""
+    from main import TUTORIAL_CURRICULUM
+
+    p = game.player
+    if p.phase != "career":
+        return
+    if "chaos_career" in p.tutorial_flags:
+        return
+    if p.tutorial_step >= len(TUTORIAL_CURRICULUM):
+        return
+    p.phase = "tutorial"
+    p.handle = "trainee"
+    p.tutorial_flags.discard(HANDLE_CHOSEN_FLAG)
 
 
 # ---------------------------------------------------------------------------
@@ -3155,20 +3192,8 @@ class Game:
         from progression import SaveManager
 
         SaveManager.load(self, quiet=True)
+        repair_invalid_career_state(self)
         migrate_handle_chosen(self)
-        if not needs_handle_setup(self):
-            return
-        Console.out("")
-        teach("Choose your hacker handle — this is how brokers and rivals know you.")
-        while self.running:
-            try:
-                name = input("Handle: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                return
-            if self.apply_handle(name):
-                success(f"Welcome, {name}.")
-                return
-            error("Invalid handle — 3–16 chars, start with a letter (e.g. ghost_ops).")
 
     def run(self) -> None:
         try:

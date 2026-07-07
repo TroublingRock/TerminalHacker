@@ -82,6 +82,8 @@ class HandleTests(unittest.TestCase):
         from main import HANDLE_CHOSEN_FLAG, needs_handle_setup
 
         game = Game()
+        self.assertFalse(needs_handle_setup(game))
+        game.player.phase = "career"
         self.assertTrue(needs_handle_setup(game))
         game.apply_handle("cipher7")
         self.assertFalse(needs_handle_setup(game))
@@ -91,9 +93,33 @@ class HandleTests(unittest.TestCase):
         from main import migrate_handle_chosen, needs_handle_setup
 
         game = Game()
+        game.player.phase = "career"
         game.player.handle = "legacy_ops"
         migrate_handle_chosen(game)
         self.assertFalse(needs_handle_setup(game))
+
+    def test_repair_premature_career(self) -> None:
+        from main import repair_invalid_career_state
+
+        game = Game()
+        game.player.phase = "career"
+        game.player.tutorial_step = 0
+        game.player.handle = "ghost_ops"
+        game.player.tutorial_flags.add("handle_chosen")
+        repair_invalid_career_state(game)
+        self.assertEqual(game.player.phase, "tutorial")
+        self.assertEqual(game.player.handle, "trainee")
+        self.assertNotIn("handle_chosen", game.player.tutorial_flags)
+
+    def test_skip_to_career_marks_training_done(self) -> None:
+        from main import TUTORIAL_CURRICULUM
+
+        game = Game()
+        game.player.phase = "tutorial"
+        game.player.tutorial_step = 2
+        self.assertTrue(game.tutorial.skip_to_career(chaos=False))
+        self.assertEqual(game.player.phase, "career")
+        self.assertEqual(game.player.tutorial_step, len(TUTORIAL_CURRICULUM))
 
 
 if __name__ == "__main__":

@@ -844,8 +844,10 @@ class SaveManager:
             elif hasattr(p, k):
                 setattr(p, k, v)
 
-        from main import migrate_handle_chosen
+        from main import migrate_handle_chosen, repair_invalid_career_state
+
         migrate_handle_chosen(game)
+        repair_invalid_career_state(game)
 
         if daily_data:
             game.daily = DailyChallenge(
