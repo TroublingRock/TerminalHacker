@@ -21,7 +21,9 @@ zip -r "$OUT" \
   "Play Security Simulator.command" \
   play-security-simulator.sh \
   "Security Simulator.desktop" \
+  VERSION \
   launch/bootstrap.py \
+  launch/update_check.py \
   -x '*__pycache__*' -x '*.pyc' -x 'test_*.py' -x '.git/*'
 
 chmod +x play-security-simulator.sh "Play Security Simulator.command" 2>/dev/null || true

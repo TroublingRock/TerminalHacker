@@ -15,6 +15,9 @@ Python 3.10+ is checked automatically; Windows can install it for you via winget
 
 See **[INSTALL.md](INSTALL.md)** for step-by-step setup and troubleshooting.
 
+**Updates:** launchers check GitHub daily and prompt when a newer `VERSION` is published.
+Bump `VERSION` in the repo root when you ship changes.
+
 ## Run (GUI — default)
 
 ```bash

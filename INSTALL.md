@@ -36,6 +36,16 @@ No terminal commands needed. Pick your platform after downloading the game folde
 - **Tkinter** for the GUI (bundled on Windows/macOS; `python3-tk` on Linux)
 - No pip packages required for core gameplay
 
+## Updates
+
+The launcher checks GitHub once per day for a newer `VERSION`. If an update is
+available, you'll see a prompt to open the download page. Your save in
+`~/.terminalhacker/save.json` is kept when you unzip a new copy.
+
+To ship an update as the maintainer, bump the `VERSION` file in the repo root.
+
+Skip checks: set `TERMINALHACKER_SKIP_UPDATE=1` or pass `--no-update-check`.
+
 ## Advanced / developers
 
 ```bash

@@ -8,8 +8,22 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MIN_VERSION = (3, 10)
+MIN_PYTHON = (3, 10)
 GAME_TITLE = "Security Simulator"
+
+
+def maybe_check_for_updates() -> None:
+    if "--no-update-check" in sys.argv:
+        return
+    launch_dir = os.path.join(ROOT, "launch")
+    if launch_dir not in sys.path:
+        sys.path.insert(0, launch_dir)
+    try:
+        from update_check import check_for_update
+
+        check_for_update()
+    except Exception:
+        pass
 
 
 def show_message(title: str, message: str, *, error: bool = False) -> None:
@@ -85,14 +99,16 @@ def main() -> int:
     if ROOT not in sys.path:
         sys.path.insert(0, ROOT)
 
-    if sys.version_info < MIN_VERSION:
+    if sys.version_info < MIN_PYTHON:
         show_message(
             GAME_TITLE,
-            f"Python {MIN_VERSION[0]}.{MIN_VERSION[1]}+ is required.\n"
+            f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ is required.\n"
             f"This interpreter is {sys.version_info.major}.{sys.version_info.minor}.",
             error=True,
         )
         return 1
+
+    maybe_check_for_updates()
 
     if "--cli" in sys.argv:
         os.execv(sys.executable, [sys.executable, os.path.join(ROOT, "main.py"), "--cli"])
