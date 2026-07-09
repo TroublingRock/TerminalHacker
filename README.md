@@ -2,6 +2,19 @@
 
 Educational cybersecurity training simulator with a desktop GUI and terminal hacking gameplay.
 
+## Play instantly (no terminal)
+
+| Platform | What to double-click |
+|----------|----------------------|
+| **Windows** | `Play Security Simulator.vbs` |
+| **macOS** | `Play Security Simulator.command` |
+| **Linux** | `play-security-simulator.sh` or `Security Simulator.desktop` |
+
+Download the repo (**Code → Download ZIP**), unzip, and open the launcher for your OS.  
+Python 3.10+ is checked automatically; Windows can install it for you via winget.
+
+See **[INSTALL.md](INSTALL.md)** for step-by-step setup and troubleshooting.
+
 ## Run (GUI — default)
 
 ```bash

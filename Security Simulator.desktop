@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Security Simulator
+Comment=Fictional computer security training game
+Exec=sh -c 'DIR="$(dirname "$1")"; cd "$DIR" && ./play-security-simulator.sh' _ %k
+Icon=utilities-terminal
+Terminal=false
+Categories=Game;Education;
+StartupNotify=true
