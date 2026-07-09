@@ -226,19 +226,11 @@ class LLMStructManager:
         if not tf and mt != "ghost":
             tf = VarietyMissionGenerator._pick_loot_file(server)
 
-        reward = 320 + server.security_level * 100 + random.randint(0, 180)
-        if mt == "ghost":
-            tf = ""
-            reward += 200
-        elif mt == "root_heist":
-            reward += 300
+        from economy import EconomyManager
+        reward, rep = EconomyManager.build_classic_reward(server.security_level, mt)
         if mods_out:
             reward = int(reward * (1.0 + 0.12 * len(mods_out)))
         reward += int(spec.get("payout_bonus", 0))
-
-        rep = 35 + server.security_level * 12
-        if mt == "root_heist":
-            rep += 30
 
         briefing = str(spec.get("briefing", "")).strip()
         if not briefing:
@@ -272,7 +264,8 @@ class LLMStructManager:
             mission.timing_limit_ticks = random.randint(14, 24)
             mission.timing_start_tick = game.player.ticks
         if "rival_race" in mods_out:
-            game.meta.rival_race_prog[mission.mission_id] = 0
+            from rival_ai import RivalAIManager
+            RivalAIManager.assign_race_rival(game, mission)
         mission.llm_source = source_tag  # type: ignore[attr-defined]
         return mission
 
@@ -430,13 +423,16 @@ class LLMStructManager:
         if not ev:
             return lines
         wk = _week_key()
-        applied = getattr(game.meta, "_world_event_applied_week", "")
+        applied = game.meta.world_event_applied_week
         if applied == wk:
             return lines
-        game.meta._world_event_applied_week = wk
+        game.meta.world_event_applied_week = wk
 
         hd = int(ev.get("heat_delta", 0))
         if hd:
+            from chaos_system import CareerPressureManager
+            if CareerPressureManager.rookie_grace(game) and hd > 0:
+                hd = min(hd, 2)
             if game.meta.subnet_heat:
                 hottest = max(game.meta.subnet_heat, key=game.meta.subnet_heat.get)
                 game.meta.subnet_heat[hottest] = max(0, min(10, game.meta.subnet_heat[hottest] + hd))
