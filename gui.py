@@ -65,7 +65,7 @@ WINDOW_SIZES: dict[str, tuple[int, int]] = {
     "terminal": (820, 560),
     "notes": (440, 520),
     "files": (520, 480),
-    "mail": (640, 500),
+    "mail": (760, 580),
     "jobs": (660, 500),
     "board": (620, 480),
     "shop": (560, 480),
@@ -84,6 +84,7 @@ WINDOW_STAGGER: dict[str, tuple[int, int]] = {
 
 # Quick-launch buttons appear only after the player types each command once.
 TERMINAL_QUICK_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("hint", "hint"),
     ("probe", "probe"),
     ("crack", "crack"),
     ("ls", "ls"),
@@ -130,6 +131,7 @@ class DesktopApp:
         self.game = Game()
         self.game.gui_mode = True
         self.game.player._game_ref = self.game
+        self.game._gui_ref = self
         Console.fast_mode = True
         self.game.mail.on_new_mail = self._on_new_mail
 
@@ -141,11 +143,23 @@ class DesktopApp:
         self._mail_listbox: tk.Listbox | None = None
         self._mail_viewer: scrolledtext.ScrolledText | None = None
         self._mail_meta: tk.Label | None = None
-        self._mail_folder: str = "inbox"
+        self._mail_folder: str = "contracts"
         self._mail_header: tk.Label | None = None
         self._mail_btn_row: tk.Frame | None = None
-        self._mail_inbox_btn: tk.Button | None = None
-        self._mail_trash_btn: tk.Button | None = None
+        self._mail_tab_btns: dict[str, tk.Button] = {}
+        self._mail_tab_row: tk.Frame | None = None
+        self._mail_reply_frame: tk.Frame | None = None
+        self._mail_reply_text: scrolledtext.ScrolledText | None = None
+        self._mail_reply_btn: tk.Button | None = None
+        self._mail_reply_hint: tk.Label | None = None
+        self._board_listbox: tk.Listbox | None = None
+        self._board_viewer: scrolledtext.ScrolledText | None = None
+        self._board_compose: scrolledtext.ScrolledText | None = None
+        self._board_rival_var: tk.StringVar | None = None
+        self._board_meta: tk.Label | None = None
+        self._board_taunt_btn: tk.Button | None = None
+        self._board_reply_btn: tk.Button | None = None
+        self._board_taunt_hint: tk.Label | None = None
         self.taskbar_label: tk.Label | None = None
         self.clock_label: tk.Label | None = None
         self.desktop_canvas: tk.Canvas | None = None
@@ -198,6 +212,17 @@ class DesktopApp:
         self.refresh_taskbar()
         if self.game.defer_career_session:
             self.root.after(200, self._run_deferred_career_session)
+        self._raise_main_window()
+
+    def _raise_main_window(self) -> None:
+        """Bring desktop to front after agent restarts (VNC often hides new windows)."""
+        try:
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(400, lambda: self.root.attributes("-topmost", False))
+            self.root.focus_force()
+        except tk.TclError:
+            pass
 
     def _schedule_taskbar_refresh(self) -> None:
         if self._taskbar_refresh_job:
@@ -309,7 +334,7 @@ class DesktopApp:
         self.refresh_taskbar()
         self._refresh_mail_badge()
         if self._mail_listbox and "mail" in self.open_windows:
-            self._populate_mail_list(self._mail_listbox)
+            self._refresh_mail_ui()
 
     def _refresh_mail_badge(self) -> None:
         if not self.mail_badge:
@@ -336,7 +361,7 @@ class DesktopApp:
     def _prompt_parts(self) -> list[tuple[str, str]]:
         p = self.game.player
         if p.is_local():
-            user, host = p.username, "localhost"
+            user, host = p.display_name(), "localhost"
         elif p.remote_is_root:
             user, host = "root", p.prompt_host
         else:
@@ -363,7 +388,7 @@ class DesktopApp:
     def _terminal_window_title(self) -> str:
         p = self.game.player
         if p.is_local():
-            user, host = p.username, "localhost"
+            user, host = p.display_name(), "localhost"
         elif p.remote_is_root:
             user, host = "root", p.prompt_host
         else:
@@ -731,11 +756,12 @@ class DesktopApp:
         self.onboarding_banner = banner
 
         if PlayerProfile.is_veteran():
-            headline = "WELCOME BACK — SKIP THE SANDBOX?"
+            headline = "WELCOME BACK — NEW SAVE (LESSON 1)"
             steps = (
-                "You've cleared training before.\n\n"
-                "☠ CHAOS CAREER — loud ops, botnet spread, rival heat (recommended)\n"
-                "Or resume tutorial if you want a refresher."
+                "This save starts at tutorial lesson 1 unless you skip.\n\n"
+                "☠ CHAOS CAREER — skip all lessons, loud career mode (uses real wallet)\n"
+                "skip tutorial — standard career skip from Terminal\n"
+                "Or open Training and work through lesson 1 normally."
             )
             auto_open = False
         elif p.tutorial_step == 0:
@@ -772,8 +798,8 @@ class DesktopApp:
         tk.Label(
             banner,
             text=(
-                f"{lesson.title}\n"
-                f"{lesson.objective}\n\n"
+                f"{lesson.title if lesson else 'Network Boot'}\n"
+                f"{lesson.objective if lesson else 'Run: ifconfig then route'}\n\n"
                 f"{steps}{save_note}"
             ),
             fg=COLORS["text"], bg=COLORS["window"],
@@ -1004,15 +1030,16 @@ class DesktopApp:
         panel._title_lbl = title_lbl  # type: ignore[attr-defined]
         panel._titlebar = titlebar  # type: ignore[attr-defined]
         panel._geom = geom  # type: ignore[attr-defined]
-        panel._maximized = False  # type: ignore[attr-defined]
+        panel._maximized = True  # type: ignore[attr-defined]
         panel._max_btn = max_btn  # type: ignore[attr-defined]
+        max_btn.configure(text="=")
         self.open_windows[key] = panel
 
         self._bind_window_drag(key, titlebar, title_lbl, shell)
         inner.bind("<Button-1>", lambda _e, k=key: self._focus_window(k), add="+")
         shell.bind("<Button-1>", lambda _e, k=key: self._focus_window(k), add="+")
 
-        self._place_window(key, shell, geom[2], geom[3])
+        self._place_maximized(shell)
         self._focus_window(key)
         sounds.play("open")
         return panel
@@ -1249,9 +1276,21 @@ class DesktopApp:
             self._mail_meta = None
             self._mail_header = None
             self._mail_btn_row = None
-            self._mail_inbox_btn = None
-            self._mail_trash_btn = None
-            self._mail_folder = "inbox"
+            self._mail_tab_btns = {}
+            self._mail_tab_row = None
+            self._mail_folder = "contracts"
+            self._mail_reply_frame = None
+            self._mail_reply_text = None
+            self._mail_reply_btn = None
+            self._mail_reply_hint = None
+            self._board_listbox = None
+            self._board_viewer = None
+            self._board_compose = None
+            self._board_rival_var = None
+            self._board_meta = None
+            self._board_taunt_btn = None
+            self._board_reply_btn = None
+            self._board_taunt_hint = None
         if key == "files":
             self._files_list_frame = None
             self._files_preview_frame = None
@@ -1309,33 +1348,48 @@ class DesktopApp:
         if "mail" in self._built_panels:
             self._show_app("mail")
             self._refresh_mail_ui()
+            self._update_mail_reply_ui(self._selected_mail_message())
             return
-        win = self._window("mail", "Mail — Secure Inbox", 720, 520)
+        win = self._window("mail", "Mail — Secure Inbox", 760, 600)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(3, weight=1)
 
         self._mail_header = tk.Label(body, text="INBOX", fg=COLORS["accent"], bg=COLORS["window"],
                                      font=F(14, bold=True))
-        self._mail_header.pack(anchor=tk.W)
+        self._mail_header.grid(row=0, column=0, sticky="ew")
+
+        from mail_categories import MAIL_TABS, TAB_SHORT
+
+        self._mail_tab_row = tk.Frame(body, bg=COLORS["window"])
+        self._mail_tab_row.grid(row=1, column=0, sticky="ew", pady=(6, 4))
+        for col in range(len(MAIL_TABS)):
+            self._mail_tab_row.columnconfigure(col, weight=1, uniform="mailtabs")
+        self._mail_tab_btns = {}
+        for col, tab in enumerate(MAIL_TABS):
+            btn = tk.Button(
+                self._mail_tab_row,
+                text=TAB_SHORT[tab],
+                command=lambda t=tab: self._switch_mail_folder(t),
+                bg=COLORS["border"],
+                fg=COLORS["text"],
+                relief=tk.FLAT,
+                padx=4,
+                pady=4,
+                font=F(9),
+            )
+            btn.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 3, 0))
+            self._mail_tab_btns[tab] = btn
+
+        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
+        self._mail_btn_row.grid(row=2, column=0, sticky="ew", pady=(4, 6))
 
         panes = tk.Frame(body, bg=COLORS["window"])
-        panes.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        panes.grid(row=3, column=0, sticky="nsew")
 
-        left = tk.Frame(panes, bg=COLORS["window"], width=240)
+        left = tk.Frame(panes, bg=COLORS["window"], width=260)
         left.pack(side=tk.LEFT, fill=tk.Y)
         left.pack_propagate(False)
-
-        folder_row = tk.Frame(left, bg=COLORS["window"])
-        folder_row.pack(fill=tk.X, pady=(0, 6))
-        self._mail_inbox_btn = tk.Button(
-            folder_row, text="Inbox", command=lambda: self._switch_mail_folder("inbox"),
-            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=8, pady=2,
-        )
-        self._mail_inbox_btn.pack(side=tk.LEFT)
-        self._mail_trash_btn = tk.Button(
-            folder_row, text="Trash", command=lambda: self._switch_mail_folder("trash"),
-            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=8, pady=2,
-        )
-        self._mail_trash_btn.pack(side=tk.LEFT, padx=6)
 
         listbox = tk.Listbox(
             left, bg=COLORS["terminal_bg"], fg=COLORS["text"],
@@ -1361,6 +1415,39 @@ class DesktopApp:
         self._mail_viewer = viewer
         self._mail_meta = meta
 
+        reply_frame = tk.Frame(body, bg=COLORS["window"])
+        reply_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        self._mail_reply_frame = reply_frame
+        tk.Label(
+            reply_frame,
+            text="Rival trash talk:",
+            fg=COLORS["warn"], bg=COLORS["window"], font=F(9, bold=True), anchor=tk.W,
+        ).pack(fill=tk.X)
+        self._mail_reply_hint = tk.Label(
+            reply_frame,
+            text="Select rival mail (@rival.net) to reply",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9), anchor=tk.W,
+        )
+        self._mail_reply_hint.pack(fill=tk.X, pady=(2, 0))
+        reply_text = scrolledtext.ScrolledText(
+            reply_frame, height=3, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=F(10), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        reply_text.pack(fill=tk.X, pady=(4, 4))
+        self._mail_reply_text = reply_text
+        reply_btn_row = tk.Frame(reply_frame, bg=COLORS["window"])
+        reply_btn_row.pack(fill=tk.X)
+        self._mail_reply_btn = tk.Button(
+            reply_btn_row, text="Send Taunt Reply", command=self._mail_send_rival_reply,
+            bg=COLORS["warn"], fg="white", relief=tk.FLAT, padx=10, state=tk.DISABLED,
+        )
+        self._mail_reply_btn.pack(side=tk.LEFT)
+        tk.Label(
+            reply_btn_row,
+            text="Escalates rival anger",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(8),
+        ).pack(side=tk.LEFT, padx=8)
+
         def show_message(_event=None) -> None:
             sel = listbox.curselection()
             if not sel:
@@ -1378,64 +1465,168 @@ class DesktopApp:
             viewer.delete("1.0", tk.END)
             viewer.insert(tk.END, msg.body)
             viewer.configure(state=tk.DISABLED)
+            self._update_mail_reply_ui(msg)
             self._refresh_mail_badge()
             self.refresh_taskbar()
 
         listbox.bind("<<ListboxSelect>>", show_message)
+        listbox.bind("<Delete>", self._mail_delete_key)
+        listbox.bind("<BackSpace>", self._mail_delete_key)
 
-        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
-        self._mail_btn_row.pack(fill=tk.X, pady=(8, 0))
         self._rebuild_mail_buttons()
 
         self._refresh_mail_ui()
         self._built_panels.add("mail")
 
+    def _update_mail_reply_ui(self, msg: MailMessage | None) -> None:
+        from chaos_system import CareerPressureManager
+        from rival_taunt import RivalTauntManager
+
+        rival = RivalTauntManager.rival_from_mail(msg) if msg else None
+        can_reply = (
+            bool(rival)
+            and self._mail_folder == "rivals"
+            and CareerPressureManager.can_trash_talk(self.game)
+        )
+        if self._mail_reply_hint:
+            if not msg:
+                hint = "Select a message"
+            elif not rival:
+                hint = "Only rival mail (@rival.net) can be taunted back"
+            elif not CareerPressureManager.can_trash_talk(self.game):
+                hint = "Crack a host first — rivals aren't watching yet"
+            else:
+                anger = self.game.retention.rival_anger.get(rival, 0)
+                hint = f"Reply to {rival} — anger {anger}/10 (public board taunts hit harder)"
+            self._mail_reply_hint.configure(text=hint)
+        if self._mail_reply_btn:
+            self._mail_reply_btn.configure(state=tk.NORMAL if can_reply else tk.DISABLED)
+        if self._mail_reply_frame:
+            if self._mail_folder == "rivals":
+                self._mail_reply_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+            else:
+                self._mail_reply_frame.grid_remove()
+
+    def _mail_send_rival_reply(self) -> None:
+        from tkinter import messagebox
+        from chaos_system import CareerPressureManager
+        from rival_taunt import RivalTauntManager
+
+        msg = self._selected_mail_message()
+        if not msg or not self._mail_reply_text:
+            return
+        if not CareerPressureManager.can_trash_talk(self.game):
+            messagebox.showwarning(
+                "Not yet",
+                "Crack a host first — rivals aren't watching your handle yet.",
+            )
+            return
+        body = self._mail_reply_text.get("1.0", tk.END).strip()
+        if len(body) < 5:
+            messagebox.showwarning("Too short", "Write at least 5 characters.")
+            return
+        rival = RivalTauntManager.rival_from_mail(msg)
+        if not rival:
+            messagebox.showwarning("Wrong message", "Only mail from @rival.net can be taunted back.")
+            return
+        if RivalTauntManager.mail_reply(self.game, msg.mail_id, body):
+            sounds.play("success")
+            self._mail_reply_text.delete("1.0", tk.END)
+            self.game.autosave(force=True)
+            self._refresh_mail_ui()
+            self._refresh_mail_badge()
+            self.refresh_taskbar()
+            self._refresh_status_panel()
+            messagebox.showinfo(
+                "Taunt sent",
+                "Rival received your reply. Check Mail and Board for their response.",
+            )
+        else:
+            messagebox.showerror("Could not send", "Check Terminal for details, or pick rival mail.")
+
+    def _update_board_taunt_ui(self) -> None:
+        from chaos_system import CareerPressureManager
+
+        unlocked = CareerPressureManager.can_trash_talk(self.game)
+        if self._board_taunt_hint:
+            if unlocked:
+                self._board_taunt_hint.configure(
+                    text="Public taunts hit harder than mail replies. Select a /rivals/ post to reply.",
+                    fg=COLORS["muted"],
+                )
+            else:
+                self._board_taunt_hint.configure(
+                    text="Crack a host first — rivals aren't watching your handle yet.",
+                    fg=COLORS["warn"],
+                )
+        state = tk.NORMAL if unlocked else tk.DISABLED
+        if self._board_taunt_btn:
+            self._board_taunt_btn.configure(state=state)
+        if self._board_reply_btn:
+            self._board_reply_btn.configure(state=state)
+
     def _mail_current_messages(self) -> list[MailMessage]:
-        if self._mail_folder == "trash":
-            return self.game.mail.trash
-        return self.game.mail.messages
+        return self.game.mail.messages_for_category(self._mail_folder, self.game)
 
     def _switch_mail_folder(self, folder: str) -> None:
         self._mail_folder = folder
         self._refresh_mail_ui()
 
     def _refresh_mail_ui(self) -> None:
+        from mail_categories import TAB_LABELS, TAB_SHORT
+
         if not self._mail_listbox:
             return
-        trash_n = len(self.game.mail.trash)
-        if self._mail_trash_btn and self._mail_trash_btn.winfo_exists():
-            self._mail_trash_btn.configure(text=f"Trash ({trash_n})" if trash_n else "Trash")
-        if self._mail_inbox_btn and self._mail_inbox_btn.winfo_exists():
-            if self._mail_folder == "inbox":
-                self._mail_inbox_btn.configure(bg=COLORS["accent_dim"], fg="white")
-                if self._mail_trash_btn:
-                    self._mail_trash_btn.configure(bg=COLORS["border"], fg=COLORS["text"])
+        for tab, btn in self._mail_tab_btns.items():
+            if not btn.winfo_exists():
+                continue
+            unread = self.game.mail.unread_in_category(tab, self.game)
+            base = TAB_SHORT[tab]
+            if tab == "trash":
+                count = len(self.game.mail.trash)
+                label = f"{base} ({count})" if count else base
             else:
-                self._mail_inbox_btn.configure(bg=COLORS["border"], fg=COLORS["text"])
-                if self._mail_trash_btn:
-                    self._mail_trash_btn.configure(bg=COLORS["warn"], fg="white")
+                label = f"{base} ({unread})" if unread else base
+            btn.configure(text=label)
+            if tab == self._mail_folder:
+                if tab == "trash":
+                    btn.configure(bg=COLORS["warn"], fg="white")
+                else:
+                    btn.configure(bg=COLORS["accent_dim"], fg="white")
+            else:
+                btn.configure(bg=COLORS["border"], fg=COLORS["text"])
         if self._mail_header:
-            self._mail_header.configure(
-                text="TRASH" if self._mail_folder == "trash" else "INBOX",
-                fg=COLORS["warn"] if self._mail_folder == "trash" else COLORS["accent"],
-            )
+            if self._mail_folder == "trash":
+                self._mail_header.configure(text="TRASH", fg=COLORS["warn"])
+            else:
+                self._mail_header.configure(
+                    text=TAB_LABELS.get(self._mail_folder, "MAIL").upper(),
+                    fg=COLORS["accent"],
+                )
         self._rebuild_mail_buttons()
         self._populate_mail_list(self._mail_listbox)
         if self._mail_meta:
-            folder_hint = "Trash — select to read. Delete Forever removes permanently."
-            inbox_hint = "Select a message"
+            hints = {
+                "contracts": "Contracts, intel, and broker updates",
+                "rivals": "Rival trash talk and warnings",
+                "completed": "Paid contracts and closed threads",
+                "trash": "Trash — select to read. Delete Forever removes permanently.",
+            }
             self._mail_meta.configure(
-                text=folder_hint if self._mail_folder == "trash" else inbox_hint,
+                text=hints.get(self._mail_folder, "Select a message"),
                 fg=COLORS["muted"],
             )
         if self._mail_viewer:
             self._mail_viewer.configure(state=tk.NORMAL)
             self._mail_viewer.delete("1.0", tk.END)
             self._mail_viewer.configure(state=tk.DISABLED)
+        self._update_mail_reply_ui(None)
         msgs = self._mail_current_messages()
         if msgs:
             self._mail_listbox.selection_set(0)
             self._mail_listbox.event_generate("<<ListboxSelect>>")
+        elif self._mail_reply_frame:
+            self._mail_reply_frame.grid_remove()
 
     def _rebuild_mail_buttons(self) -> None:
         if not self._mail_btn_row:
@@ -1446,6 +1637,8 @@ class DesktopApp:
         if self._mail_folder == "trash":
             tk.Button(row, text="Delete Forever", command=self._permanent_delete_mail,
                       bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+            tk.Button(row, text="Restore to Inbox", command=self._restore_selected_mail,
+                      bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
             tk.Button(row, text="Empty Trash", command=self._empty_mail_trash,
                       bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
         else:
@@ -1455,13 +1648,17 @@ class DesktopApp:
                       bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
             tk.Button(row, text="Mark All Read", command=self._mark_all_mail_read,
                       bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+        tk.Label(
+            row, text="Del/⌫ = trash or delete forever",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+        ).pack(side=tk.RIGHT, padx=(8, 0))
         tk.Button(row, text="Open Job Board", command=self.open_job_board,
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
 
     def _populate_mail_list(self, listbox: tk.Listbox) -> None:
         listbox.delete(0, tk.END)
         for msg in self._mail_current_messages():
-            prefix = "● " if not msg.read and self._mail_folder == "inbox" else "   "
+            prefix = "● " if not msg.read and self._mail_folder != "trash" else "   "
             tag = "🗑 " if self._mail_folder == "trash" else prefix
             listbox.insert(tk.END, f"{tag}{msg.subject[:40]}")
 
@@ -1472,24 +1669,41 @@ class DesktopApp:
             self._mail_viewer.configure(state=tk.NORMAL)
             self._mail_viewer.delete("1.0", tk.END)
             self._mail_viewer.configure(state=tk.DISABLED)
+        self._update_mail_reply_ui(None)
 
-    def _mark_all_mail_read(self) -> None:
-        self.game.mail.mark_all_read()
-        self._refresh_mail_badge()
-        self.refresh_taskbar()
-        if self._mail_listbox:
-            self._populate_mail_list(self._mail_listbox)
-
-    def _delete_selected_mail(self) -> None:
-        if not self._mail_listbox or self._mail_folder != "inbox":
-            return
+    def _selected_mail_message(self) -> MailMessage | None:
+        if not self._mail_listbox:
+            return None
         sel = self._mail_listbox.curselection()
         if not sel:
-            return
-        msgs = self.game.mail.messages
+            return None
+        msgs = self._mail_current_messages()
         if sel[0] >= len(msgs):
+            return None
+        return msgs[sel[0]]
+
+    def _mail_delete_key(self, _event=None) -> str:
+        if self._mail_folder == "trash":
+            self._permanent_delete_mail()
+        else:
+            self._delete_selected_mail()
+        return "break"
+
+    def _mark_all_mail_read(self) -> None:
+        if self._mail_folder != "trash":
+            for msg in self._mail_current_messages():
+                msg.read = True
+            self.game.autosave(force=True)
+        self._refresh_mail_badge()
+        self.refresh_taskbar()
+        self._refresh_mail_ui()
+
+    def _delete_selected_mail(self) -> None:
+        if self._mail_folder == "trash":
             return
-        msg = msgs[sel[0]]
+        msg = self._selected_mail_message()
+        if not msg:
+            return
         self.game.mail.trash_message(msg.mail_id)
         self.game.autosave(force=True)
         self._refresh_mail_ui()
@@ -1498,9 +1712,12 @@ class DesktopApp:
         self.refresh_taskbar()
 
     def _delete_read_mail(self) -> None:
-        if self._mail_folder != "inbox":
+        if self._mail_folder == "trash":
             return
-        removed = self.game.mail.trash_all_read()
+        removed = 0
+        for msg in list(self._mail_current_messages()):
+            if msg.read and self.game.mail.trash_message(msg.mail_id):
+                removed += 1
         if removed:
             self.game.autosave(force=True)
         self._refresh_mail_ui()
@@ -1511,19 +1728,31 @@ class DesktopApp:
         self.refresh_taskbar()
 
     def _permanent_delete_mail(self) -> None:
-        if not self._mail_listbox or self._mail_folder != "trash":
+        if self._mail_folder != "trash":
             return
-        sel = self._mail_listbox.curselection()
-        if not sel:
+        msg = self._selected_mail_message()
+        if not msg:
             return
-        msgs = self.game.mail.trash
-        if sel[0] >= len(msgs):
-            return
-        msg = msgs[sel[0]]
         self.game.mail.permanent_delete(msg.mail_id)
         self.game.autosave(force=True)
         self._refresh_mail_ui()
         self._clear_mail_viewer("Permanently deleted.")
+        self.refresh_taskbar()
+
+    def _restore_selected_mail(self) -> None:
+        if self._mail_folder != "trash":
+            return
+        msg = self._selected_mail_message()
+        if not msg:
+            return
+        self.game.mail.restore_message(msg.mail_id)
+        self.game.autosave(force=True)
+        from mail_categories import mail_category
+
+        self._mail_folder = mail_category(msg, self.game)
+        self._refresh_mail_ui()
+        self._clear_mail_viewer("Restored to mailbox.")
+        self._refresh_mail_badge()
         self.refresh_taskbar()
 
     def _empty_mail_trash(self) -> None:
@@ -1667,6 +1896,8 @@ class DesktopApp:
             self.game.dispatch(cmd)
             self._reveal_terminal_quick(cmd)
             self._flush_taskbar_refresh()
+            if "status" in self._built_panels:
+                self.root.after(50, self._refresh_status_panel)
             if phase_before == "tutorial" and self.game.player.phase == "career":
                 self.root.after(150, self._show_graduation_popup)
             elif self.game.defer_career_session:
@@ -2083,7 +2314,7 @@ class DesktopApp:
                                            fg=COLORS["text"], font=F(11), relief=tk.FLAT)
         scroll.pack(fill=tk.BOTH, expand=True)
         for m in self.game.missions.missions:
-            scroll.insert(tk.END, f"{m.status_line()}\n\n")
+            scroll.insert(tk.END, f"{m.status_line()}{__import__('rival_ai', fromlist=['RivalAIManager']).RivalAIManager.race_progress_line(self.game, m)}\n\n")
         scroll.configure(state=tk.DISABLED)
 
         d = self.game.daily
@@ -2113,11 +2344,14 @@ class DesktopApp:
 
     def open_social_board(self) -> None:
         from social_board import BOARD_NAMES, SocialBoardManager
+        from rival_taunt import RIVAL_KEYS
 
         if "board" in self._built_panels:
             self._show_app("board")
+            self._refresh_board_panel()
+            self._update_board_taunt_ui()
             return
-        win = self._window("board", "Darknet Board — Social Channels", 680, 520)
+        win = self._window("board", "Darknet Board — Social Channels", 760, 600)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
         p = self.game.player
 
@@ -2126,25 +2360,225 @@ class DesktopApp:
         if p.phase not in ("career", "endless"):
             tk.Label(body, text="Complete training to access the board.",
                      fg=COLORS["warn"], bg=COLORS["window"]).pack(anchor=tk.W, pady=12)
+            tk.Label(
+                body,
+                text="Trash talk unlocks in career mode after your first crack.",
+                fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+            ).pack(anchor=tk.W)
             return
 
         SocialBoardManager.seed_if_needed(self.game)
-        tk.Label(body, text=f"Karma: {self.game.board.karma}  |  Boards: {', '.join(BOARD_NAMES)}",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=F(10)).pack(anchor=tk.W, pady=(4, 8))
+        self._board_meta = tk.Label(
+            body, text="", fg=COLORS["muted"], bg=COLORS["window"], font=F(10),
+        )
+        self._board_meta.pack(anchor=tk.W, pady=(4, 6))
 
-        scroll = scrolledtext.ScrolledText(body, height=18, bg=COLORS["terminal_bg"],
-                                           fg=COLORS["text"], font=F(10), relief=tk.FLAT)
-        scroll.pack(fill=tk.BOTH, expand=True)
-        for post in SocialBoardManager.list_posts(self.game, limit=20):
-            tag = " [YOU]" if post.player_post else ""
-            scroll.insert(tk.END, f"/{post.board}/{tag} {post.author}: {post.title}\n")
-            scroll.insert(tk.END, f"  {post.body[:200]}{'...' if len(post.body) > 200 else ''}\n")
-            scroll.insert(tk.END, f"  id={post.post_id}  +{post.likes} likes\n\n")
-        scroll.configure(state=tk.DISABLED)
+        panes = tk.Frame(body, bg=COLORS["window"])
+        panes.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(body, text="Terminal: board post flex Title | body  |  board upvote post-0001",
-                 fg=COLORS["muted"], bg=COLORS["window"], font=F(9)).pack(anchor=tk.W, pady=(8, 0))
+        left = tk.Frame(panes, bg=COLORS["window"], width=260)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
+        self._board_listbox = tk.Listbox(
+            left, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=F(10), relief=tk.FLAT, selectbackground=COLORS["accent_dim"],
+            activestyle="none",
+        )
+        self._board_listbox.pack(fill=tk.BOTH, expand=True)
+        self._board_listbox.bind("<<ListboxSelect>>", self._show_board_post)
+
+        right = tk.Frame(panes, bg=COLORS["window"])
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
+        self._board_viewer = scrolledtext.ScrolledText(
+            right, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=F(10), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        self._board_viewer.pack(fill=tk.BOTH, expand=True)
+        self._board_viewer.configure(state=tk.DISABLED)
+
+        compose_frame = tk.Frame(body, bg=COLORS["window"])
+        compose_frame.pack(fill=tk.X, pady=(10, 0))
+        tk.Label(
+            compose_frame, text="Trash talk (raises rival anger + notoriety):",
+            fg=COLORS["warn"], bg=COLORS["window"], font=F(9, bold=True),
+        ).pack(anchor=tk.W)
+        self._board_compose = scrolledtext.ScrolledText(
+            compose_frame, height=3, bg=COLORS["terminal_bg"], fg=COLORS["text"],
+            font=F(10), relief=tk.FLAT, wrap=tk.WORD,
+        )
+        self._board_compose.pack(fill=tk.X, pady=(4, 6))
+        self._board_taunt_hint = tk.Label(
+            compose_frame,
+            text="",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9), anchor=tk.W,
+        )
+        self._board_taunt_hint.pack(fill=tk.X, pady=(0, 4))
+
+        action_row = tk.Frame(compose_frame, bg=COLORS["window"])
+        action_row.pack(fill=tk.X)
+        self._board_rival_var = tk.StringVar(value=sorted(RIVAL_KEYS)[0])
+        tk.Label(action_row, text="Rival:", fg=COLORS["text"], bg=COLORS["window"], font=F(9)).pack(
+            side=tk.LEFT,
+        )
+        rival_menu = tk.OptionMenu(action_row, self._board_rival_var, *sorted(RIVAL_KEYS))
+        rival_menu.configure(
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT,
+            highlightthickness=0, activebackground=COLORS["accent_dim"],
+        )
+        rival_menu.pack(side=tk.LEFT, padx=(4, 12))
+        self._board_taunt_btn = tk.Button(
+            action_row, text="Public Taunt", command=self._board_send_taunt,
+            bg=COLORS["warn"], fg="white", relief=tk.FLAT, padx=10,
+        )
+        self._board_taunt_btn.pack(side=tk.LEFT)
+        self._board_reply_btn = tk.Button(
+            action_row, text="Reply to Selected Post", command=self._board_send_reply,
+            bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10,
+        )
+        self._board_reply_btn.pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            action_row, text="Upvote Post", command=self._board_upvote_selected,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(
+            body,
+            text=f"Boards: {', '.join(BOARD_NAMES)}  |  Terminal: board post flex Title | body",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+        ).pack(anchor=tk.W, pady=(8, 0))
+
+        self._refresh_board_panel()
+        self._update_board_taunt_ui()
         self._built_panels.add("board")
+
+    def _selected_board_post(self):
+        from social_board import SocialBoardManager
+
+        if not self._board_listbox:
+            return None
+        sel = self._board_listbox.curselection()
+        if not sel:
+            return None
+        posts = SocialBoardManager.list_posts(self.game, limit=30)
+        if sel[0] >= len(posts):
+            return None
+        return posts[sel[0]]
+
+    def _show_board_post(self, _event=None) -> None:
+        post = self._selected_board_post()
+        if not post or not self._board_viewer:
+            return
+        self._board_viewer.configure(state=tk.NORMAL)
+        self._board_viewer.delete("1.0", tk.END)
+        self._board_viewer.insert(
+            tk.END,
+            f"/{post.board}/  {post.post_id}\n"
+            f"Author: {post.author}\n"
+            f"Title: {post.title}\n"
+            f"Likes: {post.likes}\n\n"
+            f"{post.body}",
+        )
+        self._board_viewer.configure(state=tk.DISABLED)
+
+    def _refresh_board_panel(self) -> None:
+        from social_board import SocialBoardManager
+
+        if not self._board_listbox:
+            return
+        SocialBoardManager.seed_if_needed(self.game)
+        if self._board_meta:
+            self._board_meta.configure(
+                text=f"Karma: {self.game.board.karma}  |  Boards: intel, rivals, flex, lfg",
+            )
+        self._board_listbox.delete(0, tk.END)
+        posts = SocialBoardManager.list_posts(self.game, limit=30)
+        for post in posts:
+            tag = " [YOU]" if post.player_post else ""
+            self._board_listbox.insert(
+                tk.END, f"/{post.board}/{tag} {post.author}: {post.title[:36]}",
+            )
+        if posts:
+            self._board_listbox.selection_set(0)
+            self._show_board_post()
+        self._update_board_taunt_ui()
+
+    def _board_compose_text(self) -> str:
+        if not self._board_compose:
+            return ""
+        return self._board_compose.get("1.0", tk.END).strip()
+
+    def _board_send_taunt(self) -> None:
+        from tkinter import messagebox
+        from chaos_system import CareerPressureManager
+        from rival_taunt import RivalTauntManager
+
+        if not CareerPressureManager.can_trash_talk(self.game):
+            messagebox.showwarning(
+                "Not yet",
+                "Crack a host first — rivals aren't watching your handle yet.",
+            )
+            return
+        body = self._board_compose_text()
+        if len(body) < 5:
+            messagebox.showwarning("Too short", "Write at least 5 characters.")
+            return
+        rival = self._board_rival_var.get() if self._board_rival_var else "acid_k"
+        if RivalTauntManager.board_taunt(self.game, rival, body):
+            sounds.play("success")
+            if self._board_compose:
+                self._board_compose.delete("1.0", tk.END)
+            self.game.autosave(force=True)
+            self._refresh_board_panel()
+            self.refresh_taskbar()
+            self._refresh_status_panel()
+            messagebox.showinfo("Taunt posted", f"{rival} was provoked. Watch Mail and /rivals/.")
+        else:
+            messagebox.showerror("Could not post", "Check Terminal for details.")
+
+    def _board_send_reply(self) -> None:
+        from tkinter import messagebox
+        from chaos_system import CareerPressureManager
+        from rival_taunt import RivalTauntManager
+
+        if not CareerPressureManager.can_trash_talk(self.game):
+            messagebox.showwarning(
+                "Not yet",
+                "Crack a host first — rivals aren't watching your handle yet.",
+            )
+            return
+        post = self._selected_board_post()
+        body = self._board_compose_text()
+        if not post:
+            messagebox.showwarning("No post", "Select a post on /rivals/ to reply.")
+            return
+        if post.board != "rivals":
+            messagebox.showwarning("Wrong board", "Reply taunts only work on /rivals/ posts.")
+            return
+        if len(body) < 5:
+            messagebox.showwarning("Too short", "Write at least 5 characters.")
+            return
+        if RivalTauntManager.board_reply(self.game, post.post_id, body):
+            sounds.play("success")
+            if self._board_compose:
+                self._board_compose.delete("1.0", tk.END)
+            self.game.autosave(force=True)
+            self._refresh_board_panel()
+            self._refresh_mail_ui()
+            self.refresh_taskbar()
+            self._refresh_status_panel()
+            messagebox.showinfo("Reply posted", "Rival anger increased. Check Mail for response.")
+        else:
+            messagebox.showerror("Could not reply", "Check Terminal for details.")
+
+    def _board_upvote_selected(self) -> None:
+        from social_board import SocialBoardManager
+
+        post = self._selected_board_post()
+        if not post:
+            return
+        if SocialBoardManager.upvote(self.game, post.post_id):
+            sounds.play("click")
+            self._refresh_board_panel()
 
     def open_shop(self) -> None:
         if "shop" in self._built_panels:
@@ -2268,6 +2702,7 @@ class DesktopApp:
                 refresh_wallet()
                 refresh_shop()
                 self.refresh_taskbar()
+                self._refresh_status_panel()
                 if graduated:
                     self._show_graduation_popup()
             elif (
@@ -2374,21 +2809,49 @@ class DesktopApp:
 
         if self.game.player.phase == "tutorial":
             lesson = self.game.tutorial.current()
-            cta = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
-                           highlightthickness=1, highlightbackground=COLORS["accent"])
-            cta.pack(fill=tk.X, pady=(0, 8))
+            if lesson is not None:
+                cta = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
+                               highlightthickness=1, highlightbackground=COLORS["accent"])
+                cta.pack(fill=tk.X, pady=(0, 8))
+                tk.Label(
+                    cta, text="DO THIS NOW", fg=COLORS["accent"], bg=COLORS["window"],
+                    font=F(11, bold=True),
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    cta, text=lesson.objective, fg=COLORS["text"], bg=COLORS["window"],
+                    font=F(12, bold=True), wraplength=560, justify=tk.LEFT,
+                ).pack(anchor=tk.W, pady=(4, 2))
+                tk.Label(
+                    cta, text=f"Hint: {lesson.hint}", fg=COLORS["muted"], bg=COLORS["window"],
+                    font=F(10), wraplength=560, justify=tk.LEFT,
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    cta,
+                    text=f"Tutorial wallet: ${self.game.player.tutorial_credits} (career ${self.game.player.money} locked)",
+                    fg=COLORS["teach"], bg=COLORS["window"], font=F(9),
+                ).pack(anchor=tk.W, pady=(4, 0))
+        else:
+            done = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
+                            highlightthickness=1, highlightbackground=COLORS["success"])
+            done.pack(fill=tk.X, pady=(0, 8))
+            skipped = self.game.tutorial.skipped_training()
             tk.Label(
-                cta, text="DO THIS NOW", fg=COLORS["accent"], bg=COLORS["window"],
-                font=F(11, bold=True),
+                done, text="TRAINING COMPLETE" if not skipped else "CHAOS CAREER — SKIPPED BOOT CAMP",
+                fg=COLORS["success"], bg=COLORS["window"], font=F(11, bold=True),
             ).pack(anchor=tk.W)
             tk.Label(
-                cta, text=lesson.objective, fg=COLORS["text"], bg=COLORS["window"],
-                font=F(12, bold=True), wraplength=560, justify=tk.LEFT,
-            ).pack(anchor=tk.W, pady=(4, 2))
-            tk.Label(
-                cta, text=f"Hint: {lesson.hint}", fg=COLORS["muted"], bg=COLORS["window"],
-                font=F(10), wraplength=560, justify=tk.LEFT,
-            ).pack(anchor=tk.W)
+                done,
+                text=(
+                    f"Wallet: {self.game.player.wallet_label()}\n"
+                    f"Gear: CPU L{self.game.player.cpu_level} | Firewall L{self.game.player.firewall_level}\n"
+                    + (
+                        "Shop purchases use your career balance — not tutorial credits."
+                        if self.game.player.phase == "career"
+                        else "Endless run wallet active."
+                    )
+                ),
+                fg=COLORS["text"], bg=COLORS["window"], font=F(10), wraplength=560, justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(4, 0))
 
         tk.Label(body, text="", bg=COLORS["window"]).pack()  # spacer
 
@@ -2657,6 +3120,7 @@ class DesktopApp:
         else:
             lines.append(f"Phase:       tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
         lines.append(p.wallet_label())
+        lines.append(f"Handle:      {p.display_name()}  (terminal: handle <name>)")
         lines.append(f"CPU level:   {p.cpu_level}")
         lines.append(f"Firewall:    {p.firewall_level}  (always on — blocks rivals passively)")
         lines.append(f"Cracker:     tier {p.cracker_tier}")
@@ -2687,6 +3151,8 @@ class DesktopApp:
             lines.append(f"Story flags: {', '.join(sorted(self.game.story.flags)) or 'none'}")
             lines.append(f"Board karma: {self.game.board.karma}")
             lines.append(f"Rival threat: {self.game.retention.rival_aggression}/10 ({self.game.retention.last_rival or 'none'})")
+            from rival_taunt import RivalTauntManager
+            lines.extend(RivalTauntManager.status_lines(self.game))
             nxt = RANKS[min(p.rank_index + 1, len(RANKS) - 1)]
             if p.rank_index < len(RANKS) - 1:
                 lines.append(f"Next rank:   {nxt.name} at {nxt.rep_required} rep")
@@ -2727,6 +3193,10 @@ class DesktopApp:
                   bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         tk.Button(btn_row, text="Restore Backup", command=self._gui_restore_backup,
                   bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
+        tk.Button(
+            btn_row, text="Set Handle", command=self._prompt_set_handle,
+            bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10,
+        ).pack(side=tk.LEFT, padx=(0, 8))
         if p.phase == "career":
             tk.Button(
                 btn_row, text="Defend ON", command=lambda: (
@@ -2749,6 +3219,24 @@ class DesktopApp:
                       bg=COLORS["border"], fg=COLORS["accent"], relief=tk.FLAT, padx=12).pack(side=tk.LEFT, padx=8)
         self._built_panels.add("status")
 
+    def _prompt_set_handle(self) -> None:
+        from tkinter import simpledialog, messagebox
+
+        current = self.game.player.display_name()
+        name = simpledialog.askstring(
+            "Set Handle",
+            "Operator handle (3–16 chars, start with a letter):",
+            initialvalue=current if current != "trainee" else "",
+            parent=self.root,
+        )
+        if not name:
+            return
+        if self.game.apply_handle(name):
+            sounds.play("success")
+            messagebox.showinfo("Handle updated", f"You are now: {name.strip()}")
+        else:
+            messagebox.showerror("Invalid handle", "Use 3–16 characters: letters, numbers, _ or -")
+
     def _show_graduation_popup(self) -> None:
         from tkinter import messagebox
         p = self.game.player
@@ -2761,7 +3249,8 @@ class DesktopApp:
             "• Open Job Board for live paid ops\n"
             "• ☠ Chaos dock — loud runs, botnet map, ghost raids (type: chaos status)\n"
             "• chaos run — roguelike endless floors when you want pure mayhem\n"
-            "• Shop: buy gear and payloads (ransom, deface, frame, virus)\n"
+            "• Shop: buy gear and defense consumables (burner, zero-day, decoy)\n"
+            "• Botnet payloads: dead drops from shard@null.dark (check Mail)\n"
             "• Firewall is ALWAYS on — Defense off only means passive mode\n"
             "• defend on in Terminal for active defense (+rep on blocks)\n"
             "• Rivals probe weak firewalls — upgrade FW in Shop\n\n"

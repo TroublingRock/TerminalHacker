@@ -136,14 +136,14 @@ class SocialBoardManager:
         grade = getattr(mission, "grade", "") or "B"
         title = f"Cleared {mission.broker} contract"
         body = f"{mission.briefing}\n\nGrade: {grade}"
-        SocialBoardManager._add_post(game, "flex", game.player.username, title, body, player_post=True)
+        SocialBoardManager._add_post(game, "flex", game.player.display_name(), title, body, player_post=True)
         game.board.karma += 5 + {"S": 15, "A": 10, "B": 5, "C": 2}.get(grade, 5)
         SocialBoardManager._npc_reply(game, mission.broker)
 
     @staticmethod
     def on_story_choice(game: Game, choice_key: str, label: str) -> None:
         SocialBoardManager._add_post(
-            game, "intel", game.player.username,
+            game, "intel", game.player.display_name(),
             f"Story choice: {label}",
             f"Picked '{choice_key}' on the narrative track.",
             player_post=True,
@@ -168,7 +168,7 @@ class SocialBoardManager:
     @staticmethod
     def on_endless_start(game: Game) -> None:
         SocialBoardManager._add_post(
-            game, "lfg", game.player.username,
+            game, "lfg", game.player.display_name(),
             "Dropping into endless abyss",
             "Roguelike run started. Who's beating floor 10?",
             player_post=True,
@@ -178,7 +178,7 @@ class SocialBoardManager:
     def on_endless_end(game: Game, reason: str) -> None:
         e = game.endless
         SocialBoardManager._add_post(
-            game, "flex", game.player.username,
+            game, "flex", game.player.display_name(),
             f"Endless run ended — floor {e.best_floor}",
             f"Reason: {reason}. Score {e.score}.",
             player_post=True,
@@ -221,7 +221,7 @@ class SocialBoardManager:
             error("Title and body too short.")
             return False
         SocialBoardManager._add_post(
-            game, board, game.player.username, title[:80], body[:500], player_post=True,
+            game, board, game.player.display_name(), title[:80], body[:500], player_post=True,
         )
         game.board.karma += 3
         if board == "lfg":

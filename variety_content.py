@@ -341,7 +341,8 @@ class ProceduralHostGenerator:
         if not any(r.destination == cidr for r in game.player.routes):
             game.player.routes.append(Route(cidr, gw))
 
-        sec = 2 + min(4, n // 3)
+        from economy import procedural_security
+        sec = procedural_security(game.player.reputation, n)
         password = f"{slug}{random.randint(10, 99)}!"
         user = random.choice(["ops", "svc", "deploy", "analyst"])
         tpl_path, kind, tpl_body = random.choice(PROC_FILE_TEMPLATES)
@@ -411,7 +412,10 @@ class VarietyMissionGenerator:
             ]
             if not candidates:
                 return None
-            server = random.choice(candidates)
+            from economy import EconomyManager
+            weights = [EconomyManager.host_pick_weights(game.player.reputation, s.security_level)
+                       for s in candidates]
+            server = random.choices(candidates, weights=weights, k=1)[0]
             PuzzleManager.apply_to_server(game, server)
 
         seed = random.randint(1, 99999)
@@ -465,26 +469,22 @@ class VarietyMissionGenerator:
     @staticmethod
     def _classic(game: Game, server: Server, company: str, mid: str, broker: str, mtype: str) -> "Mission":
         from main import Mission
+        from economy import EconomyManager
         rel = VarietyMissionGenerator._pick_loot_file(server)
-        reward = 320 + server.security_level * 100 + random.randint(0, 180)
-        rep = 35 + server.security_level * 12
+        reward, rep = EconomyManager.build_classic_reward(server.security_level, mtype)
         hint = PuzzleManager.puzzle_hint(server)
         extra = f" Puzzle: {hint}" if hint else ""
 
         if mtype == "ghost":
             briefing = f"[{company}] Ghost {server.hostname} ({server.ip}) — zero traces.{extra}"
             rel = ""
-            reward += 200
         elif mtype == "root_heist":
             root_files = [p for p in server.files if p.startswith("/root/")]
             rel = root_files[0] if root_files else f"/root/secret_{mid}.txt"
             briefing = f"[{company}] Root heist {server.hostname} — privesc, exfil, wipe.{extra}"
-            reward += 300
-            rep += 30
         elif mtype == "clean_sweep":
             fname = rel.rsplit("/", 1)[-1]
             briefing = f"[{company}] Clean sweep {server.hostname} — wipe ALL logs, exfil {fname}.{extra}"
-            reward += 150
         else:
             fname = rel.rsplit("/", 1)[-1]
             briefing = f"[{company}] Exfil {fname} from {server.hostname} ({server.ip}), wipe logs.{extra}"
@@ -513,7 +513,8 @@ class VarietyMissionGenerator:
                 f"crack with intel, exfil real payload, wipe logs."
             )
         rel = VarietyMissionGenerator._pick_loot_file(server)
-        reward = 450 + server.security_level * 80
+        from economy import EconomyManager
+        reward = EconomyManager.social_reward(server.security_level)
         return Mission(
             mid, broker, briefing, server.ip, rel, reward, rep_reward=55,
             procedural=True, mission_type="social",
@@ -523,6 +524,7 @@ class VarietyMissionGenerator:
     @staticmethod
     def _timing(game: Game, server: Server, company: str, mid: str, broker: str) -> "Mission":
         from main import Mission
+        from economy import EconomyManager
         limit = random.randint(12, 22)
         rel = VarietyMissionGenerator._pick_loot_file(server)
         fname = rel.rsplit("/", 1)[-1]
@@ -530,7 +532,7 @@ class VarietyMissionGenerator:
             f"[{company}] TIMING: Maintenance window — complete within {limit} commands. "
             f"Crack {server.hostname}, exfil {fname}, wipe logs."
         )
-        reward = 500 + server.security_level * 90
+        reward = EconomyManager.timing_reward(server.security_level)
         return Mission(
             mid, broker, briefing, server.ip, rel, reward, rep_reward=60,
             procedural=True, mission_type="timing",
@@ -556,7 +558,8 @@ class VarietyMissionGenerator:
             f"read pivot creds, breach {jump.hostname if jump else 'target'} ({loot_ip}), "
             f"exfil {rel.rsplit('/', 1)[-1]}, wipe both hosts."
         )
-        reward = 650 + server.security_level * 100
+        from economy import EconomyManager
+        reward = EconomyManager.pivot_reward(server.security_level)
         return Mission(
             mid, broker, briefing, loot_ip, rel, reward, rep_reward=75,
             procedural=True, mission_type="pivot",
