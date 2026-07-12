@@ -1310,10 +1310,8 @@ class RetentionManager:
 
     @staticmethod
     def pick_rival_attacker(game: Game) -> str:
-        r = game.retention
-        if r.last_rival and random.random() < 0.6:
-            return r.last_rival
-        return random.choice(["zero_cool", "acid_k", "phantom_pkt", "nyx_root"])
+        from rival_ai import RivalAIManager
+        return RivalAIManager.pick_rival(game)
 
     @staticmethod
     def rival_attack_power(game: Game, base: int) -> int:

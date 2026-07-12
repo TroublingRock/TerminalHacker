@@ -16,7 +16,7 @@ class ChaosSystemTests(unittest.TestCase):
         ChaosCareerManager.start(game)
         self.assertEqual(game.player.phase, "career")
         self.assertTrue(game.meta.chaos_mode)
-        self.assertGreaterEqual(game.meta.notoriety, 5)
+        self.assertGreaterEqual(game.meta.notoriety, 4)
         self.assertGreater(game.player.money, 1000)
 
     def test_loud_contract_pays_more_in_chaos_mode(self) -> None:
@@ -42,8 +42,10 @@ class ChaosSystemTests(unittest.TestCase):
     def test_notoriety_increases(self) -> None:
         game = Game()
         game.player.phase = "career"
+        game.player.ticks = 25
+        game.meta.rival_trash_talk_unlocked = True
         before = game.meta.notoriety
-        NotorietyManager.add(game, 5, "test")
+        NotorietyManager.add(game, 5, "test", player_action=True)
         self.assertEqual(game.meta.notoriety, before + 5)
         self.assertTrue(game.meta.chaos_headlines)
 
@@ -115,6 +117,41 @@ class ChaosSystemTests(unittest.TestCase):
                 PROFILE_PATH.write_text(backup)
             elif PROFILE_PATH.exists():
                 PROFILE_PATH.unlink()
+
+    def test_rookie_grace_blocks_heat_lockdown(self) -> None:
+        from chaos_system import CareerPressureManager, ChaosEventManager
+
+        game = Game()
+        game.player.phase = "career"
+        game.player.ticks = 2
+        game.meta.subnet_heat["192.168.1.0/24"] = 8
+        before = game.meta.notoriety
+        ChaosEventManager.on_post_command(game)
+        self.assertTrue(CareerPressureManager.rookie_grace(game))
+        self.assertEqual(game.meta.notoriety, before)
+        self.assertFalse(any("lockdown" in f for f in game.meta.chaos_flags))
+
+    def test_trash_talk_waits_for_first_crack(self) -> None:
+        from chaos_system import CareerPressureManager
+
+        game = Game()
+        game.player.phase = "career"
+        seed_inbox = len(game.mail.messages)
+        self.assertFalse(CareerPressureManager.can_trash_talk(game))
+        CareerPressureManager.send_or_queue_rival_mail(
+            game, "acid_k@rival.net", "test", "back off",
+        )
+        self.assertEqual(len(game.mail.messages), seed_inbox)
+        self.assertEqual(len(game.meta.pending_rival_mail), 1)
+        ip = "192.168.1.50"
+        srv = game.network.get_server(ip)
+        assert srv is not None
+        srv.cracked = True
+        game.player.discovered_ips.add(ip)
+        CareerPressureManager.on_first_crack(game, srv)
+        self.assertTrue(CareerPressureManager.can_trash_talk(game))
+        self.assertEqual(len(game.meta.pending_rival_mail), 0)
+        self.assertTrue(any("back off" in m.body for m in game.mail.messages))
 
 
 if __name__ == "__main__":

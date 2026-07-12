@@ -433,9 +433,10 @@ class TutorialManager:
             )
         divider("CAREER MODE UNLOCKED")
         success("Training complete. You are cleared for live contracts.")
+        from chaos_system import ROOKIE_GRACE_TICKS
         teach(
             "Career mode uses REAL money. Traces and rivals hit your wallet. "
-            "Use VPN, wipe logs, upgrade CPU/firewall, and take missions."
+            f"Rivals talk from day one; heat lockdowns wait ~{ROOKIE_GRACE_TICKS} commands."
         )
         Console.out(f"  Starting career balance: ${p.money}")
         Console.out("  Progress auto-saves. Type 'help' for career commands.\n")
@@ -651,6 +652,19 @@ class MailBox:
         count = len(self.trash)
         self.trash.clear()
         return count
+
+    def restore_message(self, mail_id: str) -> bool:
+        for i, m in enumerate(self.trash):
+            if m.mail_id == mail_id:
+                self.messages.insert(0, self.trash.pop(i))
+                return True
+        return False
+
+    def message_by_id(self, mail_id: str) -> MailMessage | None:
+        for m in self.messages + self.trash:
+            if m.mail_id == mail_id:
+                return m
+        return None
 
     # Back-compat aliases
     def delete(self, mail_id: str) -> bool:
@@ -1376,6 +1390,7 @@ class ThreatSystem:
 
         if p.firewall_level >= power:
             success(f"Firewall blocked {rival}.")
+            self.game.retention.last_rival = rival
             if self.game.tutorial.in_tutorial():
                 self.game.tutorial.defense_attacks_triggered += 1
             else:
@@ -1400,22 +1415,23 @@ class ThreatSystem:
                 self.game.player.tutorial_flags.add("daily_survive_done")
                 from retention import RetentionManager
                 RetentionManager.on_defense_block(self.game)
+                from rival_ai import RivalAIManager
+                RivalAIManager.send_block_taunt(self.game, rival, p.firewall_level)
             return
 
         loss = random.randint(40, 100) * max(1, power - p.firewall_level)
         if p.phase == "career" and p.money < 1200:
             loss = min(loss, max(35, p.money // 3))
         p.penalize(loss, f"{rival} breached your defenses")
+        self.game.retention.last_rival = rival
+        self.game.retention.rival_aggression = min(
+            10, self.game.retention.rival_aggression + 1,
+        )
         if p.phase == "endless" and self.game.endless.active:
             from endless_mode import EndlessManager
             EndlessManager.on_death(self.game, f"{rival} breach")
-        self.game.mail.send(
-            f"{rival}@rival.net",
-            "We found your box",
-            f"Your firewall is weak (L{p.firewall_level}).\n"
-            "I skimmed your wallet. Patch your defenses or stay offline.\n\n"
-            f"— {rival}",
-        )
+        from rival_ai import RivalAIManager
+        RivalAIManager.send_breach_mail(self.game, rival, p.firewall_level, loss)
         if self.game.tutorial.in_tutorial():
             self.game.tutorial.defense_attacks_triggered += 1
 
@@ -1658,7 +1674,8 @@ class Game:
             "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "note [add|clear|set] [text]",
-            "shop", "buy [item]", "missions", "contracts", "status", "rank",
+            "shop", "buy [item]", "missions", "contracts", "mail [list|trash|delete|restore]",
+            "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
             "endless", "story", "board", "spec", "heist", "heat",
@@ -1809,7 +1826,7 @@ class Game:
         if server and not clean:
             from chaos_system import NotorietyManager, RivalReactionManager
             if self.meta.chaos_mode:
-                NotorietyManager.add(self, 2, f"dirty disconnect {server.ip}")
+                NotorietyManager.add(self, 2, f"dirty disconnect {server.ip}", player_action=True)
                 RivalReactionManager.on_dirty_disconnect(self, server)
             from progression import ReputationSystem
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
@@ -2203,8 +2220,79 @@ class Game:
             warn("Missions unlock after tutorial graduation.")
             return
         divider("MISSIONS")
+        from rival_ai import RivalAIManager
         for m in self.missions.missions:
-            Console.out(f"  {m.status_line()}")
+            line = m.status_line() + RivalAIManager.race_progress_line(self, m)
+            Console.out(f"  {line}")
+
+    def cmd_mail(self, args: list[str]) -> None:
+        divider("MAIL")
+        action = args[0].lower() if args else "list"
+        if action in ("list", "inbox"):
+            if not self.mail.messages:
+                Console.out("  Inbox empty.")
+                return
+            for m in self.mail.messages:
+                mark = "● " if not m.read else "  "
+                Console.out(f"  {mark}{m.mail_id:<12} {m.subject[:44]}")
+            Console.out(f"\n  {self.mail.unread_count()} unread  |  Trash: {len(self.mail.trash)}")
+            Console.out("  mail read <id>  |  mail trash <id>  |  mail delete <id>  |  mail empty")
+            return
+        if action == "trash":
+            if len(args) < 2:
+                if not self.mail.trash:
+                    Console.out("  Trash empty.")
+                    return
+                for m in self.mail.trash:
+                    Console.out(f"    {m.mail_id:<12} {m.subject[:44]}")
+                Console.out("\n  mail delete <id>  |  mail restore <id>  |  mail empty")
+                return
+            if args[1].lower() == "read":
+                removed = self.mail.trash_all_read()
+                success(f"Moved {removed} read message(s) to Trash." if removed else "No read messages to trash.")
+                return
+            if self.mail.trash_message(args[1]):
+                success(f"Moved {args[1]} to Trash.")
+            else:
+                error(f"No inbox message {args[1]!r}.")
+            return
+        if action == "read":
+            if len(args) < 2:
+                error("Usage: mail read <mail-id>")
+                return
+            msg = self.mail.message_by_id(args[1])
+            if not msg:
+                error("Message not found.")
+                return
+            self.mail.mark_read(msg.mail_id)
+            Console.out(f"  From: {msg.sender}")
+            Console.out(f"  Subj: {msg.subject}")
+            Console.out(f"  Date: {msg.timestamp}\n")
+            Console.out(msg.body)
+            return
+        if action == "delete":
+            if len(args) < 2:
+                error("Usage: mail delete <mail-id>  (must be in Trash)")
+                return
+            if self.mail.permanent_delete(args[1]):
+                success(f"Permanently deleted {args[1]}.")
+            else:
+                error("Message not in Trash — use: mail trash <id> first.")
+            return
+        if action == "restore":
+            if len(args) < 2:
+                error("Usage: mail restore <mail-id>")
+                return
+            if self.mail.restore_message(args[1]):
+                success(f"Restored {args[1]} to Inbox.")
+            else:
+                error("Message not in Trash.")
+            return
+        if action == "empty":
+            removed = self.mail.empty_trash()
+            success(f"Emptied trash ({removed} message(s))." if removed else "Trash already empty.")
+            return
+        error("Usage: mail [list|read <id>|trash <id>|delete <id>|restore <id>|empty]")
 
     def cmd_status(self, _a: list[str]) -> None:
         p = self.player
@@ -2447,15 +2535,23 @@ class Game:
 
     def cmd_rivals(self, _a: list[str]) -> None:
         from retention import RetentionManager, OPERATIONS
+        from rival_ai import RivalAIManager
 
         divider("RIVAL DOSSIER")
         r = self.retention
+        Console.out(f"  Threat level: {r.rival_aggression}/10")
+        Console.out(f"  Primary rival: {r.last_rival or 'none (territory-weighted picks)'}")
+        for line in RivalAIManager.dossier_extra_lines(self):
+            Console.out(line)
         if not r.completed_operations:
-            Console.out("  No operation history yet — rivals consider you unknown.")
-            Console.out("  Complete multi-day ops to trigger rival reactions.")
+            Console.out("\n  No operation history yet — rivals still probe and race you.")
+            Console.out("  Complete multi-day ops to unlock deeper dossier intel.")
             return
         for line in RetentionManager.rival_dossier_lines(self):
             Console.out(f"  {line}")
+        from rival_ai import RivalAIManager
+        for line in RivalAIManager.dossier_extra_lines(self):
+            Console.out(line)
         Console.out("\n  Completed ops:")
         for op_id in r.completed_operations:
             Console.out(f"    [x] {op_id}")
@@ -2767,7 +2863,7 @@ class Game:
             "note": self.cmd_note, "notes": self.cmd_note,
             "rm": self.cmd_rm, "pwd": self.cmd_pwd, "whoami": self.cmd_whoami,
             "uname": self.cmd_uname, "shop": self.cmd_shop, "buy": self.cmd_buy,
-            "missions": self.cmd_missions, "contracts": self.cmd_contracts,
+            "missions": self.cmd_missions, "contracts": self.cmd_contracts, "mail": self.cmd_mail,
             "status": self.cmd_status, "rank": self.cmd_rank,
             "achievements": self.cmd_achievements, "daily": self.cmd_daily,
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
