@@ -339,18 +339,57 @@ class TutorialManager:
     def in_tutorial(self) -> bool:
         return self.player.phase == "tutorial"
 
-    def current(self) -> TutorialLesson:
+    def training_complete(self) -> bool:
+        return self.player.phase in ("career", "endless")
+
+    def skipped_training(self) -> bool:
+        return "chaos_career" in self.player.tutorial_flags
+
+    def current(self) -> TutorialLesson | None:
+        if self.training_complete():
+            return None
         step = min(self.player.tutorial_step, len(TUTORIAL_CURRICULUM) - 1)
         return TUTORIAL_CURRICULUM[step]
 
     def show_lesson(self) -> None:
+        if self.training_complete():
+            self.show_career_training_status()
+            return
         lesson = self.current()
+        if lesson is None:
+            return
         divider(f"TUTORIAL {lesson.step + 1}/{len(TUTORIAL_CURRICULUM)} — {lesson.title}")
         teach(lesson.concept)
         Console.out(f"\n  Objective: {lesson.objective}")
         Console.out(f"  Hint:      {lesson.hint}")
-        if self.in_tutorial():
-            Console.out(f"\n  Tutorial budget: ${self.player.tutorial_credits} (career funds protected)\n")
+        Console.out(f"\n  Tutorial budget: ${self.player.tutorial_credits} (career funds protected)\n")
+
+    def show_career_training_status(self) -> None:
+        p = self.player
+        divider("TRAINING COMPLETE")
+        if self.skipped_training():
+            success("You skipped boot camp via Chaos Career — loud ops, real wallet.")
+            teach("Type chaos status for heat/notoriety. Rival trash talk starts after your first crack.")
+        else:
+            success("Tutorial graduated — you are cleared for live contracts.")
+        Console.out(f"  Wallet: {p.wallet_label()}")
+        Console.out(f"  Gear:   CPU L{p.cpu_level}  |  Firewall L{p.firewall_level}")
+        if p.phase == "career":
+            Console.out("  Type missions for contracts, or hint for your next move.\n")
+        else:
+            Console.out("  Endless run active — type endless status.\n")
+
+    def skip_to_career(self, *, chaos: bool = False) -> bool:
+        """Leave tutorial without completing every lesson."""
+        if not self.in_tutorial():
+            warn("Already past training.")
+            return False
+        if chaos:
+            from chaos_system import ChaosCareerManager
+            ChaosCareerManager.start(self.game)
+            return True
+        self.graduate()
+        return True
 
     def record_command(self, cmd: str) -> None:
         self.player.command_history.add(cmd)
@@ -374,6 +413,8 @@ class TutorialManager:
 
     def _complete_step(self) -> None:
         lesson = self.current()
+        if lesson is None:
+            return
         divider("LESSON COMPLETE")
         success(f"{lesson.title} mastered.")
         if lesson.step == 0:
@@ -418,6 +459,9 @@ class TutorialManager:
         p.rank_index = 1
         from progression import PlayerProfile
         PlayerProfile.mark_veteran()
+        self.game.meta.notoriety_baseline = self.game.meta.notoriety
+        self.game.meta.rival_trash_talk_unlocked = False
+        self.game.meta.pending_rival_mail = []
         if not any(r.destination == "10.0.0.0/24" for r in p.routes):
             p.routes.append(Route("10.0.0.0/24", "192.168.1.1"))
         self.game.network.deploy_company_hosts_with_puzzles(self.game, p.reputation, False)
@@ -433,9 +477,10 @@ class TutorialManager:
             )
         divider("CAREER MODE UNLOCKED")
         success("Training complete. You are cleared for live contracts.")
+        from chaos_system import ROOKIE_GRACE_TICKS
         teach(
             "Career mode uses REAL money. Traces and rivals hit your wallet. "
-            "Use VPN, wipe logs, upgrade CPU/firewall, and take missions."
+            f"Rival trash talk starts after your first crack; lockdowns wait ~{ROOKIE_GRACE_TICKS} commands."
         )
         Console.out(f"  Starting career balance: ${p.money}")
         Console.out("  Progress auto-saves. Type 'help' for career commands.\n")
@@ -651,6 +696,19 @@ class MailBox:
         count = len(self.trash)
         self.trash.clear()
         return count
+
+    def restore_message(self, mail_id: str) -> bool:
+        for i, m in enumerate(self.trash):
+            if m.mail_id == mail_id:
+                self.messages.insert(0, self.trash.pop(i))
+                return True
+        return False
+
+    def message_by_id(self, mail_id: str) -> MailMessage | None:
+        for m in self.messages + self.trash:
+            if m.mail_id == mail_id:
+                return m
+        return None
 
     # Back-compat aliases
     def delete(self, mail_id: str) -> bool:
@@ -895,7 +953,7 @@ def defense_firewall_help(game: "Game") -> list[str]:
 SHOP_CATALOG = [
     ShopItem(
         "cpu", "CPU Upgrade", "Faster brute-force attacks.", 200,
-        detail="Upgrade gear. Higher CPU = fewer crack attempts and faster guesses on SSH targets.",
+        detail="Upgrade gear. Each CPU level adds +1 offensive power (FW L4 needs power ≥4).",
         max_level=6,
     ),
     ShopItem(
@@ -913,12 +971,12 @@ SHOP_CATALOG = [
     ),
     ShopItem(
         "hydra", "Hydra Lite", "Smarter password wordlist ordering.", 350,
-        detail="Permanent tool. Tries the real password earlier during crack — fewer failed attempts.",
+        detail="Permanent tool. +2 offensive power (stacks with CPU). FW L4 needs CPU L2+hydra or CPU L4.",
         max_level=1,
     ),
     ShopItem(
         "hashcat", "Hashcat Pro", "Cuts failed crack attempts ~40%.", 800,
-        detail="Permanent tool. Requires Hydra Lite first. Greatly speeds up brute-force on tough hosts.",
+        detail="Permanent tool. Requires Hydra Lite. +4 offensive power total — cracks FW L6+ hosts.",
         max_level=1,
     ),
     ShopItem(
@@ -1106,6 +1164,7 @@ class Player:
     command_history: set[str] = field(default_factory=set)
     tutorial_flags: set[str] = field(default_factory=set)
     files: dict[str, VirtualFile] = field(default_factory=dict)
+    exfil_sources: dict[str, str] = field(default_factory=dict)
     ticks: int = 0
     reputation: int = 0
     rank_index: int = 0
@@ -1185,7 +1244,8 @@ class Player:
             return False
         if self.money >= amount:
             self.money -= amount
-            success(f"{reason} (-${amount}, balance ${self.money})")
+            success(f"{reason} (-${amount}, career balance ${self.money})")
+            teach("Charged to your career wallet — not the tutorial budget.")
             return True
         error(f"Need ${amount}, have ${self.money}.")
         return False
@@ -1230,6 +1290,18 @@ class Player:
 
     def crack_attempt_reduction(self) -> float:
         return {0: 1.0, 1: 0.75, 2: 0.55}[self.cracker_tier]
+
+    def offensive_power(self) -> int:
+        """Attack throughput — must meet or exceed remote host FW to crack."""
+        return self.cpu_level + self.cracker_tier * 2
+
+    def max_crack_security(self) -> int:
+        """Highest remote FW level brute-force can touch with current offensive gear."""
+        return self.offensive_power()
+
+    def crack_gear_label(self) -> str:
+        tier = ("none", "hydra", "hashcat")[self.cracker_tier]
+        return f"power {self.offensive_power()} (CPU L{self.cpu_level}, {tier})"
 
     def has_route_to(self, ip: str) -> bool:
         return any(ip_in_subnet(ip, r.destination) for r in self.routes)
@@ -1276,8 +1348,27 @@ class VirtualNetwork:
                 continue
             self.servers[spec["ip"]] = build_company_server(spec)
 
+    def deploy_mission_targets(self, game: "Game") -> list[str]:
+        """Ensure open contract targets exist even below normal rep gates."""
+        from progression import COMPANY_HOSTS, build_company_server
+
+        spawned: list[str] = []
+        for mission in game.missions.missions:
+            if mission.completed:
+                continue
+            ip = getattr(mission, "target_ip", "") or ""
+            if not ip or "/" in ip or ip in self.servers:
+                continue
+            spec = next((s for s in COMPANY_HOSTS if s["ip"] == ip), None)
+            if not spec:
+                continue
+            self.servers[ip] = build_company_server(spec)
+            spawned.append(ip)
+        return spawned
+
     def deploy_company_hosts_with_puzzles(self, game: "Game", reputation: int, chaos: bool) -> None:
         self.deploy_company_hosts(reputation, chaos)
+        self.deploy_mission_targets(game)
         from variety_content import VarietyManager
         VarietyManager.deploy_puzzles(game)
         from longevity_content import ExtendedHostManager
@@ -1376,6 +1467,7 @@ class ThreatSystem:
 
         if p.firewall_level >= power:
             success(f"Firewall blocked {rival}.")
+            self.game.retention.last_rival = rival
             if self.game.tutorial.in_tutorial():
                 self.game.tutorial.defense_attacks_triggered += 1
             else:
@@ -1400,22 +1492,23 @@ class ThreatSystem:
                 self.game.player.tutorial_flags.add("daily_survive_done")
                 from retention import RetentionManager
                 RetentionManager.on_defense_block(self.game)
+                from rival_ai import RivalAIManager
+                RivalAIManager.send_block_taunt(self.game, rival, p.firewall_level)
             return
 
         loss = random.randint(40, 100) * max(1, power - p.firewall_level)
         if p.phase == "career" and p.money < 1200:
             loss = min(loss, max(35, p.money // 3))
         p.penalize(loss, f"{rival} breached your defenses")
+        self.game.retention.last_rival = rival
+        self.game.retention.rival_aggression = min(
+            10, self.game.retention.rival_aggression + 1,
+        )
         if p.phase == "endless" and self.game.endless.active:
             from endless_mode import EndlessManager
             EndlessManager.on_death(self.game, f"{rival} breach")
-        self.game.mail.send(
-            f"{rival}@rival.net",
-            "We found your box",
-            f"Your firewall is weak (L{p.firewall_level}).\n"
-            "I skimmed your wallet. Patch your defenses or stay offline.\n\n"
-            f"— {rival}",
-        )
+        from rival_ai import RivalAIManager
+        RivalAIManager.send_breach_mail(self.game, rival, p.firewall_level, loss)
         if self.game.tutorial.in_tutorial():
             self.game.tutorial.defense_attacks_triggered += 1
 
@@ -1614,9 +1707,11 @@ class Game:
             from chaos_system import (
                 BotnetSpreadManager, ChaosEventManager, FactionWarManager, FlashChaosManager,
             )
+            from depth_systems import BrokerHeatScrub
             BotnetSpreadManager.try_spread(self)
-            ChaosEventManager.on_post_command(self)
+            ChaosEventManager.on_post_command(self, cmd)
             FactionWarManager.tick_cooldown(self)
+            BrokerHeatScrub.tick_cooldown(self)
             FlashChaosManager.maybe_spawn(self)
 
     def try_unlock(self, key: str) -> None:
@@ -1650,18 +1745,38 @@ class Game:
     def cmd_lesson(self, _a: list[str]) -> None:
         self.tutorial.show_lesson()
 
+    def cmd_skip(self, args: list[str]) -> None:
+        if not args or args[0].lower() not in ("tutorial", "training"):
+            error("Usage: skip tutorial   — jump to career (standard or chaos)")
+            teach("Standard skip: skip tutorial")
+            teach("Loud skip: chaos start  (or ☠ CHAOS CAREER on the desktop banner)")
+            return
+        if args[0].lower() == "tutorial":
+            chaos = len(args) > 1 and args[1].lower() in ("chaos", "loud")
+            if self.tutorial.skip_to_career(chaos=chaos):
+                self.autosave(force=True)
+
+    def cmd_hint(self, _a: list[str]) -> None:
+        from hint_system import HintManager
+
+        cmd, why = HintManager.infer(self)
+        divider("NEXT COMMAND")
+        success(f"Try: {cmd}")
+        teach(why)
+
     def cmd_help(self, _a: list[str]) -> None:
         divider("COMMANDS")
         cmds = [
-            "lesson", "help", "ifconfig", "route", "route add [net] via [gw]",
+            "lesson", "hint", "skip tutorial", "help", "ifconfig", "route", "route add [net] via [gw]",
             "vpn [connect|disconnect|status]", "scan/nmap [CIDR]", "connect [IP] [port]",
             "curl http://IP/path", "disconnect", "probe", "crack", "sudo -l", "privesc",
             "ls", "cat", "rm", "download [path]", "pwd", "whoami", "uname",
             "note [add|clear|set] [text]",
-            "shop", "buy [item]", "missions", "contracts", "status", "rank",
+            "shop", "buy [item]", "missions", "contracts", "mail [list|trash|delete|restore]",
+            "status", "rank",
             "achievements", "daily", "chaos", "defend", "streak", "season", "operation", "bridge",
             "intel", "rivals", "chains", "hourly", "grades",
-            "endless", "story", "board", "spec", "heist", "heat",
+            "endless", "story", "board", "spec", "heist", "heat", "heat cool [subnet]",
             "chaos [start|status|provoke|run|unlock|leak|war|raid|strike|news]",
             "phish", "tunnel", "plant", "forge", "infect", "botnet",
             "use [item]", "factions", "llm [test|on|off]", "world",
@@ -1727,6 +1842,12 @@ class Game:
         cidr = args[0] if args else "192.168.1.0/24"
         divider(f"NMAP {cidr}")
         targets = self.network.hosts_in_cidr(cidr, self.player)
+        spawned = self.network.deploy_mission_targets(self)
+        for ip in spawned:
+            srv = self.network.get_server(ip)
+            if srv and ip_in_subnet(ip, cidr) and self.player.has_route_to(ip):
+                if srv not in targets:
+                    targets.append(srv)
         if not targets:
             warn(f"No reachable hosts in {cidr}. Add a route? (route add 10.0.0.0/24 via 192.168.1.1)")
             return
@@ -1779,15 +1900,23 @@ class Game:
         Console.pause(0.2)
         self.player.connection = ip
         self.player.connected_port = port
-        self.player.has_remote_shell = False
-        self.player.remote_is_root = False
         self.player.cwd = f"/home/{server.ssh_user}"
         self.log_remote(server, f"TCP connection to {ip}:{port}", f"Connection from port {random.randint(40000, 60000)}")
 
+        if server.cracked:
+            self.player.has_remote_shell = True
+            self.player.remote_is_root = server.ip in self.player.privesc_hosts
+            success(
+                f"Connected to {server.hostname}. "
+                f"Shell restored — already cracked{f' as root' if self.player.remote_is_root else ''}."
+            )
+        else:
+            self.player.has_remote_shell = False
+            self.player.remote_is_root = False
+            success(f"Connected to {server.hostname}. Run crack for shell.")
+
         if ip == "192.168.1.50":
             self.player.tutorial_flags.add("connected_training")
-
-        success(f"Connected to {server.hostname}. Run crack for shell.")
 
         if self.player.phase == "career":
             from session_content import MasteryGrader
@@ -1809,7 +1938,7 @@ class Game:
         if server and not clean:
             from chaos_system import NotorietyManager, RivalReactionManager
             if self.meta.chaos_mode:
-                NotorietyManager.add(self, 2, f"dirty disconnect {server.ip}")
+                NotorietyManager.add(self, 2, f"dirty disconnect {server.ip}", player_action=True)
                 RivalReactionManager.on_dirty_disconnect(self, server)
             from progression import ReputationSystem
             chance = self.BASE_TRACE_CHANCE + (server.ids_alert_level * 0.08)
@@ -1858,6 +1987,19 @@ class Game:
         from variety_content import PuzzleManager
         PuzzleManager.on_probe(self, s)
         Console.out(f"  {s.hostname} | FW L{s.security_level} | cracked={s.cracked}")
+        from botnet_system import BotnetManager
+        eff = BotnetManager.effective_security(self, s)
+        power = self.player.offensive_power()
+        if eff > power:
+            teach(
+                f"Host FW L{eff} needs offensive power ≥{eff} — yours is {self.player.crack_gear_label()}. "
+                "Shop: cpu (+1 power each), hydra (+2), hashcat (+4 total with hydra). "
+                "Or soften with infect ddos on a cracked neighbor."
+            )
+        elif eff == power:
+            teach("At your gear ceiling — crack will be slow. More CPU/cracker headroom helps.")
+        elif eff > self.player.cpu_level + 1:
+            teach("Tough host — upgrade CPU or cracker tools before FW outpaces you.")
         hint = PuzzleManager.puzzle_hint(s)
         if hint:
             teach(hint)
@@ -1870,6 +2012,9 @@ class Game:
             return
         if s.cracked:
             self.player.has_remote_shell = True
+            if self.player.remote_is_root or s.ip in self.player.privesc_hosts:
+                self.player.remote_is_root = True
+            success(f"Shell access restored on {s.hostname}.")
             return
 
         from session_content import LateralManager
@@ -1888,17 +2033,30 @@ class Game:
             s.cracked = True
             self.player.has_remote_shell = True
             success(f"Backdoor shell on {s.hostname} — no brute-force needed.")
-            from chaos_system import RivalReactionManager
+            from chaos_system import CareerPressureManager, RivalReactionManager
+            CareerPressureManager.on_first_crack(self, s)
             RivalReactionManager.on_crack(self, s)
             return
 
+        from botnet_system import BotnetManager
+        eff = BotnetManager.effective_security(self, s)
+        if eff > self.player.offensive_power():
+            need = eff
+            error(
+                f"Target FW L{eff} needs offensive power ≥{need}. "
+                f"Yours: {self.player.crack_gear_label()}. "
+                "Shop: cpu (+1/level), hydra (+2 power), hashcat (+4 total) — or DDoS the host first."
+            )
+            return
+
+        power = self.player.offensive_power()
         divider("SSH BRUTE-FORCE")
         words = ["password", "admin", "123456", s.ssh_password]
         if s.ip in self.meta.phished_ips:
             words = [s.ssh_password] + words
         if "hydra" in self.player.owned_tools:
             words = [s.ssh_password] + [w for w in words if w != s.ssh_password]
-        attempts = max(2, int((BotnetManager.effective_security(self, s) - self.player.cpu_level + 2) * 3 * self.player.crack_attempt_reduction()))
+        attempts = max(2, int((eff - power + 3) * 3 * self.player.crack_attempt_reduction()))
 
         for i in range(1, attempts + 1):
             guess = words[i % len(words)]
@@ -1932,7 +2090,8 @@ class Game:
                 self.player.earn(40 + s.security_level * 20, "crack bounty")
                 from progression import ReputationSystem
                 ReputationSystem.add_rep(self, 15 + s.security_level * 5, "intrusion")
-            from chaos_system import RivalReactionManager
+            from chaos_system import CareerPressureManager, RivalReactionManager
+            CareerPressureManager.on_first_crack(self, s)
             RivalReactionManager.on_crack(self, s)
             return
         error("Failed — upgrade CPU or buy hydra/hashcat.")
@@ -2025,6 +2184,7 @@ class Game:
         name = path.rsplit("/", 1)[-1]
         local = f"/home/hacker/downloads/{name}"
         self.player.files[local] = VirtualFile(local, f.read(), owner=self.player.username)
+        self.player.exfil_sources[local] = s.ip
         success(f"Exfiltrated to {local}")
         from depth_systems import ModifierManager
         if self.remote_server():
@@ -2070,6 +2230,19 @@ class Game:
             Console.out(f"  {path}{tag}")
         if not subdirs and not direct_files:
             muted("  (empty)")
+        if (
+            not self.player.is_local()
+            and self.player.has_remote_shell
+            and not args
+            and any("/var/log/" in p for p in files)
+        ):
+            cwd = self.player.cwd.rstrip("/") or "/"
+            in_log_tree = cwd == "/var/log" or cwd.startswith("/var/log/")
+            if not in_log_tree:
+                teach(
+                    "System logs live under /var/log — try: ls /var/log  "
+                    "then  rm /var/log/syslog  and  rm /var/log/auth.log",
+                )
 
     def cmd_cat(self, args: list[str]) -> None:
         if not args:
@@ -2149,6 +2322,8 @@ class Game:
         if not path:
             return
         del files[path]
+        if path in self.player.exfil_sources:
+            del self.player.exfil_sources[path]
         success(f"Removed {path}")
         s = self.remote_server()
         if s and s.ip == "192.168.1.50" and not s.player_left_traces(self.player):
@@ -2203,8 +2378,79 @@ class Game:
             warn("Missions unlock after tutorial graduation.")
             return
         divider("MISSIONS")
+        from rival_ai import RivalAIManager
         for m in self.missions.missions:
-            Console.out(f"  {m.status_line()}")
+            line = m.status_line() + RivalAIManager.race_progress_line(self, m)
+            Console.out(f"  {line}")
+
+    def cmd_mail(self, args: list[str]) -> None:
+        divider("MAIL")
+        action = args[0].lower() if args else "list"
+        if action in ("list", "inbox"):
+            if not self.mail.messages:
+                Console.out("  Inbox empty.")
+                return
+            for m in self.mail.messages:
+                mark = "● " if not m.read else "  "
+                Console.out(f"  {mark}{m.mail_id:<12} {m.subject[:44]}")
+            Console.out(f"\n  {self.mail.unread_count()} unread  |  Trash: {len(self.mail.trash)}")
+            Console.out("  mail read <id>  |  mail trash <id>  |  mail delete <id>  |  mail empty")
+            return
+        if action == "trash":
+            if len(args) < 2:
+                if not self.mail.trash:
+                    Console.out("  Trash empty.")
+                    return
+                for m in self.mail.trash:
+                    Console.out(f"    {m.mail_id:<12} {m.subject[:44]}")
+                Console.out("\n  mail delete <id>  |  mail restore <id>  |  mail empty")
+                return
+            if args[1].lower() == "read":
+                removed = self.mail.trash_all_read()
+                success(f"Moved {removed} read message(s) to Trash." if removed else "No read messages to trash.")
+                return
+            if self.mail.trash_message(args[1]):
+                success(f"Moved {args[1]} to Trash.")
+            else:
+                error(f"No inbox message {args[1]!r}.")
+            return
+        if action == "read":
+            if len(args) < 2:
+                error("Usage: mail read <mail-id>")
+                return
+            msg = self.mail.message_by_id(args[1])
+            if not msg:
+                error("Message not found.")
+                return
+            self.mail.mark_read(msg.mail_id)
+            Console.out(f"  From: {msg.sender}")
+            Console.out(f"  Subj: {msg.subject}")
+            Console.out(f"  Date: {msg.timestamp}\n")
+            Console.out(msg.body)
+            return
+        if action == "delete":
+            if len(args) < 2:
+                error("Usage: mail delete <mail-id>  (must be in Trash)")
+                return
+            if self.mail.permanent_delete(args[1]):
+                success(f"Permanently deleted {args[1]}.")
+            else:
+                error("Message not in Trash — use: mail trash <id> first.")
+            return
+        if action == "restore":
+            if len(args) < 2:
+                error("Usage: mail restore <mail-id>")
+                return
+            if self.mail.restore_message(args[1]):
+                success(f"Restored {args[1]} to Inbox.")
+            else:
+                error("Message not in Trash.")
+            return
+        if action == "empty":
+            removed = self.mail.empty_trash()
+            success(f"Emptied trash ({removed} message(s))." if removed else "Trash already empty.")
+            return
+        error("Usage: mail [list|read <id>|trash <id>|delete <id>|restore <id>|empty]")
 
     def cmd_status(self, _a: list[str]) -> None:
         p = self.player
@@ -2215,6 +2461,7 @@ class Game:
             Console.out(f"  Phase:      tutorial (lesson {p.tutorial_step + 1}/{len(TUTORIAL_CURRICULUM)})")
         Console.out(f"  {p.wallet_label()}")
         Console.out(f"  CPU/FW:     L{p.cpu_level} / L{p.firewall_level}")
+        Console.out(f"  Offense:    {p.crack_gear_label()} — need power ≥ remote FW to crack")
         Console.out(f"  VPN:        {'on' if p.vpn_active else 'off'} → {p.effective_egress_ip}")
         Console.out(f"  Routes:     {len(p.routes)}")
         Console.out(f"  Tools:      {', '.join(sorted(p.owned_tools)) or 'none'}")
@@ -2447,15 +2694,23 @@ class Game:
 
     def cmd_rivals(self, _a: list[str]) -> None:
         from retention import RetentionManager, OPERATIONS
+        from rival_ai import RivalAIManager
 
         divider("RIVAL DOSSIER")
         r = self.retention
+        Console.out(f"  Threat level: {r.rival_aggression}/10")
+        Console.out(f"  Primary rival: {r.last_rival or 'none (territory-weighted picks)'}")
+        for line in RivalAIManager.dossier_extra_lines(self):
+            Console.out(line)
         if not r.completed_operations:
-            Console.out("  No operation history yet — rivals consider you unknown.")
-            Console.out("  Complete multi-day ops to trigger rival reactions.")
+            Console.out("\n  No operation history yet — rivals still probe and race you.")
+            Console.out("  Complete multi-day ops to unlock deeper dossier intel.")
             return
         for line in RetentionManager.rival_dossier_lines(self):
             Console.out(f"  {line}")
+        from rival_ai import RivalAIManager
+        for line in RivalAIManager.dossier_extra_lines(self):
+            Console.out(line)
         Console.out("\n  Completed ops:")
         for op_id in r.completed_operations:
             Console.out(f"    [x] {op_id}")
@@ -2617,13 +2872,24 @@ class Game:
         if args and args[0] == "choose" and len(args) > 1:
             WeeklyHeistManager.choose_branch(self, args[1].lower())
 
-    def cmd_heat(self, _a: list[str]) -> None:
-        from depth_systems import RivalHeatManager
+    def cmd_heat(self, args: list[str]) -> None:
+        from depth_systems import BrokerHeatScrub, RivalHeatManager
+
+        if args and args[0].lower() == "cool":
+            BrokerHeatScrub.cool(self, args[1] if len(args) > 1 else "")
+            return
 
         divider("SUBNET HEAT — RIVAL PRESSURE")
         for line in RivalHeatManager.status_lines(self):
             Console.out(line)
+        for line in BrokerHeatScrub.status_lines(self):
+            Console.out(line)
         Console.out("\n  High heat = more traces and rival attacks on that subnet.")
+        if self.player.phase in ("career", "endless"):
+            Console.out(
+                "  Emergency: heat cool [subnet] — pay brokers to drop heat "
+                f"(min {BrokerHeatScrub.MIN_HEAT}/10, costly, ~{BrokerHeatScrub.COOLDOWN} cmd cooldown)."
+            )
 
     def cmd_phish(self, args: list[str]) -> None:
         if not args:
@@ -2759,7 +3025,7 @@ class Game:
             return
 
         handlers: dict[str, Callable[[list[str]], None]] = {
-            "lesson": self.cmd_lesson, "help": self.cmd_help, "ifconfig": self.cmd_ifconfig,
+            "lesson": self.cmd_lesson, "hint": self.cmd_hint, "skip": self.cmd_skip, "help": self.cmd_help, "ifconfig": self.cmd_ifconfig,
             "vpn": self.cmd_vpn, "scan": self.cmd_scan, "nmap": self.cmd_scan,
             "connect": self.cmd_connect, "disconnect": self.cmd_disconnect,
             "probe": self.cmd_probe, "crack": self.cmd_crack, "curl": self.cmd_curl, "privesc": self.cmd_privesc,
@@ -2767,7 +3033,7 @@ class Game:
             "note": self.cmd_note, "notes": self.cmd_note,
             "rm": self.cmd_rm, "pwd": self.cmd_pwd, "whoami": self.cmd_whoami,
             "uname": self.cmd_uname, "shop": self.cmd_shop, "buy": self.cmd_buy,
-            "missions": self.cmd_missions, "contracts": self.cmd_contracts,
+            "missions": self.cmd_missions, "contracts": self.cmd_contracts, "mail": self.cmd_mail,
             "status": self.cmd_status, "rank": self.cmd_rank,
             "achievements": self.cmd_achievements, "daily": self.cmd_daily,
             "chaos": self.cmd_chaos, "defend": self.cmd_defend,
