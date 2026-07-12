@@ -126,8 +126,8 @@ Consumables: **Burner IP Kit** (mask egress for 8 commands), **Zero-day Exploit*
 
 | System | Command |
 |--------|---------|
-| Deploy miner | `buy miner_payload` → crack host → `infect miner [IP]` |
-| Deploy DDoS | `buy ddos_payload` → `infect ddos <IP>` |
+| Deploy miner | Mail from `shard@null.dark` → crack dead drop → `download` bundle → `infect miner [IP]` |
+| Deploy DDoS | Same dead-drop flow → `infect ddos <IP>` (softens rival FW) |
 | Status / cash out | `botnet` / `botnet collect` |
 | GUI | Dock **Botnet** (⊛) window |
 
