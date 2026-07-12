@@ -198,6 +198,8 @@ class MetaState:
     tunnels: dict[int, tuple[str, int]] = field(default_factory=dict)
     subnet_heat: dict[str, int] = field(default_factory=dict)
     rival_race_prog: dict[str, int] = field(default_factory=dict)
+    rival_race_rival: dict[str, str] = field(default_factory=dict)
+    rival_race_warned: dict[str, list[str]] = field(default_factory=dict)
     weekly_heist_id: str = ""
     weekly_heist_step: int = 0
     weekly_heist_week: str = ""
@@ -234,6 +236,9 @@ class MetaState:
     defaced_hosts: set[str] = field(default_factory=set)
     framed_rivals: dict[str, str] = field(default_factory=dict)
     ransom_accrual: dict[str, int] = field(default_factory=dict)
+    notoriety_baseline: int = 0
+    rival_trash_talk_unlocked: bool = False
+    pending_rival_mail: list[dict[str, str]] = field(default_factory=list)
 
 
 class ModifierManager:
@@ -257,7 +262,9 @@ class ModifierManager:
             mission.timing_limit_ticks = random.randint(14, 24)
             mission.timing_start_tick = game.player.ticks
         if "rival_race" in mods:
-            game.meta.rival_race_prog[mission.mission_id] = 0
+            from rival_ai import RivalAIManager
+            rival = RivalAIManager.assign_race_rival(game, mission)
+            mission.briefing += f" [RACE: {rival}]"
 
     @staticmethod
     def payout_mult(mission: Mission, game: Game) -> float:
@@ -291,7 +298,7 @@ class ModifierManager:
 
     @staticmethod
     def on_post_command(game: Game) -> None:
-        from main import warn
+        from rival_ai import RivalAIManager
 
         for m in game.missions.missions:
             if m.completed or "rival_race" not in getattr(m, "modifiers", []):
@@ -304,10 +311,7 @@ class ModifierManager:
             from botnet_system import BotnetManager
             if BotnetManager.rival_race_slow(game, m.target_ip):
                 game.meta.rival_race_prog[rid] = max(0, game.meta.rival_race_prog[rid] - 1)
-            if game.meta.rival_race_prog[rid] >= 28:
-                m.completed = True
-                warn(f"RIVAL WON RACE: {m.broker} contract sniped before you finished.")
-                game.meta.rival_race_prog.pop(rid, None)
+            RivalAIManager.on_race_tick(game, m)
 
     @staticmethod
     def on_decoy_download(game: Game, server: Server, path: str) -> None:
@@ -433,7 +437,13 @@ class RivalHeatManager:
 
     @staticmethod
     def spike(game: Game, cidr: str, amount: int) -> None:
-        game.meta.subnet_heat[cidr] = min(10, game.meta.subnet_heat.get(cidr, 0) + amount)
+        mult = 1.0
+        for prof in RIVAL_PROFILES.values():
+            if prof["subnet"] == cidr:
+                mult = prof.get("heat_mult", 1.0)
+                break
+        effective = max(1, int(round(amount * mult)))
+        game.meta.subnet_heat[cidr] = min(10, game.meta.subnet_heat.get(cidr, 0) + effective)
 
     @staticmethod
     def decay_on_login(game: Game) -> None:
@@ -460,7 +470,9 @@ class RivalHeatManager:
             if prof["subnet"] == cidr and game.meta.subnet_heat.get(cidr, 0) >= 4:
                 game.retention.rival_aggression = min(10, game.retention.rival_aggression + 1)
                 game.retention.last_rival = rival
-                game.mail.send(
+                from chaos_system import CareerPressureManager
+                CareerPressureManager.send_or_queue_rival_mail(
+                    game,
                     f"{rival}@rival.net",
                     f"Heat on {cidr}",
                     f"You are lighting up {prof['label']} territory.\n\n— {rival}",
@@ -580,7 +592,8 @@ class WeeklyHeistManager:
             m.timing_limit_ticks = 30
             m.timing_start_tick = game.player.ticks
         if "rival_race" in heist_mods:
-            game.meta.rival_race_prog[mid] = 0
+            from rival_ai import RivalAIManager
+            RivalAIManager.assign_race_rival(game, m)
         game.missions.missions.insert(0, m)
         game.mail.send(
             f"{heist['broker']}@darknet",

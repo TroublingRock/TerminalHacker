@@ -272,7 +272,8 @@ class LLMStructManager:
             mission.timing_limit_ticks = random.randint(14, 24)
             mission.timing_start_tick = game.player.ticks
         if "rival_race" in mods_out:
-            game.meta.rival_race_prog[mission.mission_id] = 0
+            from rival_ai import RivalAIManager
+            RivalAIManager.assign_race_rival(game, mission)
         mission.llm_source = source_tag  # type: ignore[attr-defined]
         return mission
 
@@ -437,6 +438,9 @@ class LLMStructManager:
 
         hd = int(ev.get("heat_delta", 0))
         if hd:
+            from chaos_system import CareerPressureManager
+            if CareerPressureManager.rookie_grace(game) and hd > 0:
+                hd = min(hd, 2)
             if game.meta.subnet_heat:
                 hottest = max(game.meta.subnet_heat, key=game.meta.subnet_heat.get)
                 game.meta.subnet_heat[hottest] = max(0, min(10, game.meta.subnet_heat[hottest] + hd))
