@@ -84,6 +84,7 @@ WINDOW_STAGGER: dict[str, tuple[int, int]] = {
 
 # Quick-launch buttons appear only after the player types each command once.
 TERMINAL_QUICK_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("hint", "hint"),
     ("probe", "probe"),
     ("crack", "crack"),
     ("ls", "ls"),
@@ -731,11 +732,12 @@ class DesktopApp:
         self.onboarding_banner = banner
 
         if PlayerProfile.is_veteran():
-            headline = "WELCOME BACK — SKIP THE SANDBOX?"
+            headline = "WELCOME BACK — NEW SAVE (LESSON 1)"
             steps = (
-                "You've cleared training before.\n\n"
-                "☠ CHAOS CAREER — loud ops, botnet spread, rival heat (recommended)\n"
-                "Or resume tutorial if you want a refresher."
+                "This save starts at tutorial lesson 1 unless you skip.\n\n"
+                "☠ CHAOS CAREER — skip all lessons, loud career mode (uses real wallet)\n"
+                "skip tutorial — standard career skip from Terminal\n"
+                "Or open Training and work through lesson 1 normally."
             )
             auto_open = False
         elif p.tutorial_step == 0:
@@ -772,8 +774,8 @@ class DesktopApp:
         tk.Label(
             banner,
             text=(
-                f"{lesson.title}\n"
-                f"{lesson.objective}\n\n"
+                f"{lesson.title if lesson else 'Network Boot'}\n"
+                f"{lesson.objective if lesson else 'Run: ifconfig then route'}\n\n"
                 f"{steps}{save_note}"
             ),
             fg=COLORS["text"], bg=COLORS["window"],
@@ -1004,15 +1006,16 @@ class DesktopApp:
         panel._title_lbl = title_lbl  # type: ignore[attr-defined]
         panel._titlebar = titlebar  # type: ignore[attr-defined]
         panel._geom = geom  # type: ignore[attr-defined]
-        panel._maximized = False  # type: ignore[attr-defined]
+        panel._maximized = True  # type: ignore[attr-defined]
         panel._max_btn = max_btn  # type: ignore[attr-defined]
+        max_btn.configure(text="=")
         self.open_windows[key] = panel
 
         self._bind_window_drag(key, titlebar, title_lbl, shell)
         inner.bind("<Button-1>", lambda _e, k=key: self._focus_window(k), add="+")
         shell.bind("<Button-1>", lambda _e, k=key: self._focus_window(k), add="+")
 
-        self._place_window(key, shell, geom[2], geom[3])
+        self._place_maximized(shell)
         self._focus_window(key)
         sounds.play("open")
         return panel
@@ -1312,13 +1315,18 @@ class DesktopApp:
             return
         win = self._window("mail", "Mail — Secure Inbox", 720, 520)
         body: tk.Frame = win._body  # type: ignore[attr-defined]
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(2, weight=1)
 
         self._mail_header = tk.Label(body, text="INBOX", fg=COLORS["accent"], bg=COLORS["window"],
                                      font=F(14, bold=True))
-        self._mail_header.pack(anchor=tk.W)
+        self._mail_header.grid(row=0, column=0, sticky="ew")
+
+        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
+        self._mail_btn_row.grid(row=1, column=0, sticky="ew", pady=(8, 6))
 
         panes = tk.Frame(body, bg=COLORS["window"])
-        panes.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        panes.grid(row=2, column=0, sticky="nsew")
 
         left = tk.Frame(panes, bg=COLORS["window"], width=240)
         left.pack(side=tk.LEFT, fill=tk.Y)
@@ -1382,9 +1390,9 @@ class DesktopApp:
             self.refresh_taskbar()
 
         listbox.bind("<<ListboxSelect>>", show_message)
+        listbox.bind("<Delete>", self._mail_delete_key)
+        listbox.bind("<BackSpace>", self._mail_delete_key)
 
-        self._mail_btn_row = tk.Frame(body, bg=COLORS["window"])
-        self._mail_btn_row.pack(fill=tk.X, pady=(8, 0))
         self._rebuild_mail_buttons()
 
         self._refresh_mail_ui()
@@ -1446,6 +1454,8 @@ class DesktopApp:
         if self._mail_folder == "trash":
             tk.Button(row, text="Delete Forever", command=self._permanent_delete_mail,
                       bg=COLORS["error"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT)
+            tk.Button(row, text="Restore to Inbox", command=self._restore_selected_mail,
+                      bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
             tk.Button(row, text="Empty Trash", command=self._empty_mail_trash,
                       bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
         else:
@@ -1455,6 +1465,10 @@ class DesktopApp:
                       bg=COLORS["border"], fg=COLORS["warn"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
             tk.Button(row, text="Mark All Read", command=self._mark_all_mail_read,
                       bg=COLORS["border"], fg=COLORS["text"], relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
+        tk.Label(
+            row, text="Del/⌫ = trash or delete forever",
+            fg=COLORS["muted"], bg=COLORS["window"], font=F(9),
+        ).pack(side=tk.RIGHT, padx=(8, 0))
         tk.Button(row, text="Open Job Board", command=self.open_job_board,
                   bg=COLORS["accent_dim"], fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=8)
 
@@ -1473,6 +1487,24 @@ class DesktopApp:
             self._mail_viewer.delete("1.0", tk.END)
             self._mail_viewer.configure(state=tk.DISABLED)
 
+    def _selected_mail_message(self) -> MailMessage | None:
+        if not self._mail_listbox:
+            return None
+        sel = self._mail_listbox.curselection()
+        if not sel:
+            return None
+        msgs = self._mail_current_messages()
+        if sel[0] >= len(msgs):
+            return None
+        return msgs[sel[0]]
+
+    def _mail_delete_key(self, _event=None) -> str:
+        if self._mail_folder == "trash":
+            self._permanent_delete_mail()
+        else:
+            self._delete_selected_mail()
+        return "break"
+
     def _mark_all_mail_read(self) -> None:
         self.game.mail.mark_all_read()
         self._refresh_mail_badge()
@@ -1481,15 +1513,11 @@ class DesktopApp:
             self._populate_mail_list(self._mail_listbox)
 
     def _delete_selected_mail(self) -> None:
-        if not self._mail_listbox or self._mail_folder != "inbox":
+        if self._mail_folder != "inbox":
             return
-        sel = self._mail_listbox.curselection()
-        if not sel:
+        msg = self._selected_mail_message()
+        if not msg:
             return
-        msgs = self.game.mail.messages
-        if sel[0] >= len(msgs):
-            return
-        msg = msgs[sel[0]]
         self.game.mail.trash_message(msg.mail_id)
         self.game.autosave(force=True)
         self._refresh_mail_ui()
@@ -1511,19 +1539,29 @@ class DesktopApp:
         self.refresh_taskbar()
 
     def _permanent_delete_mail(self) -> None:
-        if not self._mail_listbox or self._mail_folder != "trash":
+        if self._mail_folder != "trash":
             return
-        sel = self._mail_listbox.curselection()
-        if not sel:
+        msg = self._selected_mail_message()
+        if not msg:
             return
-        msgs = self.game.mail.trash
-        if sel[0] >= len(msgs):
-            return
-        msg = msgs[sel[0]]
         self.game.mail.permanent_delete(msg.mail_id)
         self.game.autosave(force=True)
         self._refresh_mail_ui()
         self._clear_mail_viewer("Permanently deleted.")
+        self.refresh_taskbar()
+
+    def _restore_selected_mail(self) -> None:
+        if self._mail_folder != "trash":
+            return
+        msg = self._selected_mail_message()
+        if not msg:
+            return
+        self.game.mail.restore_message(msg.mail_id)
+        self.game.autosave(force=True)
+        self._mail_folder = "inbox"
+        self._refresh_mail_ui()
+        self._clear_mail_viewer("Restored to Inbox.")
+        self._refresh_mail_badge()
         self.refresh_taskbar()
 
     def _empty_mail_trash(self) -> None:
@@ -2083,7 +2121,7 @@ class DesktopApp:
                                            fg=COLORS["text"], font=F(11), relief=tk.FLAT)
         scroll.pack(fill=tk.BOTH, expand=True)
         for m in self.game.missions.missions:
-            scroll.insert(tk.END, f"{m.status_line()}\n\n")
+            scroll.insert(tk.END, f"{m.status_line()}{__import__('rival_ai', fromlist=['RivalAIManager']).RivalAIManager.race_progress_line(self.game, m)}\n\n")
         scroll.configure(state=tk.DISABLED)
 
         d = self.game.daily
@@ -2374,21 +2412,49 @@ class DesktopApp:
 
         if self.game.player.phase == "tutorial":
             lesson = self.game.tutorial.current()
-            cta = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
-                           highlightthickness=1, highlightbackground=COLORS["accent"])
-            cta.pack(fill=tk.X, pady=(0, 8))
+            if lesson is not None:
+                cta = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
+                               highlightthickness=1, highlightbackground=COLORS["accent"])
+                cta.pack(fill=tk.X, pady=(0, 8))
+                tk.Label(
+                    cta, text="DO THIS NOW", fg=COLORS["accent"], bg=COLORS["window"],
+                    font=F(11, bold=True),
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    cta, text=lesson.objective, fg=COLORS["text"], bg=COLORS["window"],
+                    font=F(12, bold=True), wraplength=560, justify=tk.LEFT,
+                ).pack(anchor=tk.W, pady=(4, 2))
+                tk.Label(
+                    cta, text=f"Hint: {lesson.hint}", fg=COLORS["muted"], bg=COLORS["window"],
+                    font=F(10), wraplength=560, justify=tk.LEFT,
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    cta,
+                    text=f"Tutorial wallet: ${self.game.player.tutorial_credits} (career ${self.game.player.money} locked)",
+                    fg=COLORS["teach"], bg=COLORS["window"], font=F(9),
+                ).pack(anchor=tk.W, pady=(4, 0))
+        else:
+            done = tk.Frame(body, bg=COLORS["window"], padx=10, pady=8,
+                            highlightthickness=1, highlightbackground=COLORS["success"])
+            done.pack(fill=tk.X, pady=(0, 8))
+            skipped = self.game.tutorial.skipped_training()
             tk.Label(
-                cta, text="DO THIS NOW", fg=COLORS["accent"], bg=COLORS["window"],
-                font=F(11, bold=True),
+                done, text="TRAINING COMPLETE" if not skipped else "CHAOS CAREER — SKIPPED BOOT CAMP",
+                fg=COLORS["success"], bg=COLORS["window"], font=F(11, bold=True),
             ).pack(anchor=tk.W)
             tk.Label(
-                cta, text=lesson.objective, fg=COLORS["text"], bg=COLORS["window"],
-                font=F(12, bold=True), wraplength=560, justify=tk.LEFT,
-            ).pack(anchor=tk.W, pady=(4, 2))
-            tk.Label(
-                cta, text=f"Hint: {lesson.hint}", fg=COLORS["muted"], bg=COLORS["window"],
-                font=F(10), wraplength=560, justify=tk.LEFT,
-            ).pack(anchor=tk.W)
+                done,
+                text=(
+                    f"Wallet: {self.game.player.wallet_label()}\n"
+                    f"Gear: CPU L{self.game.player.cpu_level} | Firewall L{self.game.player.firewall_level}\n"
+                    + (
+                        "Shop purchases use your career balance — not tutorial credits."
+                        if self.game.player.phase == "career"
+                        else "Endless run wallet active."
+                    )
+                ),
+                fg=COLORS["text"], bg=COLORS["window"], font=F(10), wraplength=560, justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(4, 0))
 
         tk.Label(body, text="", bg=COLORS["window"]).pack()  # spacer
 

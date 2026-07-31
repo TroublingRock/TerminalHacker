@@ -1240,7 +1240,10 @@ class RetentionManager:
         if llm_story:
             story_body = llm_story
         game.mail.send(story["sender"], story["subject"], story_body)
-        game.mail.send(rival["sender"], rival["subject"], rival_body)
+        from chaos_system import CareerPressureManager
+        CareerPressureManager.send_or_queue_rival_mail(
+            game, rival["sender"], rival["subject"], rival_body,
+        )
 
     @staticmethod
     def _story_addendum(game: Game) -> str:
@@ -1310,10 +1313,8 @@ class RetentionManager:
 
     @staticmethod
     def pick_rival_attacker(game: Game) -> str:
-        r = game.retention
-        if r.last_rival and random.random() < 0.6:
-            return r.last_rival
-        return random.choice(["zero_cool", "acid_k", "phantom_pkt", "nyx_root"])
+        from rival_ai import RivalAIManager
+        return RivalAIManager.pick_rival(game)
 
     @staticmethod
     def rival_attack_power(game: Game, base: int) -> int:
