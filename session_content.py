@@ -544,7 +544,7 @@ class HourlyManager:
         if game.player.reputation < spec.get("min_rep", 0):
             return
 
-        base = 500
+        base = 360
         mid = f"{spec['id']}-{slot}"
         mtype = spec.get("mission_type", "exfil")
         m = Mission(

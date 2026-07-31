@@ -93,7 +93,7 @@ COMPANY_HOSTS: list[dict[str, Any]] = [
      "extra_files": {"/home/admin/model_weights.bin": "ENCRYPTED_BLOB\n"}},
     {"ip": "10.0.0.42", "hostname": "corp-dc", "company": "NovaDyne Corp",
      "security_level": 3, "ssh_password": "corp42!", "subnet": "10.0.0.0/24",
-     "story": "Domain controller. Board secrets.", "min_rep": 150, "privesc_available": True,
+     "story": "Domain controller. Board secrets.", "min_rep": 0, "privesc_available": True,
      "extra_files": {"/home/admin/corporate_secrets.txt": "Acquisition: Helix AI\n"}},
     {"ip": "10.0.0.55", "hostname": "vault-server", "company": "NovaDyne Treasury",
      "security_level": 5, "ssh_password": "qu4ntum_vault", "subnet": "10.0.0.0/24",
@@ -298,13 +298,19 @@ class SaveManager:
     AUTOSAVE_EVERY = 5
 
     @staticmethod
-    def _progress_key(data: dict) -> tuple[int, int, int, int]:
+    def _progress_key(data: dict) -> tuple[int, ...]:
         """Higher = more progress. Used to detect accidental save overwrites."""
         p = data.get("player", {})
+        missions = data.get("missions", [])
+        completed = sum(1 for m in missions if m.get("completed"))
         phase_rank = {"tutorial": 0, "endless": 1, "career": 2}.get(p.get("phase", "tutorial"), 0)
         return (
             phase_rank,
             int(p.get("tutorial_step", 0)),
+            completed,
+            int(p.get("ticks", 0)),
+            len(p.get("discovered_ips", [])),
+            int(p.get("firewall_level", 0)),
             int(p.get("money", 0)),
             int(p.get("reputation", 0)),
         )
@@ -319,6 +325,37 @@ class SaveManager:
         if old[0] >= 2 and new[0] == 0 and new[1] <= 1:
             return True
         return False
+
+    @staticmethod
+    def _repair_inflated_heat(game: Game, *, legacy_world_event: bool = False) -> list[str]:
+        """Clamp subnet heat stacked by duplicate world-event application."""
+        p = game.player
+        completed = sum(1 for m in game.missions.missions if m.completed)
+        if p.ticks > 80 and completed >= 3:
+            return []
+
+        repaired: list[str] = []
+        for subnet, h in list(game.meta.subnet_heat.items()):
+            cap = 4 if legacy_world_event else 5
+            suspicious = h >= 7 and p.ticks < 60 and completed <= 2
+            if suspicious or (legacy_world_event and h > cap):
+                game.meta.subnet_heat[subnet] = min(h, cap)
+                repaired.append(subnet)
+
+        if not repaired:
+            return []
+
+        game.meta.chaos_flags = {
+            f for f in game.meta.chaos_flags if not f.startswith("heat_")
+        }
+        baseline = game.meta.notoriety_baseline
+        if game.meta.notoriety > baseline + 6 and p.ticks < 50:
+            game.meta.notoriety = max(baseline, game.meta.notoriety - 6)
+
+        return [
+            "Save repair: clamped inflated subnet heat from a prior bug "
+            f"({', '.join(repaired)}).",
+        ]
 
     @staticmethod
     def _normalize_player_state(game: Game) -> None:
@@ -358,7 +395,7 @@ class SaveManager:
                 error(f"Could not read {path}")
             return False
         try:
-            SaveManager._deserialize(game, data)
+            SaveManager._deserialize(game, data, quiet=quiet)
             if not quiet:
                 success(f"Loaded from {path}")
             return True
@@ -382,7 +419,7 @@ class SaveManager:
         if not SAVE_PATH.exists():
             return False
         try:
-            SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()))
+            SaveManager._deserialize(game, json.loads(SAVE_PATH.read_text()), quiet=quiet)
             return True
         except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             if not quiet:
@@ -481,7 +518,12 @@ class SaveManager:
                 "ticks": p.ticks,
                 "subnets_scanned": list(p.subnets_scanned),
                 "privesc_hosts": list(p.privesc_hosts),
-                "downloads": [k for k in p.files if "/downloads/" in k],
+                "downloads": {
+                    k: p.files[k].content
+                    for k in p.files
+                    if "/downloads/" in k
+                },
+                "exfil_sources": dict(p.exfil_sources),
                 "notes_content": p.files[NOTES_PATH].content if NOTES_PATH in p.files else "",
                 "daily": {
                     "challenge_id": game.daily.challenge_id,
@@ -517,7 +559,8 @@ class SaveManager:
                  "heist_id": getattr(m, "heist_id", ""),
                  "heist_step": getattr(m, "heist_step", 0),
                  "story_arc": getattr(m, "story_arc", ""),
-                 "rival_counter": getattr(m, "rival_counter", False)}
+                 "rival_counter": getattr(m, "rival_counter", False),
+                "race_lost": getattr(m, "race_lost", False)}
                 for m in game.missions.missions
             ],
             "mail": [{"mail_id": m.mail_id, "sender": m.sender, "subject": m.subject,
@@ -659,6 +702,8 @@ class SaveManager:
                 "tunnels": {str(k): v for k, v in game.meta.tunnels.items()},
                 "subnet_heat": game.meta.subnet_heat,
                 "rival_race_prog": game.meta.rival_race_prog,
+                "rival_race_rival": game.meta.rival_race_rival,
+                "rival_race_warned": game.meta.rival_race_warned,
                 "weekly_heist_id": game.meta.weekly_heist_id,
                 "weekly_heist_step": game.meta.weekly_heist_step,
                 "weekly_heist_week": game.meta.weekly_heist_week,
@@ -688,6 +733,16 @@ class SaveManager:
                 "meltdown": game.meta.meltdown,
                 "ghost_raid_cd": game.meta.ghost_raid_cd,
                 "faction_war_cd": game.meta.faction_war_cd,
+                "heat_scrub_cd": game.meta.heat_scrub_cd,
+                "heat_scrubs_paid": game.meta.heat_scrubs_paid,
+                "world_event_applied_week": game.meta.world_event_applied_week,
+                "payload_drop_index": game.meta.payload_drop_index,
+                "payload_drop_cd": game.meta.payload_drop_cd,
+                "payload_drop_ip": game.meta.payload_drop_ip,
+                "payload_drop_path": game.meta.payload_drop_path,
+                "payload_drop_key": game.meta.payload_drop_key,
+                "payload_drop_password": game.meta.payload_drop_password,
+                "payload_drop_claimed": game.meta.payload_drop_claimed,
                 "defaced_hosts": list(game.meta.defaced_hosts),
                 "framed_rivals": game.meta.framed_rivals,
                 "ransom_accrual": game.meta.ransom_accrual,
@@ -695,11 +750,61 @@ class SaveManager:
                 "botnet_bank": game.meta.botnet_bank,
                 "ddos_targets": game.meta.ddos_targets,
                 "botnet_purges": game.meta.botnet_purges,
+                "notoriety_baseline": game.meta.notoriety_baseline,
+                "rival_trash_talk_unlocked": game.meta.rival_trash_talk_unlocked,
+                "pending_rival_mail": game.meta.pending_rival_mail,
             },
         }
 
     @staticmethod
-    def _deserialize(game: Game, data: dict) -> None:
+    def _recover_download_content(game: Game, local_path: str) -> str:
+        """Best-effort recovery for saves that only stored download paths."""
+        fname = local_path.rsplit("/", 1)[-1]
+        for mission in game.missions.missions:
+            target = mission.target_file
+            if not target or not target.endswith(fname):
+                continue
+            server = game.network.get_server(mission.target_ip)
+            if server and target in server.files:
+                return server.files[target].read()
+        for server in game.network.servers.values():
+            for remote_path, remote_file in server.files.items():
+                if remote_path.endswith(f"/{fname}") or remote_path == fname:
+                    return remote_file.read()
+        return ""
+
+    @staticmethod
+    def _apply_downloads(game: Game, raw: object, *, owner: str) -> None:
+        from main import VirtualFile
+
+        if isinstance(raw, dict):
+            for path, content in raw.items():
+                game.player.files[path] = VirtualFile(path, content or "", owner=owner)
+            return
+        if isinstance(raw, list):
+            game._legacy_download_paths = list(raw)
+
+    @staticmethod
+    def _finalize_downloads(game: Game) -> None:
+        from main import VirtualFile
+
+        pending = getattr(game, "_legacy_download_paths", None)
+        if not pending:
+            return
+        owner = game.player.username
+        for path in pending:
+            if path in game.player.files:
+                existing = game.player.files[path].content.strip()
+                if existing and existing != "restored":
+                    continue
+            content = SaveManager._recover_download_content(game, path)
+            game.player.files[path] = VirtualFile(
+                path, content or "restored\n", owner=owner,
+            )
+        del game._legacy_download_paths
+
+    @staticmethod
+    def _deserialize(game: Game, data: dict, *, quiet: bool = False) -> None:
         from main import MailMessage, Mission, Route, VirtualFile, NOTES_PATH
         from retention import RetentionManager, RetentionState
         from session_content import LateralManager, SessionState
@@ -724,9 +829,7 @@ class SaveManager:
             elif k == "tutorial_flags":
                 p.tutorial_flags = set(v)
             elif k == "downloads":
-                for path in v:
-                    if path not in p.files:
-                        p.files[path] = VirtualFile(path, "restored\n")
+                SaveManager._apply_downloads(game, v, owner=p.username)
             elif k == "notes_content":
                 if NOTES_PATH in p.files:
                     p.files[NOTES_PATH].content = v
@@ -778,6 +881,7 @@ class SaveManager:
                 heist_step=md.get("heist_step", 0),
                 story_arc=md.get("story_arc", ""),
                 rival_counter=md.get("rival_counter", False),
+                race_lost=md.get("race_lost", False),
             ))
 
         game.mail.messages = [MailMessage(**md) for md in data["mail"]]
@@ -921,6 +1025,7 @@ class SaveManager:
                 world_event_week=ld.get("world_event_week", ""),
             )
         md = data.get("meta", {})
+        legacy_world_event = "world_event_applied_week" not in md
         if md:
             tunnels = {int(k): tuple(v) for k, v in md.get("tunnels", {}).items()}
             game.meta = MetaState(
@@ -932,6 +1037,8 @@ class SaveManager:
                 tunnels=tunnels,
                 subnet_heat=md.get("subnet_heat", {}),
                 rival_race_prog=md.get("rival_race_prog", {}),
+                rival_race_rival=md.get("rival_race_rival", {}),
+                rival_race_warned=md.get("rival_race_warned", {}),
                 weekly_heist_id=md.get("weekly_heist_id", ""),
                 weekly_heist_step=md.get("weekly_heist_step", 0),
                 weekly_heist_week=md.get("weekly_heist_week", ""),
@@ -961,6 +1068,16 @@ class SaveManager:
                 meltdown=dict(md.get("meltdown", {})),
                 ghost_raid_cd=md.get("ghost_raid_cd", 0),
                 faction_war_cd=md.get("faction_war_cd", 0),
+                heat_scrub_cd=md.get("heat_scrub_cd", 0),
+                heat_scrubs_paid=md.get("heat_scrubs_paid", 0),
+                world_event_applied_week=md.get("world_event_applied_week", ""),
+                payload_drop_index=md.get("payload_drop_index", 0),
+                payload_drop_cd=md.get("payload_drop_cd", 0),
+                payload_drop_ip=md.get("payload_drop_ip", ""),
+                payload_drop_path=md.get("payload_drop_path", ""),
+                payload_drop_key=md.get("payload_drop_key", ""),
+                payload_drop_password=md.get("payload_drop_password", ""),
+                payload_drop_claimed=md.get("payload_drop_claimed", False),
                 defaced_hosts=set(md.get("defaced_hosts", [])),
                 framed_rivals=dict(md.get("framed_rivals", {})),
                 ransom_accrual=dict(md.get("ransom_accrual", {})),
@@ -968,7 +1085,21 @@ class SaveManager:
                 botnet_bank=md.get("botnet_bank", 0),
                 ddos_targets=md.get("ddos_targets", {}),
                 botnet_purges=md.get("botnet_purges", 0),
+                notoriety_baseline=md.get("notoriety_baseline", md.get("notoriety", 0)),
+                rival_trash_talk_unlocked=md.get("rival_trash_talk_unlocked", False),
+                pending_rival_mail=list(md.get("pending_rival_mail", [])),
             )
+            repair_notes = SaveManager._repair_inflated_heat(
+                game, legacy_world_event=legacy_world_event,
+            )
+            if repair_notes and not quiet:
+                import sys
+                for note in repair_notes:
+                    print(f"  {note}", file=sys.stderr)
+        from chaos_system import CareerPressureManager
+        CareerPressureManager.sync_unlock_from_save(game)
+        from payload_drops import PayloadDropManager
+        PayloadDropManager.restore_from_save(game)
         if p.phase == "endless" and game.endless.active:
             for ip in game.endless.floor_hosts:
                 if ip in game.network.servers:
@@ -989,6 +1120,7 @@ class SaveManager:
         elif p.phase == "endless" and game.endless.active and not game.endless.floor_hosts:
             EndlessManager._spawn_floor(game)
 
+        SaveManager._finalize_downloads(game)
         game.player._game_ref = game
         game.tutorial.reconcile_stuck_lessons()
 

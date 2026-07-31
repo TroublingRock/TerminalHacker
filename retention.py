@@ -17,12 +17,12 @@ if TYPE_CHECKING:
 
 STREAK_MILESTONES: dict[int, tuple[int, int, str]] = {
     # day: (cash, season_xp, message)
-    1: (75, 25, "Day 1 check-in — stay in the fight."),
-    3: (150, 40, "3-day streak. Brokers are watching."),
-    7: (400, 100, "Week one locked in. Bonus intel incoming."),
-    14: (800, 175, "Two weeks straight. You're reliable."),
-    21: (1200, 250, "Three-week streak — elite contractor status."),
-    30: (3000, 500, "MONTH STREAK. Net God clearance unlocked in brokers' eyes."),
+    1: (50, 25, "Day 1 check-in — stay in the fight."),
+    3: (100, 40, "3-day streak. Brokers are watching."),
+    7: (275, 100, "Week one locked in. Bonus intel incoming."),
+    14: (550, 175, "Two weeks straight. You're reliable."),
+    21: (850, 250, "Three-week streak — elite contractor status."),
+    30: (2100, 500, "MONTH STREAK. Net God clearance unlocked in brokers' eyes."),
 }
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Crack corp-gateway (192.168.1.10), exfil any file, vanish clean.",
         "target_ip": "192.168.1.10",
         "target_file": "/home/admin/notes.txt",
-        "reward": 900,
+        "reward": 620,
         "rep_reward": 90,
         "min_rep": 0,
     },
@@ -162,7 +162,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Hit vendor-vpn (192.168.1.30). Ghost run — zero traces, no exfil needed.",
         "target_ip": "192.168.1.30",
         "target_file": "",
-        "reward": 1100,
+        "reward": 760,
         "rep_reward": 110,
         "min_rep": 0,
         "mission_type": "ghost",
@@ -174,7 +174,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Steal terminations.csv from hr-portal (10.0.0.88), wipe logs.",
         "target_ip": "10.0.0.88",
         "target_file": "/home/admin/terminations.csv",
-        "reward": 1400,
+        "reward": 980,
         "rep_reward": 130,
         "min_rep": 150,
     },
@@ -185,7 +185,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Privesc on fin-trading (172.16.0.20), exfil algo_config.yml.",
         "target_ip": "172.16.0.20",
         "target_file": "/home/admin/algo_config.yml",
-        "reward": 2000,
+        "reward": 1400,
         "rep_reward": 160,
         "min_rep": 400,
         "require_privesc": True,
@@ -198,7 +198,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Steal model_weights.bin from research-node (192.168.1.25).",
         "target_ip": "192.168.1.25",
         "target_file": "/home/admin/model_weights.bin",
-        "reward": 1250,
+        "reward": 880,
         "rep_reward": 115,
         "min_rep": 0,
     },
@@ -209,7 +209,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Privesc vault-server (10.0.0.55), exfil payroll.csv as root.",
         "target_ip": "10.0.0.55",
         "target_file": "/root/payroll.csv",
-        "reward": 2200,
+        "reward": 1550,
         "rep_reward": 175,
         "min_rep": 150,
         "require_privesc": True,
@@ -222,7 +222,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Crack chaos-c2 (203.0.113.66), exfil rival_plans.txt, survive traces.",
         "target_ip": "203.0.113.66",
         "target_file": "/root/rival_plans.txt",
-        "reward": 3500,
+        "reward": 2500,
         "rep_reward": 200,
         "min_rep": 750,
         "require_privesc": True,
@@ -235,7 +235,7 @@ WEEKLY_BOUNTIES: list[dict[str, Any]] = [
         "briefing": "WEEKLY: Hit dark-vault (203.0.113.99) — root heist on cold_wallet.dat.",
         "target_ip": "203.0.113.99",
         "target_file": "/root/cold_wallet.dat",
-        "reward": 5000,
+        "reward": 3600,
         "rep_reward": 250,
         "min_rep": 750,
         "require_privesc": True,
@@ -1021,6 +1021,25 @@ class RetentionState:
 
 class RetentionManager:
     @staticmethod
+    def exfil_local_path(target_file: str) -> str:
+        fname = target_file.rsplit("/", 1)[-1]
+        return f"/home/hacker/downloads/{fname}"
+
+    @staticmethod
+    def has_target_exfil(game: Game, target_ip: str, target_file: str) -> bool:
+        """True when the named loot file was downloaded from the contract host."""
+        if not target_ip or not target_file:
+            return False
+        local = RetentionManager.exfil_local_path(target_file)
+        p = game.player
+        if local not in p.files:
+            return False
+        source = p.exfil_sources.get(local)
+        if not source:
+            return False
+        return source == target_ip
+
+    @staticmethod
     def today() -> str:
         return date.today().isoformat()
 
@@ -1038,6 +1057,8 @@ class RetentionManager:
         from progression import DailyChallenge
 
         cid, desc, reward, flag = DAILY_ROTATION[RetentionManager.daily_slot()]
+        from economy import DAILY_CASH_MULT
+        reward = max(100, int(reward * DAILY_CASH_MULT))
         return DailyChallenge(cid, desc, reward, flag)
 
     @staticmethod
@@ -1067,6 +1088,9 @@ class RetentionManager:
         from depth_systems import RivalHeatManager, WeeklyHeistManager
         RivalHeatManager.decay_on_login(game)
         WeeklyHeistManager.refresh(game)
+
+        from payload_drops import PayloadDropManager
+        PayloadDropManager.on_career_start(game)
 
         from story_system import StoryManager
         StoryManager.ensure_intro(game)
@@ -1165,12 +1189,14 @@ class RetentionManager:
             r.season_xp -= need
             tier = SEASON_TIERS[r.season_tier]
             r.season_tier += 1
-            game.player.earn(tier["cash"], f"season tier {r.season_tier}")
+            from economy import SEASON_CASH_MULT
+            season_cash = max(50, int(tier["cash"] * SEASON_CASH_MULT))
+            game.player.earn(season_cash, f"season tier {r.season_tier}")
             ReputationSystem.add_rep(game, tier["rep"], f"season tier {r.season_tier}")
             game.mail.send(
                 "security@terminalhacker.local",
                 f"Season tier {r.season_tier} unlocked",
-                f"{tier['label']}\n+${tier['cash']} +{tier['rep']} rep\n\nKeep the streak alive.",
+                f"{tier['label']}\n+${season_cash} +{tier['rep']} rep\n\nKeep the streak alive.",
             )
             if r.season_tier >= len(SEASON_TIERS):
                 game.achievements.unlock("season_complete")
@@ -1240,7 +1266,10 @@ class RetentionManager:
         if llm_story:
             story_body = llm_story
         game.mail.send(story["sender"], story["subject"], story_body)
-        game.mail.send(rival["sender"], rival["subject"], rival_body)
+        from chaos_system import CareerPressureManager
+        CareerPressureManager.send_or_queue_rival_mail(
+            game, rival["sender"], rival["subject"], rival_body,
+        )
 
     @staticmethod
     def _story_addendum(game: Game) -> str:
@@ -1310,10 +1339,8 @@ class RetentionManager:
 
     @staticmethod
     def pick_rival_attacker(game: Game) -> str:
-        r = game.retention
-        if r.last_rival and random.random() < 0.6:
-            return r.last_rival
-        return random.choice(["zero_cool", "acid_k", "phantom_pkt", "nyx_root"])
+        from rival_ai import RivalAIManager
+        return RivalAIManager.pick_rival(game)
 
     @staticmethod
     def rival_attack_power(game: Game, base: int) -> int:
@@ -1682,7 +1709,7 @@ class RetentionManager:
     def _complete_mission(game: Game, mission: Mission) -> None:
         from main import success
 
-        if mission.completed:
+        if mission.completed or getattr(mission, "race_lost", False):
             return
         mission.completed = True
         game.player.earn(mission.reward, f"contract {mission.broker}")
@@ -1697,6 +1724,8 @@ class RetentionManager:
 
     @staticmethod
     def mission_is_satisfied(game: Game, mission: Mission) -> bool:
+        if getattr(mission, "race_lost", False):
+            return False
         from main import ip_in_subnet
 
         p = game.player
@@ -1749,14 +1778,12 @@ class RetentionManager:
             if mtype == "social":
                 if not mission.target_file:
                     return False
-                fname = mission.target_file.rsplit("/", 1)[-1]
-                if f"/home/hacker/downloads/{fname}" not in p.files:
+                if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                     return False
                 return logs_ok(game.network.get_server(mission.target_ip), mission.require_log_wipe)
             if not mission.target_file:
                 return mtype == "ghost"
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             server = game.network.get_server(mission.target_ip)
             if mtype == "root_heist" and mission.require_privesc:
@@ -1768,8 +1795,7 @@ class RetentionManager:
             server = game.network.get_server(mission.target_ip)
             if not mission.target_file:
                 return False
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             pid = getattr(server, "puzzle_id", "") if server else ""
             if pid == "http_intel":
@@ -1788,8 +1814,7 @@ class RetentionManager:
                 return False
             if not mission.target_file:
                 return False
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             server = game.network.get_server(mission.target_ip)
             return logs_ok(server, mission.require_log_wipe)
@@ -1800,8 +1825,7 @@ class RetentionManager:
                 return False
             if not mission.target_file:
                 return False
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             jump = game.network.get_server(mission.pivot_host)
             target = game.network.get_server(mission.target_ip)
@@ -1820,8 +1844,7 @@ class RetentionManager:
                     return False
             if not mission.target_file:
                 return False
-            fname = mission.target_file.rsplit("/", 1)[-1]
-            if f"/home/hacker/downloads/{fname}" not in p.files:
+            if not RetentionManager.has_target_exfil(game, mission.target_ip, mission.target_file):
                 return False
             if mtype == "root_heist" and mission.require_privesc:
                 if mission.target_ip not in p.privesc_hosts and not p.remote_was_root:
