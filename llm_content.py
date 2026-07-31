@@ -303,6 +303,9 @@ class LLMContentManager:
     def maybe_rival_taunt(game: Game) -> None:
         if game.player.phase not in ("career", "endless"):
             return
+        from chaos_system import CareerPressureManager
+        if not CareerPressureManager.can_trash_talk(game):
+            return
         if not LLMContentManager.can_call(game):
             return
         if game.retention.rival_aggression < 2:

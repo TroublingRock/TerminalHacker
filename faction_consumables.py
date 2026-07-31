@@ -321,6 +321,9 @@ class ConsumableManager:
             RetentionManager.on_crack(game, s.ip, s.security_level)
             from session_content import LateralManager
             LateralManager.on_crack(game, s.ip)
+            from chaos_system import CareerPressureManager, RivalReactionManager
+            CareerPressureManager.on_first_crack(game, s)
+            RivalReactionManager.on_crack(game, s)
             teach("One-shot only. Logs still show activity unless you clean up.")
             ConsumableManager._track_use(game)
             return True
