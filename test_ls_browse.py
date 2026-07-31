@@ -45,6 +45,14 @@ class LsBrowseTests(unittest.TestCase):
         self.assertIn("/var/log/auth.log", joined)
         self.assertIn("/var/log/syslog", joined)
 
+    def test_ls_from_root_nudges_var_log(self) -> None:
+        game = Game()
+        self._remote_shell_on_training(game)
+        game.player.cwd = "/root"
+        game.cmd_ls([])
+        joined = "\n".join(self.lines)
+        self.assertIn("/var/log", joined)
+
 
 if __name__ == "__main__":
     unittest.main()
