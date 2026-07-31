@@ -209,7 +209,9 @@ class BotnetManager:
 
         count = game.meta.inventory.get(shop_key, 0)
         if count < 1:
-            error(f"Need shop payload: buy {shop_key}  (then infect again)")
+            from payload_drops import PayloadDropManager
+            hint = PayloadDropManager.hint_when_empty(game, shop_key)
+            error(hint or f"No {shop_key} in inventory.")
             return False
         game.meta.inventory[shop_key] = count - 1
         return True
@@ -237,7 +239,7 @@ class BotnetManager:
             Console.out("          infect ransom [IP]  |  infect deface [IP]  |  infect frame <rival> [IP]")
             Console.out("          infect virus [IP]")
             Console.out("  Requires: active shell or backdoor on target.")
-            Console.out("  Shop: buy miner_payload | ddos_payload | leak_payload | ransom_payload | ...")
+            Console.out("  Payloads: hunt dead drops — Mail from shard@null.dark has coords.")
             return
 
         kind = args[0].lower()
@@ -317,7 +319,7 @@ class BotnetManager:
 
         RivalHeatManager.spike(game, server.subnet, spec["heat"])
         from chaos_system import NotorietyManager
-        NotorietyManager.add(game, 3 if kind == PAYLOAD_DDOS else 2, f"infect {kind} {server.ip}")
+        NotorietyManager.add(game, 3 if kind == PAYLOAD_DDOS else 2, f"infect {kind} {server.ip}", player_action=True)
         game.player.tutorial_flags.add("daily_botnet_done")
         if BotnetManager.infection_count(game) >= 5:
             game.achievements.unlock("botnet_herder")
@@ -348,7 +350,7 @@ class BotnetManager:
             game, "flex", f"DEFACED: {server.hostname}",
             f"{server.ip} now serves: {tag}",
         )
-        NotorietyManager.add(game, 6, f"deface {server.ip}")
+        NotorietyManager.add(game, 6, f"deface {server.ip}", player_action=True)
         ChaosNewsManager.push(game, f"WEB DEFACE: {server.hostname} ({server.ip}) tagged by operator")
         success(f"Defaced {server.hostname} — {tag}")
         warn("Corp SOC will notice. Heat rising.")
@@ -358,7 +360,7 @@ class BotnetManager:
         from depth_systems import RIVAL_PROFILES
         from faction_consumables import FactionRepManager
         from main import success, warn
-        from chaos_system import ChaosNewsManager, NotorietyManager
+        from chaos_system import CareerPressureManager, ChaosNewsManager, NotorietyManager
 
         profile = RIVAL_PROFILES[rival]
         game.meta.forged_servers.add(server.ip)
@@ -368,11 +370,12 @@ class BotnetManager:
             + f"\nFAILED: brute-force from {rival}@rival.net on sshd\n"
         )
         FactionRepManager.shift(game, {"rivals": 12, "corps": -6})
-        NotorietyManager.add(game, 8, f"frame {rival} on {server.ip}")
+        NotorietyManager.add(game, 8, f"frame {rival} on {server.ip}", player_action=True)
         ChaosNewsManager.push(
             game, f"FRAME JOB: forged logs on {server.ip} blame {rival}",
         )
-        game.mail.send(
+        CareerPressureManager.send_or_queue_rival_mail(
+            game,
             f"{rival}@rival.net",
             "someone framed me on your subnet",
             f"Your logs on {server.hostname} say I hit it. I didn't.\n"
@@ -436,7 +439,9 @@ class BotnetManager:
             warn(f"RIVAL COUNTER-OP: {host} ({ip}) cleaned your {kind} payload.")
             RivalHeatManager.spike(game, server.subnet if server else "192.168.1.0/24", 2)
             rival = __import__("retention").RetentionManager.pick_rival_attacker(game)
-            game.mail.send(
+            from chaos_system import CareerPressureManager
+            CareerPressureManager.send_or_queue_rival_mail(
+                game,
                 f"{rival}@rival.net",
                 "Nice botnet — I scrubbed a node",
                 f"Found your {kind} on {host}. I purged it. Keep counting your miners.\n\n— {rival}",
@@ -504,7 +509,7 @@ class BotnetManager:
             Console.out(line)
         if not game.meta.infections and not game.meta.ddos_targets:
             Console.out("\n  No payloads deployed.")
-            teach("Crack a host, buy miner_payload, then: infect miner")
+            teach("Crack a host, hunt a dead drop from shard@null.dark, then: infect miner")
             return
         Console.out("\n  Nodes:")
         for ip, kind in sorted(game.meta.infections.items()):

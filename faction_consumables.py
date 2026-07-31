@@ -46,18 +46,18 @@ CONSUMABLES: dict[str, dict[str, Any]] = {
     "burner_ip": {
         "name": "Burner IP Kit",
         "desc": "Mask egress IP for 8 commands.",
-        "cost": 120,
+        "cost": 165,
         "commands": 8,
     },
     "zero_day": {
         "name": "Zero-day Exploit",
         "desc": "Auto-crack current SSH target once.",
-        "cost": 450,
+        "cost": 620,
     },
     "decoy_log": {
         "name": "Decoy Log Pack",
         "desc": "6 commands of full trace immunity.",
-        "cost": 200,
+        "cost": 275,
         "commands": 6,
     },
     "miner_payload": {
@@ -175,7 +175,8 @@ class FactionRepManager:
             game.meta.contracts_since_free_consumable += 1
             if game.meta.contracts_since_free_consumable >= 5:
                 game.meta.contracts_since_free_consumable = 0
-                key = random.choice(list(CONSUMABLES.keys()))
+                pool = [k for k in CONSUMABLES if not k.endswith("_payload")]
+                key = random.choice(pool)
                 ConsumableManager.add_to_inventory(game, key, 1)
                 from main import success
                 success(f"Broker perk: free {CONSUMABLES[key]['name']} added to inventory.")
@@ -321,6 +322,9 @@ class ConsumableManager:
             RetentionManager.on_crack(game, s.ip, s.security_level)
             from session_content import LateralManager
             LateralManager.on_crack(game, s.ip)
+            from chaos_system import CareerPressureManager, RivalReactionManager
+            CareerPressureManager.on_first_crack(game, s)
+            RivalReactionManager.on_crack(game, s)
             teach("One-shot only. Logs still show activity unless you clean up.")
             ConsumableManager._track_use(game)
             return True

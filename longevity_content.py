@@ -744,7 +744,9 @@ class RivalCounterManager:
         from llm_content import LLMContentManager
         LLMContentManager.enrich_briefing(game, m, server)
         game.missions.missions.insert(0, m)
+        game.meta.rival_race_rival[mid] = rival
         game.meta.rival_race_prog[mid] = 0
+        game.meta.rival_race_warned[mid] = []
         mail_ctx = f"Counter-op on {server.hostname} ({trigger_ip})"
         mail_body = LLMContentManager.enrich_rival_mail(game, rival, mail_ctx)
         if not mail_body:
